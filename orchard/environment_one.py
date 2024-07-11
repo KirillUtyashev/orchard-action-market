@@ -19,6 +19,8 @@ class Orchard:
         self.S = np.array(S)
         self.phi = phi
 
+        self.total_apples = 0
+
 
     def initialize(self):
         """
@@ -49,6 +51,7 @@ class Orchard:
             chance = random.random()
             if chance < self.S[i]:
                 self.apples[i] += 1
+                self.total_apples += 1
 
     def despawn_apples(self):
         """

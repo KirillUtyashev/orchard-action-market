@@ -21,6 +21,8 @@ class Orchard:
         self.S = np.array(S)
         self.phi = phi
 
+        self.total_apples = 0
+
 
     def initialize(self):
         self.agents = np.zeros((self.length, self.length))
@@ -30,6 +32,7 @@ class Orchard:
             position = np.random.randint(0, self.length, 2)
             self.agent_positions[i] = position
             self.agents[position[0], position[1]] += 1
+
         self.spawn_apples()
 
     def get_state(self, agent):
@@ -44,7 +47,7 @@ class Orchard:
                 chance = random.random()
                 if chance < self.S[i, j]:
                     self.apples[i, j] += 1
-
+                    self.total_apples += 1
 
     def despawn_apples(self):
         for i in range(self.n):
