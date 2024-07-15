@@ -30,5 +30,20 @@ assert np.array_equal(env.agents, np.array([[0, 1], [0, 1]]))
 assert np.array_equal(np.array(env.agent_positions), np.array([[0, 1], [1, 1]]))
 assert np.array_equal(env.apples, np.array([[0, 0], [1, 0]]))
 
+"""
+Sample Action Test - 1 dimensional:
+We have a 5x1 grid, and an agent moves into a space that has an apple. We make sure the
+agent has moved and the apple has been picked.
+"""
+env.apples = np.array([[0], [1], [0], [0], [0]])
+env.agents = np.array([[2], [0], [0], [0], [0]])
+env.agent_positions = [[0, 0], [0, 0]]
+
+env.validate_agent_consistency()
+env.process_action(0, 1)
+assert np.array_equal(env.agents, np.array([[1], [1], [0], [0], [0]]))
+assert np.array_equal(np.array(env.agent_positions), np.array([[1, 0], [0, 0]]))
+assert np.array_equal(env.apples, np.array([[0], [0], [0], [0], [0]]))
+
 
 
