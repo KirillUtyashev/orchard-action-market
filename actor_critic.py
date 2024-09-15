@@ -263,7 +263,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 from agents.actor_critic_agent import ACAgent
 
 def eval_network(name, discount, maxi, network_list, num_agents=4, side_length=10, iteration=99):
-    network_list = []
+    # network_list = []
     a_list = []
 
     for ii in range(num_agents):
