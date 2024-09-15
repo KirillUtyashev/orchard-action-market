@@ -5,10 +5,10 @@ Call the policy iteration function (from main_pi.py).
 Commences training.
 """
 
-approach = "value"
-name = "D-2_5_test"
+approach = "projection"
+name = "AC-2_5"
 
 
-policy_iteration(approach, name, 2, 5)
+policy_iteration(approach, name, 2, 5, skip_decen=True)
 
 
