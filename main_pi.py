@@ -18,7 +18,7 @@ import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 
 """
-The main training loop for *Policy Iteration*.
+The main training loop for *Policy Iteration*. Includes provisions for training in the middle of an iteration (i.e. after Q training, but before AC training).
 """
 def eval_network(name, discount, side_length, experiment, iteration, num_agents, prefix, approach, S=None, phi=None):
     network_list = []

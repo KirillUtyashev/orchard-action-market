@@ -1,6 +1,13 @@
 import numpy as np
 import random
 
+"""
+The NEAREST baseline algorithm. This algorithm functions by looking at all apples in the field, and then choosing to move toward the apple that has the closest
+euclidean distance.
+
+Synonymous with the "Greedy" algorithm.
+"""
+
 action_vectors_1d = [
             -1,
             1,

@@ -36,7 +36,6 @@ one_plot = {}
 two_plot = {}
 def setup_plots(dictn, plot):
     for param_tensor in dictn:
-        #print(dictn[param_tensor].size())
         plot[param_tensor] = []
         if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
             for id in range(5):
@@ -46,8 +45,6 @@ def add_to_plots(dictn, timestep, plot):
         if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
             for id in range(5):
                 plot[param_tensor + str(id)].append(dictn[param_tensor].cpu().flatten()[id])
-            #else:
-            #    plot[param_tensor].append(dictn[param_tensor].cpu().flatten()[0])
 
 graph = 0
 loss_plot = []
@@ -125,8 +122,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     v_network_list = []
     p_network_list = []
 
-    #network1 = SCMNetwork_Central(orchard_length, alpha, discount)
-    #network1.function.load_state_dict(torch.load(name + ".pt"))
     for agn in range(len(agents_list)):
         network1 = SCMNetwork(orchard_length, 0.0002, discount)
         agents_list[agn].policy_value = network1
@@ -138,11 +133,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         agents_list[agn].policy = "learned_policy"
 
         network2.critic = network1
-
-
-        # network2 = ActorNetwork(orchard_length, alpha, discount, num=agn)
-        # agents_list[agn].policy_network = network2
-        # p_network_list.append(network2)
 
     total_reward = 0
 
@@ -199,17 +189,14 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
                                                                          sample_state6["apples"],
                                                                          pos=sample_state6["pos"][0])
-            # v_value = agents_list[0].get_comm_value_function(sample_state["agents"], sample_state["apples"], agents_list, debug=True, agent_poses=sample_state["pos"])
-            # v_value1 = agents_list[0].get_comm_value_function(sample_state5["agents"], sample_state5["apples"], agents_list, debug=True, agent_poses=sample_state5["pos"])
-            # v_value2 = agents_list[0].get_comm_value_function(sample_state6["agents"], sample_state6["apples"], agents_list, debug=True, agent_poses=sample_state6["pos"])
+
             if i % 20000 == 0:
 
                 print("A", v_value)
-            #add_to_plots(agents_list[1].value.state_dict(), i, two_plot)
+
             loss_plot.append(v_value[0])
             loss_plot1.append(v_value1[0])
             loss_plot2.append(v_value2[0])
-            #if i % 2000 == 0:
             for ntwk in p_network_list:
                 ntwk.train_multiple_with_critic(agents_list)
             # recalculate rates?
@@ -220,8 +207,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 
         if i % 20000 == 0 and i != 0:
             print("At timestep", i)
-            # for numbering, network in enumerate(p_network_list):
-            #     print("Avg Norm for" + str(numbering) + ":", network.vs / i)
+
         # was: 300000
         if i == 50000:
             for network in p_network_list:
@@ -330,19 +316,12 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 
 
 from agents.actor_critic_agent import ACAgent
-
+"""
+An evaluation every x steps that saves the checkpoint in case we pass the best performance
+"""
 def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agents=4, side_length=10, iteration=99):
     network_list = []
     a_list = []
-    # for ii in range(num_agents):
-    #     # print("A")
-    #     network = ActorNetwork(side_length, 0.0012, discount)
-    #     network.function.load_state_dict(torch.load(name + "_Actor3_" + str(ii) + ".pt"))
-    #     #network.function.load_state_dict(torch.load("../" + name + "_Actor_BETA_ALPHA_" + str(i) + ".pt"))
-    #     # network.function.load_state_dict(torch.load("../" + experiment_name + "_Actor_BETA_ALPHA_" + str(i) + ".pt"))
-    #     # for param in network.function.parameters():
-    #     #     print(param.data)
-    #     network_list.append(network)
 
     for ii in range(num_agents):
         trained_agent = ACAgent(policy="learned_policy", num=ii, num_agents=num_agents)

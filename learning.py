@@ -16,14 +16,7 @@ from train_central import training_loop
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 """
-side_length = 20
-num_agents = 5
-S = np.zeros((side_length, 1))
-for i in range(side_length):
-    S[i] = 0.02
-phi = 0.02
-discount = 0.9
-
+The LEARNING file. This serves as an execution file for both centralized and decentralizing learning.
 """
 
 """
@@ -44,7 +37,7 @@ from agents.communicating_agent import CommAgent
 from train_decentral import training_loop as training_loop_d
 
 
-# CENTRALIZED LEARN ING
+# CENTRALIZED LEARNING
 
 agents_list = []
 for i in range(num_agents):

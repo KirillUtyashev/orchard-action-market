@@ -2,6 +2,12 @@ import numpy as np
 import random
 random.seed(10)
 
+"""
+The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
+
+action_algo: an algorithm that is used to process actions (agent movements). Defaults to just updating the environment from the singular agent action.
+"""
+
 action_vectors = [
             np.array([-1, 0]),
             np.array([1, 0]),

@@ -323,19 +323,12 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 
 
 from agents.actor_critic_agent import ACAgent
-
+"""
+An evaluation every x steps that saves the checkpoint in case we pass the best performance
+"""
 def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agents=4, side_length=10, iteration=99):
     network_list = []
     a_list = []
-    # for ii in range(num_agents):
-    #     # print("A")
-    #     network = ActorNetwork(side_length, 0.0012, discount)
-    #     network.function.load_state_dict(torch.load(name + "_Actor3_" + str(ii) + ".pt"))
-    #     #network.function.load_state_dict(torch.load("../" + name + "_Actor_BETA_ALPHA_" + str(i) + ".pt"))
-    #     # network.function.load_state_dict(torch.load("../" + experiment_name + "_Actor_BETA_ALPHA_" + str(i) + ".pt"))
-    #     # for param in network.function.parameters():
-    #     #     print(param.data)
-    #     network_list.append(network)
 
     for ii in range(num_agents):
         trained_agent = ACAgent(policy="learned_policy", num=ii, num_agents=num_agents)
