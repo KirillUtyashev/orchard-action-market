@@ -23,6 +23,10 @@ import torch.nn as nn
 import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 
+"""
+Centralized Q-value function training.
+"""
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Using device:', device)
 
@@ -210,9 +214,6 @@ def get_possible_states(state, agent_pos):
         "apples": apples,
         "agents": agents
     }
-    #print(list(state1["apples"].flatten()), list(state1["agents"].flatten()))
-    #print(list(state2["apples"].flatten()), list(state2["agents"].flatten()))
-    #print(list(state3["apples"].flatten()), list(state3["agents"].flatten()))
     return state1, state2, state3
 
 sample_state1 = {
@@ -348,21 +349,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         if i == 1000000:
                 for g in network.optimizer.param_groups:
                     g['lr'] = 0.000003
-        # if i == 150000:
-        #     for g in network.optimizer.param_groups:
-        #         g['lr'] = 0.0001
-        # if i == 100000:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.00005
-        # if i == 600000:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.00001
-        # if i == 1200000:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.000003
-        # if i == 100000:
-        #     for g in network.optimizer.param_groups:
-        #         g['lr'] = 0.000002
         if (i % 50000 == 0 and i != 0) or i == timesteps - 1:
             print("=====Eval at", i, "steps======")
             fname = name
@@ -373,6 +359,10 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     print("Total Reward:", total_reward)
     print("Total Apples:", env.total_apples)
 
+
+"""
+An evaluation every x steps that saves the checkpoint in case we pass the best performance
+"""
 from main import run_environment_1d
 def eval_network(name, maxi, discount, network, num_agents=4, side_length=10, iteration=99):
     a_list = []
@@ -388,7 +378,7 @@ def eval_network(name, maxi, discount, network, num_agents=4, side_length=10, it
     if val > maxi and iteration != 99:
         print("saving best")
         torch.save(network.function.state_dict(),
-                   "policyitchk/" + name + "/" + name + "_decen_it_" + str(iteration) + ".pt")
+                   "policyitchk/" + name + "/" + name + "_decen_it_" + str(iteration) + ".pt") #savepath
 
     maxi = max(maxi, val)
     return maxi

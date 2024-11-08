@@ -11,6 +11,10 @@ from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
 import torch
 
+"""
+Policy Iteration with *only* Q value. 
+"""
+
 def eval_network(name, discount, side_length, experiment, iteration):
     network_list = []
     a_list = []
@@ -81,26 +85,11 @@ for iteration in range(1, 5):
             training_loop(agents_list, orchard_size, S, phi, 0.0001, title, discount=discount, timesteps=1000000,
                           iteration=iteration)
 
-    # for nummer, agn in enumerate(agents_list):
-        #     torch.save(agn.policy_value.function.state_dict(),
-        #                prefix + name + "_" + approach + "_decen_" + str(nummer) + "_it_" + str(iteration) + ".pt")
     else:
         for nummer, agn in enumerate(agents_list):
             agn.policy_value = SCMNetwork(orchard_size, alpha, discount)
             agn.policy_value.function.load_state_dict(
                 torch.load(prefix + name + "_" + approach + "_cen_" + str(nummer) + "_it_" + str(iteration) + ".pt"))
-    # print(approach + "================ ITERATION " + str(iteration) + " ACTOR-CRITIC =====================")
-#
-    # # Perform actor-critic training
-    # if approach == "value":
-    #     train_ac_value(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "beta":
-    #     train_ac_beta(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "rate":
-    #     train_ac_rate(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "binary":
-    #     train_ac_binary(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-
 
     # for nummer, agn in enumerate(agents_list):
     #     torch.save(agn.policy_network.function.state_dict(), prefix + name + "_" + approach + "_" + str(nummer) + "_it_" + str(iteration) + ".pt")

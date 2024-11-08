@@ -83,19 +83,7 @@ for iteration in range(2, 5):
             agn.policy_value = SCMNetwork(orchard_size, alpha, discount)
             agn.policy_value.function.load_state_dict(
                 torch.load(prefix + name + "_" + approach + "_decen_" + str(nummer) + "_it_" + str(iteration) + ".pt"))
-    # print(approach + "================ ITERATION " + str(iteration) + " ACTOR-CRITIC =====================")
-#
-    # # Perform actor-critic training
-    # if approach == "value":
-    #     train_ac_value(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "beta":
-    #     train_ac_beta(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "rate":
-    #     train_ac_rate(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-    # elif approach == "binary":
-    #     train_ac_binary(orchard_size, num_agents, agents_list, name + "_" + approach, discount, 700000)
-
-
+                
     # for nummer, agn in enumerate(agents_list):
     #     torch.save(agn.policy_network.function.state_dict(), prefix + name + "_" + approach + "_" + str(nummer) + "_it_" + str(iteration) + ".pt")
     print("Saved Models; Evaluating Network")

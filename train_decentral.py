@@ -406,26 +406,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             for network in network_list:
                 for g in network.optimizer.param_groups:
                     g['lr'] = 0.000002
-        # if i == 150000:
-        #     for network in network_list:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.0001 / 2
-        # if i == 300000:
-        #     for network in network_list:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.00005 / 2
-        # if i == 500000:
-        #     for network in network_list:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.00001
-        # if i == 1000000:
-        #     for network in network_list:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.000003
-        # if i == 400000:
-        #     for network in network_list:
-        #         for g in network.optimizer.param_groups:
-        #             g['lr'] = 0.00001
         if (i % 50000 == 0 and i != 0) or i == timesteps - 1:
             print("=====Eval at", i, "steps======")
             fname = name
@@ -436,6 +416,10 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     graph_plots(network_list[0].function.state_dict(), name, one_plot)
     print("Total Reward:", total_reward)
     print("Total Apples:", env.total_apples)
+
+"""
+An evaluation every x steps that saves the checkpoint in case we pass the best performance
+"""
 
 from main import run_environment_1d
 def eval_network(name, maxi, discount, network_list, num_agents=4, side_length=10, iteration=99):

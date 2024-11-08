@@ -9,6 +9,9 @@ from policies.nearest import nearest_1d, nearest
 from metrics.metrics import append_metrics, plot_metrics, append_positional_metrics, plot_agent_specific_metrics
 from agents.simple_agent import SimpleAgent as Agent
 
+"""
+The main file for test runs within the Orchard with *baseline* policies. There is no MARL executed in this file.
+"""
 
 same_actions = 0
 

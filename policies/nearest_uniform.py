@@ -1,6 +1,11 @@
 from orchard.environment import Orchard
 import numpy as np
+"""
+Additional algorithms for the NEAREST-UNIFORM baseline policy. This uses the NEAREST policy, but uses replace_agents_1d to send the agents back to their "optimal" position periodically.
+Expected performance is above Nearest.
 
+Sample execution: run_environment_1d(num_agents, nearest, length, S, phi, "Nearest-Uniform", experiment, time, action_algo=replace_agents_1d)
+"""
 
 time = 0
 

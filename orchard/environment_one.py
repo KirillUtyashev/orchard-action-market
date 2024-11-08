@@ -1,6 +1,10 @@
 import numpy as np
 import random
 
+"""
+The Orchard environment, but in 1d. Currently unused in favour of the regular Orchard with height=1.
+"""
+
 action_vectors = [
             -1,
             1,
