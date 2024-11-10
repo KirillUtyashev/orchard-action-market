@@ -2,7 +2,6 @@ import numpy as np
 from policies.random_policy import random_policy
 from policies.nearest import nearest
 from models.connected import Connected
-from models.simple_connected import SimpleConnected
 from models.qnet import QNetwork
 from models.unet import UNetwork
 
@@ -37,7 +36,7 @@ def calculate_ir(a, b, pos, action):
 
 
 class SimpleAgent:
-    def __init__(self, policy=random_policy, model=SimpleConnected, debug=False, num=0):
+    def __init__(self, policy=random_policy, debug=False, num=0):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
