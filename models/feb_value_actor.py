@@ -28,6 +28,27 @@ def ten(c):
 def unwrap_state(state):
     return state["agents"].copy(), state["apples"].copy()
 
+N = 5
+     # 1 agent per 5 spaces
+def convert_altinput(a, b, agent_pos):
+    """
+    Convert to a view around the agent.
+    :param a:
+    :param b:
+    :param agent_pos:
+    :return:
+    """
+
+    ap = np.concatenate(([-1, -1, -1, -1, -1], a.flatten(), [-1, -1, -1, -1, -1]))
+    bp = np.concatenate(([-1, -1, -1, -1, -1], b.flatten(), [-1, -1, -1, -1, -1]))
+
+    leftmost = agent_pos[0]-N
+    rightmost = agent_pos[0] + N
+    true_a = ap[leftmost+N: rightmost+N+1]
+    true_b = bp[leftmost + N: rightmost + N + 1]
+
+    return true_a, true_b, agent_pos[0] / len(a.flatten())
+
 class SimpleConnectedMultiple(nn.Module):
     def __init__(self, oned_size): # we work with 1-d size here.
         super(SimpleConnectedMultiple, self).__init__()
@@ -36,6 +57,8 @@ class SimpleConnectedMultiple(nn.Module):
         # # self.layer3 = nn.Linear(64, 64)
         # self.layer4 = nn.Linear(64, 1)
         # #self.layer1 = nn.Linear(oned_size * 2, 256)
+
+        oned_size = (N*2 + 1)
 
         if oned_size == 10:
             # FIRST INPUT TYPE MODEL
@@ -54,15 +77,6 @@ class SimpleConnectedMultiple(nn.Module):
             # self.layer2 = nn.Linear(64, 64)
             self.layer3 = nn.Linear(64, 64)
             self.layer4 = nn.Linear(64, 1)
-        elif oned_size == 20:
-            # FIRST INPUT TYPE MODEL
-            self.layer1 = nn.Conv1d(1, 6, 3, 1)
-            #self.layer2 = nn.Linear(48, 64) # 48 for an input dimension of 10 (i.e. oned size is 5)
-            self.layer2 = nn.Linear(234, 128)
-            #self.layer2 = nn.Linear(64, 64)
-            self.layer3 = nn.Linear(128, 128)
-            #self.layer5 = nn.Linear(256, 128)
-            self.layer4 = nn.Linear(128, 1)
         else:
             outl = 6 * ((oned_size * 2 + 1) - 2)
             self.layer1 = nn.Conv1d(1, 6, 3, 1)
@@ -119,28 +133,11 @@ class ValueNetwork():
         self.num = num
 
     def get_value_function(self, a, b, pos):
-        pose = np.array([pos[0]])
+        a, b, agpos_old = convert_altinput(a, b, pos)
         with torch.no_grad():
             val = self.function(ten(a), ten(b), ten(pose)).cpu().numpy()
 
         return val
-
-    # def get_adv_and_train(self, state, new_state, old_pos, new_pos, reward):
-    #     a, b = unwrap_state(state)
-    #     new_a, new_b = unwrap_state(new_state)
-#
-    #     approx = self.function(ten(a), ten(b), ten(old_pos))
-    #     with torch.no_grad():
-    #         target = reward + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
-#
-    #     criterion = torch.nn.MSELoss()
-    #     self.optimizer.zero_grad()
-#
-    #     loss = criterion(approx, target)
-    #     loss.backward()
-    #     self.optimizer.step()
-#
-    #     return target.detach(), approx.detach()
 
     def train(self, state, new_state, reward, old_pos, new_pos):
         old_pos = np.array([old_pos[0]])
@@ -155,6 +152,8 @@ class ValueNetwork():
             print(reward)
         a, b = unwrap_state(state)
         new_a, new_b = unwrap_state(new_state)
+        a, b, agpos_old = convert_altinput(a, b, old_pos)
+        new_a, new_b, agpos_new = convert_altinput(new_a, new_b, new_pos)
         approx = self.function(ten(a), ten(b), ten(old_pos))
         with torch.no_grad():
             target = reward + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
@@ -167,23 +166,9 @@ class ValueNetwork():
         loss.backward()
         self.optimizer.step()
 
-
-        # global counter
-        # global total_reward
-        # total_reward += reward
-        # counter += 1
-        # if counter % 10000 == 0:
-        #     print(total_rewa# rd, counter)
-       # t, ap = target.detach().cpu(), approx.detach().cpu()
         t, ap = target.detach().cpu().numpy(), approx.detach().cpu().numpy()
         if t > 1000:
-            print("fuck this")
             print(t, ap, reward)
-        # global counter
-        # if self.num == 2:
-        #     counter += 1
-        # if self.num == 2 and counter > 3000:
-        #     print(t, ap, reward)
         return t, ap
 
     def train_with_learned_util(self, state, new_state, reward, old_pos, new_pos, target, att):
@@ -205,21 +190,11 @@ class ValueNetwork():
             if q < 0:
                 q = ten([0])
             target = reward + q
-        print(approx, target, reward)
-        #target = 1 + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
         criterion = torch.nn.MSELoss()
         self.optimizer.zero_grad()
-        #print(approx, target)
-        # target = ten(np.array([target]))
         loss = criterion(approx, target) # * att
         loss.backward()
         self.optimizer.step()
-        # global counter
-        # global total_reward
-        # total_reward += reward
-        # counter += 1
-        # if counter % 10000 == 0:
-        #     print(total_reward, counter)
         return target.detach().cpu(), approx.detach().cpu()
 
     def just_get_q_v(self, state, new_state, reward, old_pos, new_pos):
@@ -239,17 +214,4 @@ class ValueNetwork():
         with torch.no_grad():
             approx = self.function(ten(a), ten(b), ten(old_pos))
             target = reward + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
-            #target = 1 + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
-        # criterion = torch.nn.MSELoss()
-        # self.optimizer.zero_grad()
-        # #print(approx, target)
-        # loss = criterion(approx, target)
-        # loss.backward()
-        # self.optimizer.step()
-        # global counter
-        # global total_reward
-        # total_reward += reward
-        # counter += 1
-        # if counter % 10000 == 0:
-        #     print(total_reward, counter)
         return target.detach().cpu(), approx.detach().cpu()
