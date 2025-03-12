@@ -1,5 +1,4 @@
 from main import run_environment_1d
-from models.simple_connected_multiple_blind import SCMBNetwork
 from models.simple_connected_multiple import SCMNetwork
 from orchard.environment import *
 import numpy as np

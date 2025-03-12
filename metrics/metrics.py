@@ -79,6 +79,13 @@ def append_metrics(metrics, state, total_reward, timestep, avg_picked=True, avg_
 
     return metrics
 
+
+def append_positional_metrics(agent_metrics, agents_list):
+    for i, metric in enumerate(agent_metrics):
+        agent_metrics[i].append(agents_list[i].position[0])
+
+    return agent_metrics
+
 metric_titles = [
     "Average Apples Picked per Timestep",
     "Average Apples on Field",
@@ -91,8 +98,20 @@ def plot_metrics(metrics, name, experiment):
     for i, series in enumerate(metrics):
         plt.figure(str(i) + str(experiment), figsize=(10, 5))
         if metric_titles[i] == "Average Distance to Nearest Apple":
-            series = series[5000:6000].copy()
+            series = series[2000:3000].copy()
+        else:
+            series = series[2:].copy()
         plt.plot(series, label=name)
         plt.legend()
         plt.title(metric_titles[i])
         plt.savefig("graph_" + experiment + "_" + str(i) + ".png")
+
+def plot_agent_specific_metrics(agent_metrics, experiment, name):
+    plt.figure(experiment + name, figsize=(6, 5))
+    for i, series in enumerate(agent_metrics):
+        series1 = series[1:1000].copy()
+        plt.plot(series1, label=str(i))
+    plt.legend()
+    plt.title("Agent X-Axis Coordinates Under Policy " + name)
+    plt.savefig("graph_" + name + "_" + experiment + "_" + str(i) + "_distances.png")
+    plt.close(experiment + name)

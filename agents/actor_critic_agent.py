@@ -1,15 +1,4 @@
 import numpy as np
-from policies.random_policy import random_policy
-from policies.nearest import nearest
-from models.connected import Connected
-from models.simple_connected import SimpleConnected
-from models.actor_dc_1d import ActorNetwork
-from models.qnet import QNetwork
-from models.unet import UNetwork
-import torch.nn.functional as F
-
-from models.util import ReplayBuffer
-
 import random
 
 import torch
@@ -28,7 +17,7 @@ action_vectors = [
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class ACAgent:
-    def __init__(self, policy=random_policy, model=SimpleConnected, debug=False, num=0, num_agents=1, is_beta_agent=0, is_alpha_agent=0, is_projecting=0):
+    def __init__(self, policy=None, model=None, debug=False, num=0, num_agents=1, is_beta_agent=0, is_alpha_agent=0, is_projecting=0):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
