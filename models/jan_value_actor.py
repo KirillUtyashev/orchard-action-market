@@ -128,9 +128,9 @@ class ValueNetwork():
 
         return val
 
-    def train(self, state, new_state, reward, old_pos, new_pos):
-        old_pos = np.array([old_pos[0]])
-        new_pos = np.array([new_pos[0]])
+    def train(self, state, new_state, reward):
+        old_pos = np.array([state["pos"][0]])
+        new_pos = np.array([new_state["pos"][0]])
 
         debug = False
         if debug:
@@ -141,12 +141,15 @@ class ValueNetwork():
             print(reward)
         a, b = unwrap_state(state)
         new_a, new_b = unwrap_state(new_state)
+
         approx = self.function(ten(a), ten(b), ten(old_pos))
         with torch.no_grad():
             target = reward + self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
-            target = torch.clamp(target, 0)
+        # target = 1 + self.discount * self.function(ten(new_a), ten(new_b), new_pos)
+        # criterion = torch.nn.L1Loss()
         criterion = torch.nn.MSELoss()
         self.optimizer.zero_grad()
+
         loss = criterion(approx, target)
         loss.backward()
         self.optimizer.step()
