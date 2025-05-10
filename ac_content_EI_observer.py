@@ -6,18 +6,9 @@ random.seed(35279038)
 np.random.seed(389045)
 import time
 import torch.nn.functional as F
-from ac_content_utilities import find_ab, find_ab_bin, find_ab_content_infl
-from actor_critic import eval_network
-from alloc.allocation import find_allocs, roundabout_find_allocs, roundabout_find_allocs_with_b0, \
-    roundabout_find_allocs_with_b0_full_vec
-from main import run_environment_1d
-from models.simple_connected_multiple import SCMNetwork
 from orchard.environment import *
 import matplotlib.pyplot as plt
 
-from policies.random_policy import random_policy_1d, random_policy
-from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-# from models.actor_dc_1d import ActorNetwork
 from models.content_actor_1d import ActorNetwork
 from models.content_observer_1d import ObserverNetwork, ten
 
@@ -1076,101 +1067,11 @@ single = True
 if single:
     for itee in range(1):
         print("ITERATION ", itee)
-        #experiment("jan21_observer_superbase3", base_a=0.01, kappa_decay=5, ts=6000,
-        #           folder="jan21_observer_superbase3")
-        # rate_str = ["01", "02", "05", "10", "20", "50", "p5", "p1", "p05", "p01", "p001"]
-        # for iter, rate in enumerate([0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 0.005, 0.001, 0.0005, 0.0001, 0.00001]):
-        # rate_str = ["k5", "k3", "k2", "k1"]
-        # for iter, rate in enumerate([5, 3, 2, 1]):
-        #     if rate < 0.01:
-        #         experiment("feb3_observer_02kap" + rate_str[iter], base_a=0.02, kappa_decay=rate, ts=8000, folder="jan26_observer_02kap" + rate_str[iter])
-        #     else:
-        #         experiment("feb3_observer_02kap" + rate_str[iter], base_a=0.02, kappa_decay=rate, ts=8000, folder="jan26_observer_02kap" + rate_str[iter])
-        # experiment("jan25_observer_50", base_a=0.5, kappa_decay=5, ts=7000,
-        #            folder="jan25_observer_50")
-        # experiment("jan25_observer_50_k1", base_a=0.5, kappa_decay=1, ts=7000,
-        #            folder="jan25_observer_50_k1")
-        # experiment("jan25_observer_100_k1", base_a=1, kappa_decay=5, ts=7000,
-        #            folder="jan25_observer_100_k1")
-        # experiment("feb9_01_5", base_a=0.01, kappa_decay=5, ts=50000,
-        #            folder="feb9_01_5")
-        # experiment("feb8_01_3", base_a=0.01, kappa_decay=3, ts=50000,
-        #            folder="feb8_01_3")
-        # experiment("feb8_01_1", base_a=0.01, kappa_decay=1, ts=50000,
-        #            folder="feb8_01_1")
-        # experiment("feb9_01_20", base_a=0.01,#  kappa_decay=20, ts=50000,
-        #            folder="feb9_01_20")
-
-        # experiment("feb9_05_5", base_a=0.05, kappa_decay=5, ts=50000,
-        #            folder="feb9_05_5")
-        # experiment("feb9_05_3", base_a=0.05, kappa_decay=3, ts=50000,
-        #            folder="feb9_05_3")
-        # experiment("feb9_05_1", base_a=0.05, kappa_decay=1, ts=50000,
-        #            folder="feb9_05_1")
-        # experiment("feb9_02_5", base_a=0.02, kappa_decay=5, ts=50000,
-        #            folder="feb9_02_5")
-        # experiment("feb9_02_20", base_a=0.02, kappa_decay=20, ts=70000,
-        #            folder="feb9_02_20")
-        # experiment("feb9_05_20", base_a=0.05, kappa_decay=20, ts=70000,
-        #            folder="feb9_05_20")
-        # experiment("feb10_10_5", base_a=0.10, kappa_decay=5, ts=35000,
-        #            folder="feb10_10_5")
-        # experiment("feb10_10_3", base_a=0.10, kappa_decay=3, ts=20000,
-        #            folder="feb10_10_3")
-        # experiment("feb10_10_20", base_a=0.10, kappa_decay=20, ts=35000,
-        #            folder="feb10_10_20")
-        # experiment("feb10_20_5", base_a=0.20, kappa_decay=5, ts=20000,
-        #            folder="feb10_20_5")
-        # experiment("feb10_20_3", base_a=0.20, kappa_decay=3, ts=20000,
-        #            folder="feb10_20_3")
-        # experiment("feb10_20_1", base_a=0.20, kappa_decay=1, ts=20000,
-        #            folder="feb10_20_1")
-        # experiment("feb11_50_5", base_a=0.50, kappa_decay=5, ts=20000,
-        #            folder="feb11_50_5")
-        # experiment("feb11_50_3", base_a=0.50, kappa_decay=3, ts=20000,
-        #            folder="feb11_50_3")
-        # experiment("feb11_50_1", base_a=0.50, kappa_decay=1, ts=20000,
-        #            folder="feb11_50_1")
-        # experiment("feb11_50_20", base_a=0.50, kappa_decay=20, ts=20000,
-        #            folder="feb11_50_20")
-        # experiment("feb11_100_20", base_a=1.00, kappa_decay=20, ts=20000,
-        #            folder="feb11_100_20")
-        # experiment("feb11_100_3", base_a=1.00, kappa_decay=3, ts=20000,
-        #            folder="feb11_100_3")
-        # experiment("feb11_100_1", base_a=1.00, kappa_decay=1, ts=20000,
-        #            folder="feb11_100_1")
         experiment("feb11_p001_20", base_a=0.001, kappa_decay=5, ts=50000,
                    folder="feb11_p001_20")
-        # experiment("feb3_01_3", base_a=0.01, kappa_decay=3, ts=8000,
-        #            folder="feb3_01_3")
-        # experiment("feb3_001", base_a=0.001, kappa_decay=5, ts=8000,
-        #            folder="feb3_001")
-        # experiment("feb3_02_3", base_a=0.02, kappa_decay=3, ts=8000,
-        #            folder="feb3_02_3")
-        # experiment("feb3_02_1", base_a=0.02, kappa_decay=1, ts=8000,
-        #            folder="feb3_02_1")
-        # experiment("feb3_05_1", base_a=0.05, kappa_decay=1, ts=8000,
-        #            folder="feb3_05_1")
-        # experiment("feb3_10_1", base_a=0.1, kappa_decay=1, ts=8000,
-        #            folder="feb3_10_1")
-        # experiment("feb3_10_3", base_a=0.1, kappa_decay=3, ts=8000,
-        #            folder="feb3_10_3")
-        # experiment("feb3_20_1", base_a=0.2, kappa_decay=1, ts=8000,
-        #            folder="feb3_20_1")
-        # experiment("feb3_20_3", base_a=0.2, kappa_decay=3, ts=8000,
-        #            folder="feb3_20_3")
-        # experiment("feb3_20_1", base_a=0.2, kappa_decay=1, ts=7000,
-        #            folder="feb3_20_1")
-        # experiment("feb3_p05_5", base_a=0.005, kappa_decay=5, ts=10000,
-        #            folder="feb3_p01_5")
-        # experiment("feb3_p01_1", base_a=0.001, kappa_decay=3, ts=7000,
-        #            folder="feb3_p01_1")
-        # experiment("feb3_p1_long2", base_a=0.001, kappa_decay=5, ts=8000,
-        #            folder="feb3_p1_long2")
-        # experiment("feb3_kap3", base_a=0.01, kappa_decay=3, ts=7000,
-        #            folder="feb3_kap3")
 
 else:
+    # Old, may be outdated
     thres1 = [0, 0.00001, 0.00003, 0.00005, 0.0001, 0.0003]
     thres2 = [0, 0.00001, 0.00005, 0.0001, 0.00015, 0.00025, 0.0003, 0.00035, 0.0005]  #already done 0.00001 & 0.00005
     thres11 = ["0", "1", "3", "5", "10", "30"]  # ["0", "1", "3", "5", "10", "15"]
