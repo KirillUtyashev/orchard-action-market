@@ -15,10 +15,15 @@ Pytorch with CUDA is highly recommended. I run most experiments on an RTX-4060 (
 ## Folders
 
 `agents` contain the logic for most of the Agent objects (which act both in the Orchard Action Market and the Content Market).
+
 `alloc` contains the logic for solving optimization problems as in the rate allocation of agents.
+
 `models` contains the code for the (PyTorch) neural network models which are used for both Value Functions and policy approximation / learning.
+
 `orchard` contains the implementation of the Orchard (apple-picking) environment, including the global state, apple spawning (and despawning), apple picking, and time evolution.
+
 `policies` contains benchmark policies for use within the Orchard environment.
+
 `testing` contains two files which can be used to load Actor-Critic or Value Function model weights ("checkpoints") to test their performance within an Orchard. 
 
 ## Top-Level Files
