@@ -1,5 +1,4 @@
 from agents.communicating_agent import CommAgent
-from models.simple_connected_multiple_blind import SCMBNetwork
 #from models.simple_connected_multiple import SCMNetwork
 from orchard.environment import *
 import numpy as np
@@ -11,13 +10,11 @@ from policies.random_policy import random_policy_1d, random_policy
 from policies.nearest import nearest_1d, nearest
 from metrics.metrics import append_metrics, plot_metrics, append_positional_metrics, plot_agent_specific_metrics
 from agents.simple_agent import SimpleAgent
-from models.simple_connected import SimpleConnected
 # TEMP:
-# from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-from models.simple_connected_multiple_dc_altinput import SCMNetwork, SimpleConnectedMultiple
+from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
+# from models.simple_connected_multiple_dc_altinput import SCMNetwork, SimpleConnectedMultiple
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
-from tests.benchmark_loss import estimate_value_function
 
 import torch
 import torch.nn as nn
