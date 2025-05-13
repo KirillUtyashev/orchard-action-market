@@ -31,12 +31,11 @@ phi = 0.2
 discount = 0.99
 
 from models.simple_connected_multiple import SimpleConnectedMultiple
-from models.qnet_connected import CentralizedQNetwork
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
 from train_decentral import training_loop as training_loop_d
 
-
+"""
 # CENTRALIZED LEARNING
 
 agents_list = []
@@ -67,50 +66,6 @@ for i in range(1):
         print("Total Same Actions:", agents_list[0].same_actions)
         agents_list[0].same_actions = 0
 
-"""
-# num_agents = 2
-# agents_list = []
-# for i in range(num_agents):
-#     agents_list.append(SimpleAgent(policy=nearest, num="f"))
-# for i in range(1):
-#     print("loop", i)
-#     training_loop(agents_list, side_length, S, phi, 0.0001, "simple_2_agent_length_20", discount=0.99, timesteps=300000)
-#     if i > 0:
-#         print("Total Same Actions:", agents_list[0].same_actions)
-#         agents_list[0].same_actions = 0
-# num_agents = 5
-# agents_list = []
-# for i in range(num_agents):
-#     agents_list.append(SimpleAgent(policy=nearest, num="f"))
-#
-# for i in range(1):
-#     print("loop", i)
-#
-#     training_loop(agents_list, side_length, S, phi, 0.0001, "simple_5_agent_length_20", discount=0.99, timesteps=300000)
-#
-#     if i > 0:
-#         print("Total Same Actions:", agents_list[0].same_actions)
-#         agents_list[0].same_actions = 0
-#
-
-# agents_list = []
-# for i in range(num_agents):
-#     agents_list.append(SimpleAgent(policy=nearest, num=i))
-#
-# epsilon = 0.5
-# for i in range(10):
-#     print("loop", i)
-#
-#     training_loop(agents_list, side_length, S, phi, 0.0001, "epsilon", epsilon=epsilon, timesteps=50000)
-#     epsilon -= 0.04
-#     if epsilon < 0.05:
-#         epsilon = 0.05
-#
-#
-#     for agent in agents_list:
-#         agent.copy_value_function()
-#         agent.policy = "value_function"
-#
 
 
 
