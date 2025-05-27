@@ -121,6 +121,8 @@ class SimpleConnectedMultiple(nn.Module):
 
 counter = 0
 total_reward = 0
+
+
 class ValueNetwork():
     def __init__(self, oned_size, alpha, discount, num=None):
         self.function = SimpleConnectedMultiple(oned_size)
@@ -135,8 +137,7 @@ class ValueNetwork():
     def get_value_function(self, a, b, pos):
         a, b, agpos_old = convert_altinput(a, b, pos)
         with torch.no_grad():
-            val = self.function(ten(a), ten(b), ten(pose)).cpu().numpy()
-
+            val = self.function(ten(a), ten(b), ten(pos)).cpu().numpy()
         return val
 
     def train(self, state, new_state, reward, old_pos, new_pos):

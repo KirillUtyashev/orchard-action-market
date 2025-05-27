@@ -6,10 +6,10 @@ import random
 from policies.random_policy import random_policy_1d
 from plots import graph_plots, add_to_plots, setup_plots, init_plots
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
-from helpers import generate_sample_states, eval_network, env_step
-from agents.actor_critic_agent import ACAgent
-import torch
+from helpers import convert_position, env_step, generate_sample_states, \
+    eval_network
 
+import torch
 torch.set_default_dtype(torch.float64)
 torch.backends.cudnn.benchmark = True
 
@@ -49,34 +49,22 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     sample_state, sample_state5, sample_state6 = generate_sample_states(orchard_length, len(agents_list))
 
     for i in range(timesteps):
-        agent = random.randint(0, env.n - 1)  # Choose random agent
-        old_pos = agents_list[agent].position.copy()  # Get position of this agent
-        state = env.get_state()  # Get the current state (a COPY)
+        s, new_s, r, old_pos, agent = env_step(agents_list, env, i, timesteps, "AC")
+        total_reward += r  # Add to reward.
+        for each_agent in range(len(agents_list)):
+            if each_agent == agent:
+                agents_list[each_agent].policy_value.add_experience(np.concatenate([s, convert_position(old_pos)], axis=0),
+                                                                    np.concatenate([new_s, convert_position(agents_list[each_agent].position)], axis=0),
+                                                                    None,
+                                                                    r)
+            else:
+                agents_list[each_agent].policy_value.add_experience(np.concatenate([s, convert_position(agents_list[each_agent].position)], axis=0),
+                                                                    np.concatenate([new_s, convert_position(agents_list[each_agent].position)], axis=0),
+                                                                    None,
+                                                                    0)
 
-        epsilon = 0
-        chance = random.random()  # Epsilon-greedy policy. Epsilon is zero currently.
-        if chance < epsilon:
-            action = random_policy_1d(state, old_pos)
-        else:
-            action = agents_list[agent].get_action(state, discount)  # Get action.
 
-        reward, new_position = env.main_step(agents_list[agent].position.copy(),
-                                             action)  # Take the action. Observe reward, and get new position
-        agents_list[agent].position = new_position.copy()  # Save new position.
-        total_reward += reward  # Add to reward.
 
-        new_state = env.get_state()
-
-        sp_state = {
-            "agents": state["agents"].copy(),
-            "apples": state["apples"].copy(),
-            "pos": old_pos.copy()
-        }
-        sp_new_state = {
-            "agents": new_state["agents"].copy(),
-            "apples": new_state["apples"].copy(),
-            "pos": agents_list[agent].position.copy()
-        }
 
 
         p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
@@ -85,7 +73,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             add_to_plots(p_network_list[0].function.state_dict(), i, one_plot)
             v_value = agents_list[1].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["poses"][0])
             v_value1 = agents_list[1].policy_network.get_function_output(sample_state5["agents"], sample_state5["apples"],
-                                                                        pos=sample_state5["poses"][1])
+                                                                         pos=sample_state5["poses"][1])
             v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
                                                                          sample_state6["apples"],
                                                                          pos=sample_state6["poses"][0])
@@ -139,27 +127,47 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     print("Total Apples:", env.total_apples)
 
 
+
+from agents.actor_critic_agent import ACAgent
+
 def train_ac_value(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
     training_loop(agents_list, side_length, None, None, 0.0013, name, discount, timesteps=timesteps, iteration=iteration)
 
 
-if __name__ == "__main__":
-    side_length = 10
-    num_agents = 4
+def train_ac_beta(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
+    alphas, betas = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000, iteration=iteration)
 
-    S = None
-    phi = None
+    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas, has_beta=True, discount=discount,
+                  timesteps=timesteps, iteration=iteration)
 
-    agents_list = []
+
+def train_ac_rate(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
+    # step 1 - find normal A/B
+    alphas1, betas1 = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=20000, iteration=iteration)
+
+    # step 2 - get allocs and regenerate
+    allocs = []
     for i in range(num_agents):
-        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents))
-        #agents_list[i].policy = "learned_policy"
+        allocs.append(find_allocs(alphas1[i]))
+        allocsf = (1 - np.exp(-allocs[i]))
+        agents_list[i].set_alloc_rates(allocsf, 1)
 
-    for i in range(1):
-        print("loop", i)
+    alphas1, betas1 = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=20000, iteration=iteration) # regen with rates
 
-        training_loop(agents_list, side_length, S, phi, 0.0013, "D-RANDOM_4_10", discount=0.99, timesteps=1500000, altname="AltD-RANDOM_4_10")
+    print(betas1)
 
-        if i > 0:
-            print("Total Same Actions:", agents_list[0].same_actions)
-            agents_list[0].same_actions = 0
+    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas1, has_beta=True, discount=discount,
+                  timesteps=timesteps, iteration=iteration)
+
+
+def train_ac_binary(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
+    avg_alphas, betas = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000, iteration=iteration)
+    print(avg_alphas)
+    for ida, agent in enumerate(agents_list):
+        agent.avg_alpha = avg_alphas[ida]
+    alphas, betas = find_ab_bin(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000,
+                                iteration=iteration)
+    print(betas)
+    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas, has_beta=True,
+                  discount=discount,
+                  timesteps=timesteps, iteration=iteration)

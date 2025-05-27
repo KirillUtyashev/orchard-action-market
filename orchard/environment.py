@@ -1,6 +1,5 @@
 import numpy as np
 import random
-random.seed(10)
 
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
@@ -15,8 +14,19 @@ action_vectors = [
             np.array([0, -1]),
             np.array([0, 0])
         ]
+
+
 class Orchard:
-    def __init__(self, side_length, num_agents, s=None, phi=None, agents_list=None, one=False, action_algo=None, spawn_algo=None, despawn_algo=None):
+    def __init__(self,
+                 side_length,
+                 num_agents,
+                 s=None,
+                 phi=None,
+                 agents_list=None,
+                 one=False,
+                 action_algo=None,
+                 spawn_algo=None,
+                 despawn_algo=None):
         self.length = side_length
 
         if one:
@@ -58,12 +68,19 @@ class Orchard:
 
         self.total_apples = 0
 
+        # Variables needed when visualizing Orchard environment
+        self._rendering_initialized = False
+        self.render_mode = None
+
     def initialize(self, agents_list, agent_pos=None, apples=None):
+        """
+        Populate the Orchard environment with agents in agent_list and randomly spawn the first apple
+        """
         self.agents = np.zeros((self.length, self.width), dtype=int)
         if apples is None:
             self.apples = np.zeros((self.length, self.width), dtype=int)
         else:
-            self.apples = apples
+            self.apples = apples  # This has to be an array
         self.agents_list = agents_list
         self.set_positions(agent_pos)
         self.spawn_algorithm(self)
@@ -77,12 +94,6 @@ class Orchard:
                 position = np.random.randint(0, [self.length, self.width])
             self.agents_list[i].position = position
             self.agents[position[0], position[1]] += 1
-
-    def get_state_only(self):
-        return {
-            "agents": self.agents.copy(),
-            "apples": self.apples.copy(),
-        }
 
     def get_state(self):
         return {
@@ -161,3 +172,13 @@ class Orchard:
             verifier[agents_list[i].position[0], agents_list[i].position[1]] -= 1
             assert verifier[agents_list[i].position[0], agents_list[i].position[1]] >= 0
         assert sum(verifier.flatten()) == 0
+
+    def _init_render(self):
+        from rendering import Viewer
+        self.viewer = Viewer((1, self.length))
+        self._rendering_initialized = True
+
+    def render(self):
+        if not self._rendering_initialized:
+            self._init_render()
+        return self.viewer.render(self, return_rgb_array=self.render_mode == "rgb_array")

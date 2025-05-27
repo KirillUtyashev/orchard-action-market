@@ -1,4 +1,6 @@
 import numpy as np
+
+from helpers import convert_position
 from policies.random_policy import random_policy
 from policies.nearest import nearest
 
@@ -61,19 +63,19 @@ class CommAgent:
         self.times = 0
         self.agents_list = None
 
-    def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
+    def get_comm_value_function(self, agents, apples, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:
             assert agent_poses is not None
             for num, agent in enumerate(agents_list):
-                sum += agent.policy_value.get_value_function(a, b, np.array(agent_poses[num]))
+                sum += agent.get_value_function(agents, apples, np.array(agent_poses[num]))
         else:
             assert new_pos is not None
             for agent in agents_list:
                 if agent.num == self.num:
-                    sum += agent.policy_value.get_value_function(a, b, new_pos)
+                    sum += agent.get_value_function(agents, apples, new_pos)
                 else:
-                    sum += agent.policy_value.get_value_function(a, b, agent.position)
+                    sum += agent.get_value_function(agents, apples, agent.position)
         return sum
 
     def get_comm_value_function_alt(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
@@ -91,8 +93,8 @@ class CommAgent:
                     sum += agent.policy_value2.get_value_function(a, b, agent.position)
         return sum
 
-    def get_value_function(self, a, b):
-        f = self.policy_value.get_value_function(a, b, self.position)
+    def get_value_function(self, a, b, pos=None):
+        f = self.policy_value.get_value_function(np.concatenate([a, b, convert_position(self.position if pos is None else pos)], axis=0))
         return f
 
     def get_best_action(self, state, discount, agents_list):

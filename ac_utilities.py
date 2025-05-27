@@ -1,14 +1,7 @@
-from main import run_environment_1d
-from models.simple_connected_multiple import SCMNetwork
+from models.value_function import CNetwork
 from orchard.environment import *
 import numpy as np
-import matplotlib.pyplot as plt
-import orchard.environment_one
 import random
-from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-from models.actor_dc_1d import ActorNetwork
-# from models.simple_connected_multiple_dc_altinput import SCMNetwork, SimpleConnectedMultiple
-# from models.actor_dc_1d_altinput import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
 
@@ -32,7 +25,7 @@ def find_ab(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, eps
 
     for agn in range(len(agents_list)):
         if iteration == 99:
-            network1 = SCMNetwork(orchard_length, alpha, discount)
+            network1 = CNetwork(orchard_length, alpha, discount)
             agents_list[agn].policy_value = network1
             network1.function.load_state_dict(torch.load(name + "_" + str(agn) + ".pt"))
             v_network_list.append(network1)
@@ -109,7 +102,7 @@ def find_ab_bin(agents_list, orchard_length, S, phi, alpha, name, discount=0.99,
 
     for agn in range(len(agents_list)):
         if iteration == 99:
-            network1 = SCMNetwork(orchard_length, alpha, discount)
+            network1 = CNetwork(orchard_length, alpha, discount)
             agents_list[agn].policy_value = network1
             network1.function.load_state_dict(torch.load(name + "_" + str(agn) + ".pt"))
             v_network_list.append(network1)

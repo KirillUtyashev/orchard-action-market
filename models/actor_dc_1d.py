@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from helpers import unwrap_state, ten
 torch.set_default_dtype(torch.float64)
 
-from torch import linalg
 
 action_vectors = [
             np.array([-1, 0]),
@@ -18,49 +18,6 @@ action_vectors = [
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def ten(c):
-    return torch.from_numpy(c).to(device).double()
-
-def unwrap_state(state):
-    return state["agents"].copy(), state["apples"].copy()
-
-def get_closest_left_right_1d(mat, agent_pos):
-    mat = list(mat)
-    left = -1
-    right = -1
-    pos, count = agent_pos, mat[agent_pos]
-    while pos > -1:
-        if count > 0:
-            left = agent_pos - pos
-            break
-        else:
-            pos -= 1
-            count = mat[pos]
-    pos, count = agent_pos, mat[agent_pos]
-    while pos < len(mat):
-        if count > 0:
-            right = pos - agent_pos
-            break
-        else:
-            pos += 1
-            if pos >= len(mat):
-                break
-            count = mat[pos]
-    return left, right
-def convert_input(a, b, agent_pos):
-    #print(list(a.flatten()), list(b.flatten()), agent_pos)
-
-    a[agent_pos[0], agent_pos[1]] -= 1
-    a = a.flatten()
-    b = b.flatten()
-    #print(list(a), list(b), agent_pos)
-    left1, right1 = get_closest_left_right_1d(b, agent_pos[0])
-    left2, right2 = get_closest_left_right_1d(a, agent_pos[0])
-    arr = [left1, right1]
-    arr1 = [left2, right2]
-    #print(arr, arr1)
-    return [np.array(arr), np.array(arr1)]
-
 
 class SimpleConnectedMultiple(nn.Module):
     def __init__(self, oned_size): # we work with 1-d size here.
@@ -68,7 +25,7 @@ class SimpleConnectedMultiple(nn.Module):
         self.layer1 = nn.Linear(oned_size * 2 + 1, 128)
         self.layer2 = nn.Linear(128, 128)
         self.layer3 = nn.Linear(128, 64)
-        self.layer4 = nn.Linear(64, 3) # [0] is move left, [1] is move right, [2] is don't move
+        self.layer4 = nn.Linear(64, 3)  # [0] is move left, [1] is move right, [2] is don't move
         #self.layer1 = nn.Linear(oned_size * 2, 256)
 
         # FIRST INPUT TYPE MODEL
@@ -184,8 +141,6 @@ class ActorNetwork():
         old_pos = np.array([state["pos"][0]])
         new_pos = np.array([new_state["pos"][0]])
 
-
-
         debug = False
         if debug:
             print("=========TRAINING=========")
@@ -227,17 +182,6 @@ class ActorNetwork():
         loss = -1 * torch.mul(prob, adv)
 
         loss.backward()
-        # total_norm = 0
-        # for p in self.function.parameters():
-        #     param_norm = p.grad.detach().data.norm(2)
-        #     total_norm += param_norm.item() ** 2
-        # total_norm = total_norm ** 0.5
-        #print([p.grad for p in self.function.parameters() if p.grad is not None])
-        #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-        #v = linalg.vector_norm(grads, ord=2)
-        # self.vs += total_norm
-        #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
-
         self.optimizer.step()
 
     def addexp(self, state, new_state, reward, action, agents_list):
@@ -250,12 +194,10 @@ class ActorNetwork():
             poses.append(i.position.copy())
         self.poses.append(poses)
 
-
     def train_multiple(self, agents_list):
         losses = []
         crit_losses = []
         states = self.states
-        #print(len(states))
         new_states = self.new_states
         rewards = self.rewards
         actions = self.actions
@@ -271,14 +213,6 @@ class ActorNetwork():
 
             old_pos = np.array([state["pos"][0]])
             new_pos = np.array([new_state["pos"][0]])
-
-            debug = False
-            if debug:
-                print("=========TRAINING=========")
-                print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-                print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-                print(old_pos, new_pos)
-                print(reward)
 
             a, b = unwrap_state(state)
             new_a, new_b = unwrap_state(new_state)
@@ -300,11 +234,7 @@ class ActorNetwork():
                 #print("A", v_value)
             #with torch.no_grad():
             q_value = reward + self.discount * self.get_value_function_with_pos(new_a, new_b, agents_list, all_pos, new_pos)
-            #print(v_value)
-            #print(q_value)
             adv = q_value - v_value
-            #print(adv, "A")
-            #print(q_value - self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
             adv = ten(adv)
 
             if self.critic is not None:
@@ -317,17 +247,6 @@ class ActorNetwork():
             self.optimizer.zero_grad()
             loss = torch.stack(losses).sum()
             loss.backward()
-            # total_norm = 0
-            # for p in self.function.parameters():
-            #     param_norm = p.grad.detach().data.norm(2)
-            #     total_norm += param_norm.item() ** 2
-            # total_norm = total_norm ** 0.5
-            #print([p.grad for p in self.function.parameters() if p.grad is not None])
-            #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-            #v = linalg.vector_norm(grads, ord=2)
-            # self.vs += total_norm
-            #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
-
             self.optimizer.step()
 
             self.states = []
@@ -340,7 +259,7 @@ class ActorNetwork():
                 self.critic.optimizer.zero_grad()
                 crit_loss = torch.stack(crit_losses).sum()
                 crit_loss.backward()
-                self.critic.optimizer.step()
+                self.critic.optimizer.env_step()
 
     def get_collective_adv_basic(self, state, new_state, reward, old_pos, new_pos, poses, agents_list):
         summ = 0
@@ -420,51 +339,17 @@ class ActorNetwork():
 
             if action == 4:
                 action = 2
-
-            #prob = torch.log(actions[action])
             prob = F.log_softmax(actions_lst, dim=0)[action]
-            #prob = actions[action]
-            # if self.beta is None:
-            #     #with torch.no_grad():
-            #     v_value = self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos)
-            # else:
-            #     v_value = self.beta
-            #     #print(self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
-            #     #print("A", v_value)
-            # #with torch.no_grad():
-            # q_value = reward + self.discount * self.get_value_function_with_pos(new_a, new_b, agents_list, all_pos, new_pos)
-            #print(v_value)
-            #print(q_value)
             adv = self.get_collective_adv_basic(state, new_state, reward, old_pos, new_pos, all_pos, agents_list)
-            #print(adv, "A")
-            #print(q_value - self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
-            #adv = ten(adv)
 
             losses.append(-1 * torch.mul(prob, adv))
 
         if len(states) != 0:
-            # if self.critic is not None:
-            #     self.critic.optimizer.zero_grad()
-            #     crit_loss = torch.stack(crit_losses).sum()
-            #     #crit_loss.backward(retain_graph=True)
-            #     #self.critic.optimizer.step()
-
             self.optimizer.zero_grad()
 
             loss = torch.stack(losses).sum()
             loss.backward()
-            # total_norm = 0
-            # for p in self.function.parameters():
-            #     param_norm = p.grad.detach().data.norm(2)
-            #     total_norm += param_norm.item() ** 2
-            # total_norm = total_norm ** 0.5
-            #print([p.grad for p in self.function.parameters() if p.grad is not None])
-            #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-            #v = linalg.vector_norm(grads, ord=2)
-            # self.vs += total_norm
-            #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
             self.optimizer.step()
-
 
             self.states = []
             self.new_states = []

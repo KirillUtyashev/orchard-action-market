@@ -1,10 +1,6 @@
 import numpy as np
 from policies.random_policy import random_policy
-from policies.nearest import nearest
-
 import torch
-import torch.nn as nn
-import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 
 action_vectors = [
@@ -44,8 +40,8 @@ class SimpleAgent:
         self.scheduler = None
         self.num = num
 
-    def get_value_function(self, a, b):
-        f = self.policy_value.get_value_function(a, b, self.position)
+    def get_value_function(self, x):
+        f = self.policy_value.get_value_function(x)
         return f
 
     def get_value_function2(self, a, b):
@@ -65,7 +61,7 @@ class SimpleAgent:
         for act in [0, 1, 4]:
             val, new_a, new_b, new_pos = calculate_ir(a, b, self.position, act)
             rew = val
-            val += discount * self.get_value_function(new_a, new_b)
+            val += discount * self.get_value_function(np.concatenate([new_a, new_b], axis=0).T)
             if self.debug:
                 print("Action " + str(action_vectors[act]) + " has expected value " + str(val) + "; immediate reward " + str(rew))
             if val > best_val:

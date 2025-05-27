@@ -1,8 +1,9 @@
 import time
 
+from alloc.allocation import find_allocs
 from main import run_environment_1d
 from models.simple_connected_multiple_blind import SCMBNetwork
-from models.simple_connected_multiple import SCMNetwork
+from models.simple_connected_multiple import CNetwork
 from orchard.environment import *
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,7 +16,7 @@ from metrics.metrics import append_metrics, plot_metrics, append_positional_metr
 from agents.simple_agent import SimpleAgent
 from models.simple_connected import SimpleConnected
 from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-from models.simple_connected_multiple import SCMNetwork as SCMNetwork_Central
+from models.simple_connected_multiple import CNetwork as SCMNetwork_Central
 from models.actor_dc_1d import ActorNetwork
 #from models.actor_dc_1d_complex import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
@@ -27,16 +28,6 @@ import torch.nn as nn
 import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 torch.backends.cudnn.benchmark = True
-
-"""
-The training file for Actor-Critic with NO POLICY ITERATION. These four files are the different strategies used, each with 
-increasing levels of abstraction and removal of perfect information.
-
-AC: regular actor-critic with a learning actor and a learning critic.
-AC Beta: actor-critic, but the beta value (which is updated periodically) replaces the V function in the advantage calculation.
-AC Rate: AC Beta with further rate allocation.
-AC Binary: AC Beta, but with the advantage (Q - beta) replaced by a "binary" probability value between 0-1.
-"""
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print('Using device:', device)
@@ -54,8 +45,6 @@ def add_to_plots(dictn, timestep, plot):
         if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
             for id in range(5):
                 plot[param_tensor + str(id)].append(dictn[param_tensor].cpu().flatten()[id])
-            #else:
-            #    plot[param_tensor].append(dictn[param_tensor].cpu().flatten()[0])
 
 graph = 0
 loss_plot = []
@@ -134,7 +123,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     p_network_list = []
 
     for agn in range(len(agents_list)):
-        network1 = SCMNetwork(orchard_length, 0.0002, discount)
+        network1 = CNetwork(orchard_length, 0.0002, discount)
         agents_list[agn].policy_value = network1
         v_network_list.append(network1)
 
@@ -192,7 +181,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         # if i == 2000:
         #     end = time.time()
         #     print(end - start)
-        if i % 1000 == 0:
+        if i % 1000 == 0 and i != 0:
             add_to_plots(p_network_list[0].function.state_dict(), i, one_plot)
             v_value = agents_list[1].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["pos"][0])
             v_value1 = agents_list[1].policy_network.get_function_output(sample_state5["agents"], sample_state5["apples"],
@@ -200,17 +189,25 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
                                                                          sample_state6["apples"],
                                                                          pos=sample_state6["pos"][0])
+
             if i % 20000 == 0:
 
                 print("A", v_value)
+
             loss_plot.append(v_value[0])
             loss_plot1.append(v_value1[0])
             loss_plot2.append(v_value2[0])
             for ntwk in p_network_list:
                 ntwk.train_multiple_with_critic(agents_list)
+            # recalculate rates?
+            for allocing_agent in agents_list:
+                allocs = (find_allocs(allocing_agent.alphas))
+                allocsf = (1 - np.exp(-allocs))
+                allocing_agent.agent_rates = allocsf
 
         if i % 20000 == 0 and i != 0:
             print("At timestep", i)
+
         # was: 300000
         if i == 50000:
             for network in p_network_list:
@@ -265,6 +262,38 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
                     g['lr'] = 0.000002
+        #if i == 800000:
+        #    for network in p_network_list:
+        #        for g in network.optimizer.param_groups:
+        #            g['lr'] = 0.00001
+        #if i == 1000000:
+        #    for network in p_network_list:
+        #        for g in network.optimizer.param_groups:
+         #           g['lr'] = 0.000005
+        # if i == 150000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.00001
+        # if i == 200000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.000005
+        # if i == 250000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.000003
+        # if i == 300000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.000001
+        # if i == 150000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.00001
+        # if i == 200000:
+        #     for network in p_network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.000003
         if i % 40000 == 0 and i != 0:
             print("=====Eval at", i, "steps======")
             fname = name
@@ -329,13 +358,14 @@ if __name__ == "__main__":
 
     agents_list = []
     for i in range(num_agents):
-        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents))
+        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents, is_beta_agent=1, is_alpha_agent=1))
+        agents_list[i].agent_rates = np.array([0.7, 0.7])
         #agents_list[i].policy = "learned_policy"
 
     for i in range(1):
         print("loop", i)
 
-        training_loop(agents_list, side_length, S, phi, 0.0013, "D-2_5_True", discount=0.99, timesteps=2000000, iteration=25)
+        training_loop(agents_list, side_length, S, phi, 0.0013, "D-2_5_True_Rate", discount=0.99, timesteps=2000000, iteration=25)
 
         if i > 0:
             print("Total Same Actions:", agents_list[0].same_actions)

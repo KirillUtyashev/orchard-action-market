@@ -2,7 +2,7 @@ import time
 
 from main import run_environment_1d
 from models.simple_connected_multiple_blind import SCMBNetwork
-from models.simple_connected_multiple import SCMNetwork
+from models.simple_connected_multiple import CNetwork
 from orchard.environment import *
 import numpy as np
 import matplotlib.pyplot as plt
@@ -15,7 +15,7 @@ from metrics.metrics import append_metrics, plot_metrics, append_positional_metr
 from agents.simple_agent import SimpleAgent
 from models.simple_connected import SimpleConnected
 from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-from models.simple_connected_multiple import SCMNetwork as SCMNetwork_Central
+from models.simple_connected_multiple import CNetwork as SCMNetwork_Central
 from models.actor_dc_1d import ActorNetwork
 #from models.actor_dc_1d_complex import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
@@ -124,8 +124,10 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
     v_network_list = []
     p_network_list = []
 
+    #network1 = SCMNetwork_Central(orchard_length, alpha, discount)
+    #network1.function.load_state_dict(torch.load(name + ".pt"))
     for agn in range(len(agents_list)):
-        network1 = SCMNetwork(orchard_length, 0.0002, discount)
+        network1 = CNetwork(orchard_length, 0.0002, discount)
         agents_list[agn].policy_value = network1
         v_network_list.append(network1)
 
@@ -136,6 +138,10 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 
         network2.critic = network1
 
+
+        # network2 = ActorNetwork(orchard_length, alpha, discount, num=agn)
+        # agents_list[agn].policy_network = network2
+        # p_network_list.append(network2)
 
     total_reward = 0
 
@@ -192,6 +198,9 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
                                                                          sample_state6["apples"],
                                                                          pos=sample_state6["pos"][0])
+            # v_value = agents_list[0].get_comm_value_function(sample_state["agents"], sample_state["apples"], agents_list, debug=True, agent_poses=sample_state["pos"])
+            # v_value1 = agents_list[0].get_comm_value_function(sample_state5["agents"], sample_state5["apples"], agents_list, debug=True, agent_poses=sample_state5["pos"])
+            # v_value2 = agents_list[0].get_comm_value_function(sample_state6["agents"], sample_state6["apples"], agents_list, debug=True, agent_poses=sample_state6["pos"])
             if i % 20000 == 0:
 
                 print("A", v_value)
@@ -204,6 +213,8 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
 
         if i % 20000 == 0 and i != 0:
             print("At timestep", i)
+            # for numbering, network in enumerate(p_network_list):
+            #     print("Avg Norm for" + str(numbering) + ":", network.vs / i)
         # was: 300000
         if i == 50000:
             for network in p_network_list:
@@ -354,7 +365,7 @@ if __name__ == "__main__":
 
     agents_list = []
     for i in range(num_agents):
-        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents, is_beta_agent=1, is_projecting=1))
+        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents, is_beta_agent=1))
         #agents_list[i].policy = "learned_policy"
 
     for i in range(1):

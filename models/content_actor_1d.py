@@ -351,7 +351,7 @@ class ActorNetwork():
                 self.critic.optimizer.zero_grad()
                 crit_loss = torch.stack(crit_losses).sum()
                 crit_loss.backward()
-                self.critic.optimizer.step()
+                self.critic.optimizer.env_step()
 
     def get_collective_adv_basic(self, state, new_state, reward, old_pos, new_pos, poses, agents_list):
         summ = 0

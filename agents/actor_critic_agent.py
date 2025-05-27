@@ -16,12 +16,15 @@ action_vectors = [
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 class ACAgent:
     def __init__(self, policy=None, model=None, debug=False, num=0, num_agents=1, is_beta_agent=0, is_alpha_agent=0, is_projecting=0):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
-        self.basic_network = None
+        # Behavior net is the policy network we currently use for value function training
+        # When we perform actor update, we
+        self.behavior_net = None
 
         self.policy_network = None
 
@@ -96,10 +99,7 @@ class ACAgent:
         b = state["apples"]
 
         actions = [0, 1, 4]
-        #print(list(a.flatten()), list(b.flatten()), self.position)
         output = self.policy_network.get_function_output(a, b, self.position)
-        #output = np.exp(output)
-        #print(output)
         action = random.choices(actions, weights=output)[0]
         return action
 
@@ -108,10 +108,7 @@ class ACAgent:
         b = state["apples"]
 
         actions = [0, 1, 4]
-        #print(list(a.flatten()), list(b.flatten()), self.position)
-        output = self.basic_network.get_function_output(a, b, self.position)
-        #output = np.exp(output)
-        #print(output)
+        output = self.behavior_net.get_function_output(a, b, self.position)
         action = random.choices(actions, weights=output)[0]
         return action
 
