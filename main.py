@@ -1,8 +1,7 @@
 from agents.jan_marl_agent import OrchardAgent
+from agents.simple_agent import SimpleAgent
 from orchard.environment import *
 import numpy as np
-import matplotlib.pyplot as plt
-import orchard.environment_one
 import random
 from policies.nearest_uniform import replace_agents_1d
 from policies.random_policy import random_policy_1d, random_policy
@@ -24,18 +23,6 @@ def step(agents_list, environment: Orchard):
     # print(new_position)
     return agent, reward
 
-def run_environment(policy):
-    """
-    Not usable - broken as of right now.
-    """
-    env = Orchard(side_length, num_agents, S, phi)
-    env.initialize()
-    reward = 0
-    for i in range(20000):
-        agent, i_reward = step(env, policy)
-        reward += i_reward
-    print("Reward: ", reward)
-    print("Total Apples: ", env.total_apples)
 
 def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None):
     metrics = []
@@ -56,7 +43,7 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
     for i in range(timesteps):
         old_state = env.get_state()
         apples = old_state["apples"]
-        agent = i % num_agents # random.randint(0, env.n - 1)
+        agent = i % num_agents  # random.randint(0, env.n - 1)
 
         state = env.get_state()
         # state["agents"][agents_list[0].position[0]] -= 1
@@ -71,7 +58,7 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
         # print(new_position)
         reward += i_reward
         if name != "test" and experiment != "test":
-            metrics = append_metrics(metrics, env.get_state_only(), reward, i)
+            metrics = append_metrics(metrics, env.get_state(), reward, i)
             agent_metrics = append_positional_metrics(agent_metrics, agents_list)
         new_state = env.get_state()
         # if np.sum(apples) == 0:
@@ -88,8 +75,9 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
     print("Apple Ratio: ", reward / env.total_apples)
     if name != "test" and experiment != "test":
         plot_agent_specific_metrics(agent_metrics, experiment, name)
-        plot_metrics(metrics, name, experiment)
+        # plot_metrics(metrics, name, experiment)
     return reward
+
 
 def run_environment_1d(num_agents, policy, side_length, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None):
     metrics = []
@@ -98,40 +86,26 @@ def run_environment_1d(num_agents, policy, side_length, S, phi, name="Default", 
         metrics.append([])
     for j in range(num_agents):
         agent_metrics.append([])
-
-    # if agents_list is None:
-    #     agents_list = []
-    #     for _ in range(num_agents):
-    #         agents_list.append(Agent(policy=policy))
     env = Orchard(side_length, num_agents, S, phi, agents_list=agents_list, one=True, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo)
     env.initialize(agents_list) #, agent_pos=[np.array([1, 0]), np.array([3, 0])]) #, agent_pos=[np.array([2, 0]), np.array([5, 0]), np.array([8, 0])])
     reward = 0
     for i in range(timesteps):
         if i % 1000 == 0:
             print(i)
-        old_state = env.get_state()
-        apples = old_state["apples"]
         agent, i_reward = step(agents_list, env)
         reward += i_reward
         if name != "test" and experiment != "test":
-            #metrics = append_metrics(metrics, env.get_state_only(), reward, i)
             agent_metrics = append_positional_metrics(agent_metrics, agents_list)
-        new_state = env.get_state()
-        # if np.sum(apples) == 0:
-        #     assert np.array_equal(old_state["agents"], new_state["agents"])
-        # else:
-        #     assert not np.array_equal(old_state["agents"], new_state["agents"]) or not np.array_equal(old_state["apples"], new_state["apples"])
-
     if name != "test" and experiment != "test":
         print("Same Actions:", same_actions)
     print("Results for", name)
     print("Reward: ", reward)
     print("Total Apples: ", env.total_apples)
-    print("Average Reward: ", reward / timesteps)
+    print("Average Reward: ", reward / env.total_apples)
     if name != "test" and experiment != "test":
         plot_agent_specific_metrics(agent_metrics, experiment, name)
-        plot_metrics(metrics, name, experiment)
-    return reward
+        # plot_metrics(metrics, name, experiment)
+    return reward, reward / env.total_apples
 
 
 def all_three_1d(num_agents, length, S, phi, experiment, time=5000):
@@ -141,65 +115,16 @@ def all_three_1d(num_agents, length, S, phi, experiment, time=5000):
 
 
 if __name__ == "__main__":
-
-
-    """
-    Different Possible S values
-    """
-    # S = np.zeros((5, 5))
-    # for i in range(5):
-    #     for j in range(5):
-    #         S[i, j] = 0.05
-#
-    # S2 = np.zeros((side_length, 1))
-    # for i in range(side_length):
-    #     S2[i] = 0.05
-#
-    # S3 = np.zeros((side_length, 1))
-    # S3[0] = 0
-    # S3[side_length - 1] = 0
-#
-    # phi = 0.05
-#
-#
-#
-#
-    # # run_environment_1d(num_agents, nearest, side_length, S2, phi, "Nearest", "Uniform")
-    # # run_environment_1d(num_agents, nearest, side_length, S2, phi, "Nearest-Uniform", "Uniform", action_algo=replace_agents_1d)
-    # # run_environment_1d(num_agents, random_policy_1d, side_length, S2, phi, "Random", "Uniform")
-#
-    # #all_three_1d(num_agents, side_length, S3, phi, "No_Apples")
-#
-    # S3[0] = 0.5
-    # phi = 0.1
-#
-    # #all_three_1d(num_agents, side_length, S3, phi, "Corner_Single")
-#
-    # S3[0] = 0.25
-    side_length = 70
+    side_length = 40
     num_agents = int(side_length * 0.2)
 
-    # S3[side_length - 1] = 0.25
-
-    #all_three_1d(num_agents, side_length, S3, phi, "Corner_Double")
-
-    S3 = np.zeros((side_length, 1))
-    from orchard.algorithms import single_apple_spawn, single_apple_despawn, single_apple_spawn_malicious
+    from orchard.algorithms import single_apple_spawn, single_apple_despawn
     #
     agents_list = []
     for i in range(num_agents):
         main_int = 1
         agents_list.append(
-            OrchardAgent(policy=nearest, id=i, num_agents=num_agents, influencers=None,
-                         main_interest=main_int,
-                         budget=0, b0=0, topics=side_length, nonfixedpackage=None))
+            SimpleAgent(policy=random_policy_1d, debug=False, num=num_agents))
     # run_environment_1d(num_agents, nearest, side_length, S3, phi, "Nearest", "Single_Apple", spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn)
     # run_environment_1d(num_agents, nearest, side_length, S3, phi, "Nearest-Uniform", "Single_Apple", action_algo=replace_agents_1d, spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn)
-    run_environment_1d(num_agents, random_policy_1d, side_length, S3, None, "Random", "Single_Apple", spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=20000, agents_list=agents_list)
-
-    # run_environment_1d(num_agents, nearest, side_length, S3, phi, "Nearest", "SAM", spawn_algo=single_apple_spawn_malicious, despawn_algo=single_apple_despawn)
-    # run_environment_1d(num_agents, nearest,  side_length, S3, phi, "Nearest-Uniform", "SAM", action_algo=replace_agents_1d, spawn_algo=single_apple_spawn_malicious, despawn_algo=single_apple_despawn)
-    # run_environment_1d(num_agents, random_policy_1d,  side_length, S3, phi, "Random", "SAM", spawn_algo=single_apple_spawn_malicious, despawn_algo=single_apple_despawn)
-
-
-
+    run_environment_1d(num_agents, random_policy_1d, side_length, None, None, "Random", "Single_Apple", spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=40000, agents_list=agents_list)

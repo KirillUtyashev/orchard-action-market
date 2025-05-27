@@ -4,8 +4,7 @@ from scipy.optimize import minimize
 from scipy.optimize import basinhopping
 import math
 import random
-random.seed(55)
-np.random.seed(55)
+
 """
 Allocation Code
 

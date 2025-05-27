@@ -8,8 +8,6 @@ from policies.random_policy import random_policy
 import random
 import torch
 
-random.seed(352790383)
-np.random.seed(3890433)
 
 torch.set_default_dtype(torch.float64)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

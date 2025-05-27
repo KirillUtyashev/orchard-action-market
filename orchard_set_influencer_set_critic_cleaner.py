@@ -551,16 +551,9 @@ def eval_network(name, discount, gen_budget, maxi, p_network_list, v_network_lis
     return maxi
 
 
-def train_ac_content(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0, scenario=0,
-                     in_thres=None, folder='', S=None):
+def train_ac_content(side_length, num_agents, agents_list, name, discount, timesteps, folder='', S=None):
     # A edited version of AC Rate. Binary Projection is automatically packaged because of the p/q functions.
     # Further edited to only be a single iteration.
-
-    # Agent set-up
-    for agent in agents_list:
-        agent.agent_rates = np.array([1] * num_agents)
-        agent.infl_rate = 1  # Assume only one influencer at the moment
-        agent.b0_rate = 1
 
     base_alpha = 0.0005
     alpha = base_alpha
@@ -573,36 +566,30 @@ def train_ac_content(side_length, num_agents, agents_list, name, discount, times
                                                  infl_net=True)
         agn.value_network = ValueNetwork(side_length, 0.0003, discount)
 
-    training_loop(agents_list, side_length, S, None, 0.00002, name,
+    training_loop(agents_list, side_length, S, None, name, discount,
                   timesteps=timesteps, folder=folder)
+
 
 def call_experiment(num_agents, side_length, timesteps, S=None):
     discount = 0.99
     agents_list = []
     gen_budget = 5
-    scenario = 7
     name = "Orchard_set_influencer_" + str(num_agents) + "_" + str(side_length)
     ts = timesteps
     print("Starting Experiment", name)
-
-    # num_agents += 1
 
     for i in range(num_agents):
         agents_list.append(
             OrchardAgent(policy="learned_policy", id=i, num_agents=num_agents, budget=gen_budget))
 
-    train_ac_content(side_length, num_agents, agents_list, name, discount, ts, iteration=0,
-                     scenario=scenario, folder=name, S=S)
+    train_ac_content(side_length, num_agents, agents_list, name, discount, ts, folder=name, S=S)
+
 
 from agents.marl_agent import OrchardAgent
-
-
-
 import os
+
 
 if __name__ == "__main__":
 
-    call_experiment(6, 30, 1000000)
-    call_experiment(14, 70, 1000000)
-
-
+    call_experiment(2, 5, 100000)
+    # call_experiment(14, 70, 1000000)

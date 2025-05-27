@@ -11,6 +11,7 @@ Spawns a single apple in the current orchard. Takes the environment as an argume
 Note that the spawned apple functions return the number of apples that spawned (which in this case is 1).
 """
 
+
 def single_apple_spawn(env):
     global time
     time += 1
@@ -22,10 +23,22 @@ def single_apple_spawn(env):
     return 0
 
 
+def spawn_apple_same_pos_once_every_4_steps(env):
+    global time
+    time += 1
+    time_constant = int(env.length / 2) + 5
+    if time % time_constant == 0:
+        position = env.length - 1
+        env.apples[position, 0] += apples
+        return apples
+    return 0
+
+
 def single_apple_despawn(env):
     time_constant = int(env.length / 2) + 1
     if time % time_constant == time_constant - 1:
         env.apples = np.zeros((env.length, env.width), dtype=int)
+
 
 def find_farthest_position_1d(env):
     best_pos = 0
@@ -39,6 +52,7 @@ def find_farthest_position_1d(env):
             best_pos = i
             farthest_dist = cur_min_dist
     return np.array([int(best_pos), 0])
+
 
 def single_apple_spawn_malicious(env):
     global time

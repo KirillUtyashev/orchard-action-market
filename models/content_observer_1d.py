@@ -469,7 +469,7 @@ class ObserverNetwork():
                 self.critic.optimizer.zero_grad()
                 crit_loss = torch.stack(crit_losses).sum()
                 crit_loss.backward()
-                self.critic.optimizer.step()
+                self.critic.optimizer.env_step()
 
         if agents_list[self.num].newly_infl_train:
             for g in self.optimizer.param_groups:
