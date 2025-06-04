@@ -1,3 +1,4 @@
+import math
 import random
 import numpy as np
 import torch
@@ -5,10 +6,11 @@ from policies.random_policy import random_policy_1d
 
 
 def convert_position(pos):
-    temp = np.zeros((2, 1), dtype=int)
-    for i in range(len(pos)):
-        temp[i] = np.array(pos[i])
-    return temp
+    if pos is not None:
+        temp = np.zeros((2, 1), dtype=int)
+        for i in range(len(pos)):
+            temp[i] = np.array(pos[i])
+        return temp
 
 
 def get_closest_left_right_1d(mat, agent_pos):
@@ -138,37 +140,81 @@ def ten(c, device):
 
 
 def get_epsilon(step, total_steps,
-                eps_start=1.0, eps_end=0.01, decay_frac=0.5):
+                eps_start=1.0, eps_end=0.01, decay_frac=0.2):
     """
-    Linearly decay ε from eps_start → eps_end over the first
-    decay_frac*total_steps steps, then keep it at eps_end.
+    ε = 1.0                     for step <= warmup_steps
+      linearly from 1.0 → 0.01 for warmup_steps < step <= warmup_steps + decay_steps
+      = 0.01                    thereafter
+
+    where decay_steps = int(decay_frac * total_steps)
     """
+    # 1) Pure exploration phase
+    warmup_steps = 0.2 * total_steps
+    if step <= warmup_steps:
+        return eps_start
+    # 2) Decay phase
     decay_steps = int(decay_frac * total_steps)
-    if step >= decay_steps:
-        return eps_end
-    # fraction through the decay window [0..1]
-    frac = step / decay_steps
-    # linear interp: at frac=0 → eps_start; at frac=1 → eps_end
-    res = eps_start + frac * (eps_end - eps_start)
-    return res
+    step_in_decay = step - warmup_steps
+    if step_in_decay < decay_steps:
+        frac = step_in_decay / decay_steps
+        return eps_start + frac * (eps_end - eps_start)
+
+    # 3) Final phase
+    return eps_end
+
+
+def staged_linear_tau(step, total_steps,
+                      initial_tau=2.0, final_tau=0.5):
+    """
+    Keeps tau = initial_tau for the first 20% of total_steps,
+    then linearly decays from initial_tau → final_tau over the
+    next 40% of total_steps,
+    then holds tau = final_tau for the remaining 40%.
+
+    Args:
+        step (int): current timestep (0-based or 1-based).
+        total_steps (int): total timesteps planned.
+        initial_tau (float): starting temperature.
+        final_tau (float): ending temperature.
+    Returns:
+        float: current temperature tau.
+    """
+    # compute breakpoints
+    t0 = 0.2 * total_steps          # end of “hold initial” phase
+    t1 = t0 + 0.4 * total_steps     # end of “decay” phase
+
+    if step <= t0:
+        return initial_tau
+    elif step <= t1:
+        # fraction of decay completed
+        frac = (step - t0) / (t1 - t0)
+        # linear interpolate
+        return initial_tau + frac * (final_tau - initial_tau)
+    else:
+        return final_tau
 
 
 def env_step(agents_list, env, step, timesteps, type_):
     # --- interact with the env and get one transition ---
     agent_idx = random.randint(0, env.n - 1)
+
+    positions = []
+    for i in range(len(agents_list)):
+        positions.append(agents_list[i].position)
     state = env.get_state()  # this is assumed to be a dict with "agents" and "apples"
     old_pos = agents_list[agent_idx].position
-    if get_epsilon(step, timesteps) > random.random():
-        action = random_policy_1d(state, agents_list[agent_idx].position)
+    if type_ == "C" or type_ == "DC":
+        if get_epsilon(step, timesteps) > random.random():
+            action = random_policy_1d(state, agents_list[agent_idx].position)
+        else:
+            action = agents_list[agent_idx].get_action(state, agents_list=agents_list)
     else:
-        action = agents_list[agent_idx].get_action(state, agents_list=agents_list)
+        action = agents_list[agent_idx].get_action(state, agents_list)
     reward, new_pos = env.main_step(agents_list[agent_idx].position.copy(), action)
     agents_list[agent_idx].position = new_pos.copy()
-
-    # --- build your flat state vector ---
-    state_vec = np.concatenate([state["agents"], state["apples"]], axis=0)
-    new_state_vec = np.concatenate([env.get_state()["agents"], env.get_state()["apples"]], axis=0)
     if type_ == "C":
-        return state_vec, new_state_vec, reward
+        return state, env.get_state(), reward
+    elif type_ == "DC":
+        return state, env.get_state(), reward, old_pos, agent_idx
     else:
-        return state_vec, new_state_vec, reward, old_pos, agent_idx
+        return state, env.get_state(), reward, agent_idx, positions, action

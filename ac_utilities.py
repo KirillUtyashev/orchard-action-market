@@ -1,9 +1,9 @@
-from models.value_function import CNetwork
+from models.value_function import VNetwork
 from orchard.environment import *
 import numpy as np
 import random
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
-
+from helpers import env_step
 
 import torch
 torch.set_default_dtype(torch.float64)
@@ -21,39 +21,30 @@ def find_ab(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, eps
                   despawn_algo=single_apple_despawn)  # initialize env
     env.initialize(agents_list)  # attach agents to env
     print("Finding Alpha/Beta for", name)
-    v_network_list = []
-
-    for agn in range(len(agents_list)):
-        if iteration == 99:
-            network1 = CNetwork(orchard_length, alpha, discount)
-            agents_list[agn].policy_value = network1
-            network1.function.load_state_dict(torch.load(name + "_" + str(agn) + ".pt"))
-            v_network_list.append(network1)
-        else:
-            assert agents_list[agn].policy_value is not None
-            v_network_list.append(agents_list[agn].policy_value)
-
-    total_reward = 0
-
     for i in range(timesteps):
 
         agent = random.randint(0, env.n - 1)  # Choose random agent
         old_pos = agents_list[agent].position.copy()  # Get position of this agent
         state = env.get_state()  # Get the current state (a COPY)
 
-        action = agents_list[agent].get_action(state, discount, agents_list=agents_list)
+        action = agents_list[agent].get_action(state, agents_list=agents_list)
 
         reward, new_position = env.main_step(agents_list[agent].position.copy(),
                                              action)  # Take the action. Observe reward, and get new position
         agents_list[agent].position = new_position.copy()  # Save new position.
-        total_reward += reward  # Add to reward.
 
         new_state = env.get_state()
+
+        # for each_agent in range(len(agents_list)):
+        #     if each_agent == agent:
+        #         agents_list[each_agent].policy_value.add_experience(state, old_pos, new_state, agents_list[each_agent].position, reward)
+        #     else:
+        #         agents_list[each_agent].policy_value.add_experience(state, agents_list[each_agent].position, new_state, agents_list[each_agent].position, 0)
 
         beta_sum = 0
         for each_agent in agents_list:
             valued = discount * each_agent.get_value_function(new_state["agents"].copy(), new_state["apples"].copy())[0]
-            if each_agent.num == agent:
+            if each_agent is agents_list[agent]:
                 valued += reward
                 each_agent.times += 1
             each_agent.alpha_agents[agent] += 1
@@ -61,17 +52,13 @@ def find_ab(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, eps
             beta_sum += valued
         beta_sum = beta_sum
         agents_list[agent].beta += beta_sum
-        if i % 20000 == 0:
-            print("At timestep:", i)
-    print("Total Reward:", total_reward)
-    print("Total Apples:", env.total_apples)
 
     total_alpha = 0
     total_beta = 0
     alphas = []
     betas = []
     for each_agent in agents_list:
-        print("Agent", str(each_agent.num) + "; Alphas / Alpha / Beta")
+        print("Agent", str(each_agent) + "; Alphas / Alpha / Beta")
         print(list(np.divide(each_agent.alphas, each_agent.alpha_agents)), np.mean(each_agent.alphas) / timesteps, each_agent.beta / each_agent.times)
         total_alpha += np.sum(each_agent.alphas)
         total_beta += each_agent.beta
@@ -102,7 +89,7 @@ def find_ab_bin(agents_list, orchard_length, S, phi, alpha, name, discount=0.99,
 
     for agn in range(len(agents_list)):
         if iteration == 99:
-            network1 = CNetwork(orchard_length, alpha, discount)
+            network1 = VNetwork(orchard_length, alpha, discount)
             agents_list[agn].policy_value = network1
             network1.function.load_state_dict(torch.load(name + "_" + str(agn) + ".pt"))
             v_network_list.append(network1)
@@ -132,7 +119,7 @@ def find_ab_bin(agents_list, orchard_length, S, phi, alpha, name, discount=0.99,
             if each_agent.avg_alpha is not None:
                 valued = discount * each_agent.get_value_function_bin(new_state["agents"].copy(), new_state["apples"].copy())[0]
             else:
-                valued = discount * each_agent.get_value_function(new_state["agents"].copy(), new_state["apples"].copy())[0]
+                valued = discount * each_agent.get_sum_value(new_state["agents"].copy(), new_state["apples"].copy())[0]
             if each_agent.num == agent:
                 valued += reward
                 each_agent.times += 1

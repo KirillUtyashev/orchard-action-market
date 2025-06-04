@@ -178,7 +178,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             "pos": agents_list[agent].position.copy()
         }
         # p_network_list[agent].train(sp_state, sp_new_state, reward, action, agents_list)
-        p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
+        p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         # if i == 1000:
         #     start = time.time()
         # if i == 2000:

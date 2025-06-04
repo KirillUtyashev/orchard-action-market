@@ -226,7 +226,7 @@ class OrchardAgent:
                 self.budget = 5
             rates = self.influencer_network.get_function_output(a, b, pos)
             agrates = np.array(rates[0:len(self.raw_agent_rates)]) * self.budget
-            inflrate = 0 # Should not follow an influencer
+            inflrate = 0  # Should not follow an influencer
         else:
             if self.budget < 1.5:
                 self.budget = 1.5
@@ -352,25 +352,25 @@ class OrchardAgent:
             pos = self.position
 
         if self.utility == "value_function":
-            return self.value_network.get_value_function(a, b, pos)[0]
+            return self.value_network.get_sum_value(a, b, pos)[0]
 
     def get_value_function(self, a, b, pos=None):
         if pos is None:
             pos = self.position
-        return self.value_network.get_value_function(a, b, pos)
+        return self.value_network.get_sum_value(a, b, pos)
     def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:
             assert agent_poses is not None
             for num, agent in enumerate(agents_list):
-                sum += agent.policy_value.get_value_function(a, b, np.array(agent_poses[num]))
+                sum += agent.policy_value.get_sum_value(a, b, np.array(agent_poses[num]))
         else:
             assert new_pos is not None
             for agent in agents_list:
                 if agent.num == self.num:
-                    sum += agent.policy_value.get_value_function(a, b, new_pos)
+                    sum += agent.policy_value.get_sum_value(a, b, new_pos)
                 else:
-                    sum += agent.policy_value.get_value_function(a, b, agent.position)
+                    sum += agent.policy_value.get_sum_value(a, b, agent.position)
         return sum
 
     def get_learned_action(self, state):

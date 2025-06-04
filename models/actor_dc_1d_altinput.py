@@ -178,9 +178,9 @@ class ActorNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, agent.position) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, agent.position) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
@@ -194,9 +194,9 @@ class ActorNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
@@ -206,7 +206,7 @@ class ActorNetwork():
         return summ
 
     def get_value_function_central(self, a, b, pos, agents_list):
-        return agents_list[0].policy_value.get_value_function(a, b, pos)
+        return agents_list[0].policy_value.get_sum_value(a, b, pos)
 
     def train(self, state, new_state, reward, action, agents_list):
         old_pos = np.array([state["pos"][0]])

@@ -16,21 +16,18 @@ def eval_network(name, maxi, num_agents, network_list, side_length=10,
     a_list = []
     if "DC" in name:
         for ii in range(num_agents):
-            trained_agent = CommAgent(policy="value_function", num=ii,
-                                      num_agents=num_agents)
+            trained_agent = CommAgent(policy="value_function")
             trained_agent.policy_value = network_list[ii]
             a_list.append(trained_agent)
     elif "AC" in name:
         for ii in range(num_agents):
-            trained_agent = ACAgent(policy="learned_policy", num=ii,
-                                    num_agents=num_agents)
+            trained_agent = ACAgent(policy="learned_policy")
             trained_agent.policy_network = network_list[ii]
             a_list.append(trained_agent)
     else:
-
         for ii in range(num_agents):
-            trained_agent = SimpleAgent(policy="value_function", num=ii)
-            trained_agent.policy_value = network_list[0]
+            trained_agent = SimpleAgent(policy="learned_policy")
+            trained_agent.policy_network = network_list[0]
             a_list.append(trained_agent)
 
     with torch.no_grad():

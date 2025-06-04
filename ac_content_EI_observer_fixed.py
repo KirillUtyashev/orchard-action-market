@@ -359,9 +359,9 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             if agent3.num != agent:
                 agent3.beta *= (1 - agents_list[agent].discount_factor)
 
-        p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        o_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        i_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
+        p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        o_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        i_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
 
         if i > gossip_timestep:
             if i % 100 == 0 and i > gossip_timestep + 4:
@@ -395,7 +395,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             # for ag in agents_list:
             #     ag.shed_influencer(agents_list)
 
-        p_network_list[agent].train_multiple(agents_list)
+        p_network_list[agent].train(agents_list)
         # if i != 0:
         #     if i % 20 == 0:
         #         for ntwk in p_network_list:

@@ -1,7 +1,7 @@
 import numpy as np
 from policies.random_policy import random_policy
 from policies.nearest import nearest
-from models.value_function import ValueNet
+from models.value_function import MainNet
 
 import random
 
@@ -52,14 +52,9 @@ def evaluate_value_function(a, b, pos, function, device):
 
     return function(a.flatten(), b.flatten(), pos)
 
-def deepcopy(arr):
-    rar = []
-    for i in arr:
-        rar.append(i.copy())
-    return rar
 
 class ACAgent:
-    def __init__(self, policy=random_policy, model=ValueNet, debug=False, num=0, num_agents=1):
+    def __init__(self, policy=random_policy, model=MainNet, debug=False, num=0, num_agents=1):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
@@ -92,22 +87,22 @@ class ACAgent:
         if debug:
             assert agent_poses is not None
             for num, agent in enumerate(agents_list):
-                sum += agent.policy_value.get_value_function(a, b, np.array(agent_poses[num])) * agents_list[num].agent_rates[self.num]
+                sum += agent.policy_value.get_sum_value(a, b, np.array(agent_poses[num])) * agents_list[num].agent_rates[self.num]
         else:
             assert new_pos is not None
             for num, agent in enumerate(agents_list):
                 if agent.num == self.num:
-                    sum += agent.policy_value.get_value_function(a, b, new_pos) * self.agent_rates[num]
+                    sum += agent.policy_value.get_sum_value(a, b, new_pos) * self.agent_rates[num]
                 else:
-                    sum += agent.policy_value.get_value_function(a, b, agent.position) * self.agent_rates[num]
+                    sum += agent.policy_value.get_sum_value(a, b, agent.position) * self.agent_rates[num]
         return sum
 
     def get_value_function(self, a, b):
-        f = self.policy_value.get_value_function(a, b, self.position)
+        f = self.policy_value.get_sum_value(a, b, self.position)
         return f
 
     def get_value_function_override(self, a, b, pos):
-        f = self.policy_value.get_value_function(a, b, pos)
+        f = self.policy_value.get_sum_value(a, b, pos)
         return f
 
     def get_learned_action(self, state):
@@ -125,10 +120,7 @@ class ACAgent:
         b = state["apples"]
 
         actions = [0, 1, 4]
-        #print(list(a.flatten()), list(b.flatten()), self.position)
         output = self.basic_network.get_function_output(a, b, self.position)
-        #output = np.exp(output)
-        #print(output)
         action = random.choices(actions, weights=output)[0]
         return action
 
@@ -156,7 +148,6 @@ class ACAgent:
                 action = act
                 best_val = val
 
-        # self.same_actions += (action == nearest(state, self.position))
         if self.debug:
             print("Ultimately chose " + str(action_vectors[action]) + " with expected value " + str(best_val) + ".")
 

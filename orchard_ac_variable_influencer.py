@@ -474,8 +474,8 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         # agents_list[agent].bqueue.append(beta_sum)
 
         # p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        o_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        i_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
+        o_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        i_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         # v_network_list[agent].addexp(state, new_state, reward, action, agents_list)
         if i % 500 == 0 and th:
             for agent1 in agents_list:
@@ -495,7 +495,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                 if agent2.num == 1:
                     print("OUT:", outpt)
                 peragval_plots[agent2.num].append(
-                    agent2.get_value_function(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
+                    agent2.get_sum_value(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
         if i > gossip_timestep:
             if i % 200 == 0 and i > gossip_timestep:
                 print("@ Timestep", i)
@@ -507,7 +507,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                     if agent2.num == 1:
                         print("OUT:", outpt)
                     peragval_plots[agent2.num].append(
-                        agent2.get_value_function(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
+                        agent2.get_sum_value(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
             if i % 10 == 0 and i < gossip_timestep + 30000 and i > gossip_timestep:
 
                 for agent1 in agents_list:
@@ -557,8 +557,8 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                     v_network_list[agnum].train(state, new_state, 0, agents_list[agnum].position,
                                                 agents_list[agnum].position)
         if acted and i > training_timestep:
-            p_network_list[agent].addexp(train_state, train_new_state, reward, action, agents_list, feedback,
-                                         action_utils_raw)
+            p_network_list[agent].add_experience(train_state, train_new_state, reward, action, agents_list, feedback,
+                                                 action_utils_raw)
             # for agnum in range(len(agents_list)):
             #     if agnum == agent:
             #         v_network_list[agnum].train(state, new_state, reward, old_pos, agents_list[agnum].position)

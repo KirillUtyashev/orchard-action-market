@@ -1,10 +1,11 @@
 import numpy as np
-
 import torch
-import torch.nn as nn
+from models.main_net import MainNet
 import torch.nn.functional as F
 import torch.optim as optim
-from helpers import unwrap_state, ten
+from helpers import convert_position, ten
+from config import DEVICE
+from abc import abstractmethod
 torch.set_default_dtype(torch.float64)
 
 
@@ -16,344 +17,128 @@ action_vectors = [
             np.array([0, 0])
         ]
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-class SimpleConnectedMultiple(nn.Module):
-    def __init__(self, oned_size): # we work with 1-d size here.
-        super(SimpleConnectedMultiple, self).__init__()
-        self.layer1 = nn.Linear(oned_size * 2 + 1, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, 64)
-        self.layer4 = nn.Linear(64, 3)  # [0] is move left, [1] is move right, [2] is don't move
-        #self.layer1 = nn.Linear(oned_size * 2, 256)
-
-        # FIRST INPUT TYPE MODEL
-        #self.layer1 = nn.Conv1d(1, 6, 3, 1)
-        ##self.conv_bn = nn.BatchNorm1d(19)
-        ##self.layer2 = nn.Linear(48, 64) # 48 for an input dimension of 10 (i.e. oned size is 5)
-        #self.layer2 = nn.Linear(114, 128)
-        ##self.layer2 = nn.Linear(64, 64)
-        #self.layer3 = nn.Linear(128, 128)
-        #self.layer5 = nn.Linear(128, 128)
-        #self.layer4 = nn.Linear(128, 3)
-
-        # SECOND INPUT TYPE MODEL
-        # self.layer1 = nn.Conv1d(1, 6, 3, 1)
-        # self.layer2 = nn.Linear(12, 32)
-        # self.layer3 = nn.Linear(32, 32)
-        # self.layer4 = nn.Linear(32, 1)
-
-        torch.nn.init.xavier_uniform_(self.layer1.weight)
-        torch.nn.init.xavier_uniform_(self.layer2.weight)
-        torch.nn.init.xavier_uniform_(self.layer3.weight)
-        torch.nn.init.xavier_uniform_(self.layer4.weight)
-        #torch.nn.init.xavier_uniform_(self.layer5.weight)
-        # print("Initialized Neural Network")
-
-    def forward(self, a, b, pos):
-        x = torch.cat((a.flatten(), b.flatten(), pos.flatten()))
-        #print(x)
-        #print(x)
-        x = x.view(1, -1)
-        #x = F.leaky_relu(self.layer1(x))
-        x = F.leaky_relu(self.layer1(x))
-        x = x.flatten()
-        x = F.leaky_relu(self.layer2(x))
-        x = F.leaky_relu(self.layer3(x))
-        #x = F.leaky_relu(self.layer5(x))
-        #  F.softmax(self.layer4(x), dim=0)
-        return self.layer4(x)
-
-counter = 0
-total_reward = 0
-class ActorNetwork():
-    def __init__(self, oned_size, alpha, discount, beta=None, avg_alpha=None, num=0):
-        self.function = SimpleConnectedMultiple(oned_size)
-        self.function.to(device)
+class ActorNetworkBase:
+    def __init__(self, oned_size, agents_list, alpha, discount):
+        self.function = MainNet(oned_size, 3)
+        self.function.to(DEVICE)
         self.optimizer = optim.AdamW(self.function.parameters(), lr=alpha, amsgrad=True)
         self.alpha = alpha
         self.discount = discount
-        self.num = num
-        self.beta = beta
-        self.vs = 0
-        self.avg_alpha = avg_alpha
+        self.agents_list = agents_list
 
-        self.states = []
-        self.new_states = []
-        self.rewards = []
-        self.poses = []
-        self.actions = []
+        self.batch_states = []
+        self.batch_new_states = []
+        self.batch_actions = []
+        self.batch_adv_values = []
 
-        self.critic = None
+    def get_function_output(self, a, b, pos=None, tau=1):
+        res = ten(np.concatenate([a, b, convert_position(pos)], axis=0), DEVICE).view(1, -1)
+        res = self.function(res) / tau
+        res = F.softmax(res, dim=1)
+        return res.detach().cpu().numpy().squeeze(0).tolist()
 
-    def get_function_output(self, a, b, pos=None):
-        pose = np.array([pos[0]])
-        return F.softmax(self.function(ten(a), ten(b), ten(pose)), dim=0).detach().cpu().numpy()
+    def get_sum_value(self, state, positions):
+        sum_ = 0
+        for number, agent in enumerate(self.agents_list):
+            sum_ += agent.policy_value.get_value_function(np.concatenate([state["agents"], state["apples"], convert_position(positions[number])], axis=0))
+        return sum_
 
-    def get_function_output_v(self, a, b, pos=None):
-        poses = np.array(pos[:, 0])
-        return self.function(ten(a), ten(b), ten(poses)).detach().cpu().numpy()
+    @abstractmethod
+    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+        raise NotImplementedError
 
-    def get_value_function2(self, state):
-        #a, b = unwrap_state(state)
-        a, b = state[0], state[1]
-        return self.function(ten(a), ten(b), None).detach().cpu().numpy()
+    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
+        self.batch_states.append(np.concatenate([np.concatenate([state["agents"], state["apples"]], axis=0), convert_position(old_pos)], axis=0))
+        self.batch_new_states.append(np.concatenate([np.concatenate([new_state["agents"], new_state["apples"]], axis=0), convert_position(new_pos)], axis=0))
+        self.batch_actions.append(action)
+        self.add_advantage(state, new_state, reward, positions, new_positions, agent)
 
-    def get_value_function(self, a, b, agents_list, pos=None):
-        if agents_list[0].influencers is not None:
-            return agents_list[self.num].influencers[0].get_follower_feedback(agents_list[agent], action, reward, new_state)
-        summ = 0
-        if agents_list[0].avg_alpha is None:
-            for number, agent in enumerate(agents_list):
-                if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
-                else:
-                    summ += agent.policy_value.get_value_function(a, b, agent.position) * agents_list[self.num].agent_rates[number]
-        else:
-            for number, agent in enumerate(agents_list):
-                if number == self.num and pos is not None:
-                    summ += agent.get_value_function_bin(a, b, pos) #* agents_list[self.num].agent_rates[number]
-                else:
-                    summ += agent.get_value_function_bin(a, b, agent.position) #* agents_list[self.num].agent_rates[number]
-        return summ
+    def add_advantage(self, state, new_state, reward, positions, new_positions, agent=None):
+        return self.batch_adv_values.append(self.get_adv_value(state, positions, reward, new_state, new_positions, agent))
 
-    def get_value_function_with_pos(self, a, b, agents_list, poses, pos):
-        summ = 0
-        if agents_list[0].avg_alpha is None:
-            for number, agent in enumerate(agents_list):
-                if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
-                else:
-                    summ += agent.policy_value.get_value_function(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
-        else:
-            for number, agent in enumerate(agents_list):
-                if number == self.num and pos is not None:
-                    summ += agent.get_value_function_bin(a, b, pos) #* agents_list[self.num].agent_rates[number]
-                else:
-                    summ += agent.get_value_function_bin(a, b, poses[number]) #* agents_list[self.num].agent_rates[number]
-        return summ
+    def train(self):
+        if len(self.batch_states) == 0:
+            return
+        states = ten(np.stack(self.batch_states, axis=0), DEVICE)
+        states = states.view(states.size(0), -1)
 
-    def get_value_function_central(self, a, b, pos, agents_list):
-        return agents_list[0].policy_value.get_value_function(a, b, pos)
+        action_probs = self.function(states)
 
-    def train(self, state, new_state, reward, action, agents_list):
-        old_pos = np.array([state["pos"][0]])
-        new_pos = np.array([new_state["pos"][0]])
+        actions = [2 if x == 4 else x for x in self.batch_actions]
+        probs = F.softmax(action_probs, dim=1)
 
-        debug = False
-        if debug:
-            print("=========TRAINING=========")
-            print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-            print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-            print(old_pos, new_pos)
-            print(reward)
+        dist = torch.distributions.Categorical(probs)
+        # (c) turn your Python list into a LongTensor on DEVICE
+        actions_tensor = ten(np.array(actions), DEVICE)
 
-        a, b = unwrap_state(state)
-        new_a, new_b = unwrap_state(new_state)
+        # (d) get a tensor of log-probs, one per batch element
+        log_probs = dist.log_prob(actions_tensor)      # shape [B]
 
-        actions = self.function(ten(a), ten(b), ten(old_pos))
+        adv_values = ten(np.array(self.batch_adv_values), DEVICE)
 
-        if action == 4:
-            action = 2
-
-        #prob = torch.log(actions[action])
-        prob = F.log_softmax(actions, dim=0)[action]
-        #prob = actions[action]
-        if self.beta is None:
-            with torch.no_grad():
-                v_value = self.get_value_function(a, b, agents_list, old_pos)
-               # v_value = self.get_value_function_central(a, b, old_pos, agents_list)
-        else:
-            v_value = self.beta
-
-        with torch.no_grad():
-            if agents_list[0].influencers is not None:
-                q_value = agents_list[0].influencers[0].get_follower_feedback(self, agents_list[self.num], action, reward, state, new_pos)
-            else:
-                q_value = reward + self.discount * self.get_value_function(new_a, new_b, agents_list, new_pos)
-            #q_value = reward + self.discount * self.get_value_function(new_a, new_b, new_pos, agents_list)
-
-        adv = q_value - v_value
-        adv = ten(adv)
+        # policy loss + entropy bonus
+        loss = - (adv_values * log_probs).mean()
 
         self.optimizer.zero_grad()
-
-        loss = -1 * torch.mul(prob, adv)
-
         loss.backward()
         self.optimizer.step()
 
-    def addexp(self, state, new_state, reward, action, agents_list):
-        self.states.append(state)
-        self.new_states.append(new_state)
-        self.rewards.append(reward)
-        self.actions.append(action)
-        poses = []
-        for i in agents_list:
-            poses.append(i.position.copy())
-        self.poses.append(poses)
-
-    def train_multiple(self, agents_list):
-        losses = []
-        crit_losses = []
-        states = self.states
-        new_states = self.new_states
-        rewards = self.rewards
-        actions = self.actions
-        poses = self.poses
-
-        for it in range(len(states)):
-            state = states[it]
-            new_state = new_states[it]
-            reward = rewards[it]
-            action = actions[it]
-
-            all_pos = poses[it]
-
-            old_pos = np.array([state["pos"][0]])
-            new_pos = np.array([new_state["pos"][0]])
-
-            a, b = unwrap_state(state)
-            new_a, new_b = unwrap_state(new_state)
-
-            actions_lst = self.function(ten(a), ten(b), ten(old_pos))
-
-            if action == 4:
-                action = 2
-
-            #prob = torch.log(actions[action])
-            prob = F.log_softmax(actions_lst, dim=0)[action]
-            #prob = actions[action]
-            if self.beta is None:
-                #with torch.no_grad():
-                v_value = self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos)
-            else:
-                v_value = self.beta
-                #print(self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
-                #print("A", v_value)
-            #with torch.no_grad():
-            q_value = reward + self.discount * self.get_value_function_with_pos(new_a, new_b, agents_list, all_pos, new_pos)
-            adv = q_value - v_value
-            adv = ten(adv)
-
-            if self.critic is not None:
-                crit_losses.append(torch.pow(adv, 2))
-                print(crit_losses)
-
-            losses.append(-1 * torch.mul(prob, adv))
-
-        if len(states) != 0:
-            self.optimizer.zero_grad()
-            loss = torch.stack(losses).sum()
-            loss.backward()
-            self.optimizer.step()
-
-            self.states = []
-            self.new_states = []
-            self.rewards = []
-            self.actions = []
-            self.poses = []
-
-            if self.critic is not None:
-                self.critic.optimizer.zero_grad()
-                crit_loss = torch.stack(crit_losses).sum()
-                crit_loss.backward()
-                self.critic.optimizer.env_step()
-
-    def get_collective_adv_basic(self, state, new_state, reward, old_pos, new_pos, poses, agents_list):
-        summ = 0
-        v_sum = 0
-        projection_q_sum = 0
-        #print(poses)
-        for number, agent in enumerate(agents_list):
-            if number == self.num:
-                q, v = agent.policy_value.get_adv_and_train(state, new_state, old_pos, new_pos, reward)
-                summ += q * agents_list[self.num].agent_rates[number]
-                v_sum += v
-            else:
-                q, v = agent.policy_value.get_adv_and_train(state, new_state, np.array(poses[number][0]), np.array(poses[number][0]), 0)
-                summ += q * agents_list[self.num].agent_rates[number]
-                v_sum += v
-            if agents_list[number].alpha_agent or agents_list[number].is_projecting:
-                agents_list[number].alphas[self.num] = agents_list[number].alphas[self.num] * agents_list[number].beta_factor + q * (1 - agents_list[number].beta_factor)
-
-                if agents_list[number].is_projecting:
-                    avg_alpha = np.average(agents_list[number].alphas)
-                    bound = 0.885
-                    val = (q - avg_alpha) / avg_alpha
-                    val = ((val + 1) / 2) / bound
-                    projection_q_sum += val
-                #print(agents_list[number].alphas)
-
-        if agents_list[self.num].is_projecting:
-            agents_list[self.num].beta = agents_list[self.num].beta * agents_list[self.num].beta_factor + projection_q_sum * (
-                    1 - agents_list[self.num].beta_factor)
-        else:
-            agents_list[self.num].beta = agents_list[self.num].beta * agents_list[self.num].beta_factor + summ * (
-                    1 - agents_list[self.num].beta_factor)
+        self.batch_states = []
+        self.batch_new_states = []
+        self.batch_actions = []
+        self.batch_adv_values = []
+        return loss.item(), adv_values.mean().item()
 
 
-        if agents_list[self.num].beta_agent:
-            if agents_list[self.num].is_projecting:
-                return projection_q_sum - agents_list[self.num].beta
-            else:
-                return summ - agents_list[self.num].beta
-        else:
-            assert agents_list[self.num].agent_rates[0] == 1
-            return summ - v_sum
+class ActorNetwork(ActorNetworkBase):
+    def __init__(self, oned_size, agents_list, alpha, discount):
+        super().__init__(oned_size, agents_list, alpha, discount)
 
-    def train_multiple_with_critic(self, agents_list):
-        losses = []
-        crit_losses = []
-        states = self.states
-        #print(len(states))
-        new_states = self.new_states
-        rewards = self.rewards
-        actions = self.actions
-        poses = self.poses
+    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+        q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
+        v_value = self.get_sum_value(state, positions)
+        return q_value - v_value
 
-        for it in range(len(states)):
-            state = states[it]
-            new_state = new_states[it]
-            reward = rewards[it]
-            action = actions[it]
 
-            all_pos = poses[it]
+class ActorNetworkWithBeta(ActorNetworkBase):
+    def __init__(self, oned_size, agents_list, alpha, discount):
+        super().__init__(oned_size, agents_list, alpha, discount)
 
-            old_pos = np.array([state["pos"][0]])
-            new_pos = np.array([new_state["pos"][0]])
+    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
+        super().add_experience(state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent)
 
-            debug = False
-            if debug:
-                print("=========TRAINING=========")
-                print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-                print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-                print(old_pos, new_pos)
-                print(reward)
+    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+        q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
+        beta = self.agents_list[agent].beta
+        return q_value - beta
 
-            a, b = unwrap_state(state)
-            new_a, new_b = unwrap_state(new_state)
 
-            actions_lst = self.function(ten(a), ten(b), ten(old_pos))
+class ActorNetworkCounterfactual(ActorNetworkBase):
+    def __init__(self, oned_size, agents_list, alpha, discount):
+        super().__init__(oned_size, agents_list, alpha, discount)
 
-            if action == 4:
-                action = 2
-            prob = F.log_softmax(actions_lst, dim=0)[action]
-            adv = self.get_collective_adv_basic(state, new_state, reward, old_pos, new_pos, all_pos, agents_list)
+    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
+        super().add_experience(state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent)
 
-            losses.append(-1 * torch.mul(prob, adv))
+    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+        q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
 
-        if len(states) != 0:
-            self.optimizer.zero_grad()
+        probs = self.get_function_output(state["agents"], state["apples"], positions[agent])
+        counterfactual = 0
+        for num, action in enumerate([0, 1, 4]):
+            r = 0
+            new_pos = np.clip(positions[agent] + action_vectors[action], [0, 0], state["agents"].shape-np.array([1, 1]))
+            agents = state["agents"].copy()
+            apples = state["apples"].copy()
+            agents[new_pos[0], new_pos[1]] += 1
+            agents[positions[agent][0], positions[agent][1]] -= 1
+            if apples[new_pos[0], new_pos[1]] > 0:
+                r = 1
+                apples[new_pos[0], new_pos[1]] -= 1
+            test_positions = positions.copy()
+            test_positions[agent] = new_pos
+            sum_ = 0.99 * self.get_sum_value({"agents": agents, "apples": apples}, test_positions) + r
+            counterfactual += sum_ * probs[num]
 
-            loss = torch.stack(losses).sum()
-            loss.backward()
-            self.optimizer.step()
-
-            self.states = []
-            self.new_states = []
-            self.rewards = []
-            self.actions = []
-            self.poses = []
-
+        return q_value - counterfactual

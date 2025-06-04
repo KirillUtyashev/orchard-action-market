@@ -36,22 +36,22 @@ def graph_plots(dictn, name, plot, loss_plot, loss_plot1, loss_plot2, ratio_plot
     graph += 1
 
     # --- parameter trajectories (unchanged) ---
-    plt.figure("plots" + str(graph) + name, figsize=(10, 5))
-    num = 0
-    for param_tensor in dictn:
-        num += 1
-        if num == 10:
-            break
-        if dictn[param_tensor].dim() > 1 and "weight" in param_tensor:
-            for id in range(5):
-                if id == 0:
-                    plt.plot(plot[param_tensor + str(id)], color=colours[num], label="Tensor " + str(num))
-                else:
-                    plt.plot(plot[param_tensor + str(id)], color=colours[num])
-    plt.legend()
-    plt.title("Model Parameters during Training, iteration " + str(graph))
-    plt.savefig("Params_" + name + str(graph) + ".png")
-    plt.close()
+    # plt.figure("plots" + str(graph) + name, figsize=(10, 5))
+    # num = 0
+    # for param_tensor in dictn:
+    #     num += 1
+    #     if num == 10:
+    #         break
+    #     if dictn[param_tensor].dim() > 1 and "weight" in param_tensor:
+    #         for id in range(5):
+    #             if id == 0:
+    #                 plt.plot(plot[param_tensor + str(id)], color=colours[num], label="Tensor " + str(num))
+    #             else:
+    #                 plt.plot(plot[param_tensor + str(id)], color=colours[num])
+    # plt.legend()
+    # plt.title("Model Parameters during Training, iteration " + str(graph))
+    # plt.savefig("Params_" + name + str(graph) + ".png")
+    # plt.close()
 
     # --- loss curves ---
     plt.figure("loss" + str(graph), figsize=(10, 5))
@@ -63,13 +63,13 @@ def graph_plots(dictn, name, plot, loss_plot, loss_plot1, loss_plot2, ratio_plot
     plt.close()
 
     # --- ratio plot (new) ---
-    plt.figure("ratio" + str(graph), figsize=(10, 5))
-    plt.plot(ratio_plot)
-    plt.title("Ratio over Time, iteration " + str(graph))
-    plt.xlabel("Training Step")
-    plt.ylabel("Ratio")
-    plt.savefig("Ratio_" + name + str(graph) + ".png")
-    plt.close()
+    # plt.figure("ratio" + str(graph), figsize=(10, 5))
+    # plt.plot(ratio_plot)
+    # plt.title("Ratio over Time, iteration " + str(graph))
+    # plt.xlabel("Training Step")
+    # plt.ylabel("Ratio")
+    # plt.savefig("Ratio_" + name + str(graph) + ".png")
+    # plt.close()
 
 
 

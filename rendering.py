@@ -168,23 +168,21 @@ class Viewer(object):
         apples = []
         batch = pyglet.graphics.Batch()
 
-        # print(env.field)
-        for col in range(len(idxes)):
-            if idxes[col] > 0:
-                apples.append(
-                    pyglet.sprite.Sprite(
-                        self.img_apple,
-                        (self.grid_size + 1) * col,
-                        self.height - (self.grid_size + 1) * (1),
-                        batch=batch,
-                        )
-                )
+        for row in range(env.width):
+            # print(env.field)
+            for col in range(len(idxes)):
+                if idxes[col][row] > 0:
+                    apples.append(
+                        pyglet.sprite.Sprite(
+                            self.img_apple,
+                            (self.grid_size + 1) * col,
+                            self.height - (self.grid_size + 1) * (1),
+                            batch=batch,
+                            )
+                    )
         for a in apples:
             a.update(scale=self.grid_size / a.width)
         batch.draw()
-        #
-        # for row, col in idxes:
-        #     self._draw_badge(row, col, env.field[row, col])
 
     def _draw_players(self, env):
         players = []
@@ -203,42 +201,43 @@ class Viewer(object):
         for p in players:
             p.update(scale=self.grid_size / p.width)
         batch.draw()
-        for pos in range(len(env.agents)):
-            self._draw_num_objects(pos, env.agents)
+        for row in range(len(env.agents)):
+            for col in range(len(env.agents[row])):
+                self._draw_num_objects(row, col, env.agents)
 
-    def _draw_num_objects(self, pos, lst):
-        if lst[pos] == 0:
+    def _draw_num_objects(self, row, col, lst):
+        if lst[row][col] == 0:
             return
 
-        resolution = 6
+        r = 6
         radius = self.grid_size / 5
 
-        badge_x = pos * (self.grid_size + 1) + (3 / 4) * (self.grid_size + 1)
-        badge_y = (
-                self.height
-                - (self.grid_size + 1) * 1  # should be (row + 1 here)
-                + (1 / 4) * (self.grid_size + 1)
-        )
+        # col→x, row→y
+        badge_x = row * (self.grid_size + 1) + 0.75 * (self.grid_size + 1)
+        badge_y = self.height - (col + 1) * (self.grid_size + 1) \
+                  + 0.25 * (self.grid_size + 1)
 
-        # make a circle
+        # draw circle and label centered at (badge_x, badge_y)
         verts = []
-        for i in range(resolution):
-            angle = 2 * math.pi * i / resolution
-            x = radius * math.cos(angle) + badge_x
-            y = radius * math.sin(angle) + badge_y
-            verts += [x, y]
-        circle = pyglet.graphics.vertex_list(resolution, ("v2f", verts))
+        for i in range(r):
+            θ = 2 * math.pi * i / r
+            verts += [
+                radius * math.cos(θ) + badge_x,
+                radius * math.sin(θ) + badge_y
+            ]
+        circle = pyglet.graphics.vertex_list(r, ("v2f", verts))
         glColor3ub(*_WHITE)
         circle.draw(GL_POLYGON)
         glColor3ub(*_BLACK)
         circle.draw(GL_LINE_LOOP)
+
         label = pyglet.text.Label(
-            str(lst[pos]),
+            str(lst[row][col]),
             font_name="Times New Roman",
             font_size=12,
             bold=True,
             x=badge_x,
-            y=badge_y + 2,
+            y=badge_y,
             anchor_x="center",
             anchor_y="center",
             color=(*_BLACK, 255),
