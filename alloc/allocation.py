@@ -1,9 +1,5 @@
 import numpy as np
-import scipy as sp
 from scipy.optimize import minimize
-from scipy.optimize import basinhopping
-import math
-import random
 
 """
 Allocation Code
@@ -18,22 +14,14 @@ def alloc(mat, alphas):
     return -((10000 * np.sum((1 - np.exp(-mat)) * alphas)))
 
 
-
 def find_allocs(alphas, it=0, budget=4):
-
     x0 = (alphas / np.sum(alphas))
     x0 = -np.log(1-x0)
-    #print(x0)
 
     x0 = (x0 / np.sum(x0)) * budget
-    #print(x0)
-    #print(x0)
-    # print(x0)
-    # print("Initial", alloc(x0, alphas))
     sum_constraint = lambda x: -np.sum(x) + budget
     cons = [{'type': 'eq', 'fun': sum_constraint}, {'type': 'ineq', 'fun': lambda x: x}]
     ret = np.array([budget / len(x0)] * len(x0))
-    #res = minimize(alloc, x0, args=alphas, method="trust-constr", constraints=cons)
     res = minimize(alloc, x0, args=alphas, method="SLSQP", constraints=cons)
     if res.success == False:
         if it == 40:
@@ -43,7 +31,6 @@ def find_allocs(alphas, it=0, budget=4):
             return ret
     else:
         ret = res.x
-        #print("Final:", alloc(ret, alphas))
     return ret
 
 def roundabout_find_allocs(alphas1, alphas2, it=0, budget=4):

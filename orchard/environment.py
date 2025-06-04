@@ -175,7 +175,7 @@ class Orchard:
 
     def _init_render(self):
         from rendering import Viewer
-        self.viewer = Viewer((1, self.length))
+        self.viewer = Viewer((self.width, self.length))
         self._rendering_initialized = True
 
     def render(self):

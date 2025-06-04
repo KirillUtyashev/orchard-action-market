@@ -244,14 +244,14 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
         state_b = new_state["apples"]
 
         action_utils = np.zeros(num_agents)
-        action_utils_raw = np.zeros(num_agents) # the value function value observed for each agent (to prevent recalculations)
+        action_utils_raw = np.zeros(num_agents)  # the value function value observed for each agent (to prevent recalculations)
         action_utils_infl = np.zeros(num_agents)
         """ Utility Observations - Observers """
         for numnow, each_agent in enumerate(agents_list):
             if len(each_agent.followers) == 0:
                 raw_value = 0
                 if acted:
-                    raw_value = each_agent.get_utility(state_a, state_b, each_agent.position) # singular value function call per step
+                    raw_value = each_agent.get_utility(state_a, state_b, each_agent.position)  # singular value function call per step
                 valued = raw_value * each_agent.agent_rates[agent]
                 action_utils[numnow] = valued
                 action_utils_raw[numnow] = raw_value
@@ -342,7 +342,7 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
                     peragprod_plots[agent2.num][1].append(outpt[1])
                     peragprod_plots[agent2.num][2].append(outpt[2])
                     peragval_plots[agent2.num].append(
-                        agent2.get_value_function(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
+                        agent2.get_sum_value(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
 
         feedback = np.sum(action_utils) + np.sum(action_utils_infl) + agents_list[agent].get_utility(state_a,
                                                                                                           state_b,

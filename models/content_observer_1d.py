@@ -1,16 +1,13 @@
 import numpy as np
 
-from alloc.allocation import roundabout_find_allocs_with_b0, rate_allocate
-from policies.random_policy import random_policy
-from policies.nearest import nearest
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from helpers import ten, unwrap_state
+
 torch.set_default_dtype(torch.float64)
 
-from torch import linalg
 
 action_vectors = [
             np.array([-1, 0]),
@@ -21,49 +18,6 @@ action_vectors = [
         ]
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def ten(c):
-    return torch.from_numpy(c).to(device).double()
-
-def unwrap_state(state):
-    return state["agents"].copy(), state["apples"].copy()
-
-def get_closest_left_right_1d(mat, agent_pos):
-    mat = list(mat)
-    left = -1
-    right = -1
-    pos, count = agent_pos, mat[agent_pos]
-    while pos > -1:
-        if count > 0:
-            left = agent_pos - pos
-            break
-        else:
-            pos -= 1
-            count = mat[pos]
-    pos, count = agent_pos, mat[agent_pos]
-    while pos < len(mat):
-        if count > 0:
-            right = pos - agent_pos
-            break
-        else:
-            pos += 1
-            if pos >= len(mat):
-                break
-            count = mat[pos]
-    return left, right
-def convert_input(a, b, agent_pos):
-    #print(list(a.flatten()), list(b.flatten()), agent_pos)
-
-    a[agent_pos[0], agent_pos[1]] -= 1
-    a = a.flatten()
-    b = b.flatten()
-    #print(list(a), list(b), agent_pos)
-    left1, right1 = get_closest_left_right_1d(b, agent_pos[0])
-    left2, right2 = get_closest_left_right_1d(a, agent_pos[0])
-    arr = [left1, right1]
-    arr1 = [left2, right2]
-    #print(arr, arr1)
-    return [np.array(arr), np.array(arr1)]
 
 
 class SimpleConnectedMultiple(nn.Module):
@@ -118,8 +72,7 @@ class SimpleConnectedMultiple(nn.Module):
         #  F.softmax(self.layer4(x), dim=0)
         return self.layer4(x)
 
-counter = 0
-total_reward = 0
+
 class ObserverNetwork():
     def __init__(self, oned_size, num_agents, alpha, discount, beta=None, avg_alpha=None, num=0, infl_net=False, num_infls=0):
         if infl_net:
@@ -168,9 +121,9 @@ class ObserverNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, agent.position) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, agent.position) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
@@ -196,9 +149,9 @@ class ObserverNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
@@ -208,7 +161,7 @@ class ObserverNetwork():
         return summ
 
     def get_value_function_central(self, a, b, pos, agents_list):
-        return agents_list[0].policy_value.get_value_function(a, b, pos)
+        return agents_list[0].policy_value.get_sum_value(a, b, pos)
 
     def train(self, state, new_state, reward, action, agents_list):
         old_pos = np.array([state["pos"][0]])
@@ -288,42 +241,25 @@ class ObserverNetwork():
         if agents_list[self.num].is_new_infl:
             agents_list[self.num].is_new_infl = False
             return
-        # q_rates = agents_list[self.num].generate_rates_only(None, None) / agents_list[self.num].budget
-
         budget = agents_list[self.num].base_budget - agents_list[self.num].raw_b0_rate
         if budget < 1:
             budget = 1
-
-
 
         if self.is_infl:
             if budget < 20:
                 budget += 5
             rates = agents_list[self.num].generate_rates_only(None, None, const_ext=True)[0:len(agents_list)]
-
-
         else:
             rates = agents_list[self.num].generate_rates_only(None, None, const_ext=True)[0:len(agents_list) + 1]
 
         if sum(rates) > 0:
             rates /= sum(rates)
-        # if len(agents_list[self.num].followers) > 15:
-        #     print("===========Q=========")
-        #     print(rates)
         state = self.states[0]
-        # new_state = self.new_states[0]
-        # reward = self.rewards[0]
-        # action = self.actions[0]
-        # pos = self.poses[0]
 
         a, b = unwrap_state(state)
 
         actions1 = self.function(ten(a), ten(b), ten(np.array([state["pos"][0]])))
 
-        # if action == 4:
-        #     action = 2
-        # prob = torch.log(actions[action])
-        det_acts = actions1.detach().cpu().numpy()
         actions1[self.num] = -100
         v_rates = F.softmax(actions1, dim=0)
         q_rates = ten(rates)
@@ -338,26 +274,12 @@ class ObserverNetwork():
         self.actions = []
         self.poses = []
 
-
-
     def train_multiple(self, agents_list):
         losses = []
         crit_losses = []
         states = self.states
-        #print(len(states))
-        new_states = self.new_states
-        rewards = self.rewards
-        actions = self.actions
-        poses = self.poses
 
-        # q_rates = np.array(roundabout_find_allocs_with_b0_full_vec(agents_list[self.num].alphas_raw,
-        #                                                            agents_list[self.num].infl_alphas_raw,
-        #                                                            budget=agents_list[self.num].budget,
-        #                                                            b0=agents_list[self.num].b0)) / agents_list[self.num].budget
         q_rates = agents_list[self.num].generate_rates_only(None, None) / agents_list[self.num].budget
-        #q_rates[self.num] = -100
-        #q_rates = F.softmax(ten(q_rates), dim=0)
-
         q_rates = ten(q_rates)
 
         if agents_list[self.num].newly_infl_train:
@@ -367,98 +289,21 @@ class ObserverNetwork():
 
         for it in range(len(states)):
             state = states[it]
-            new_state = new_states[it]
-            reward = rewards[it]
-            action = actions[it]
-
-            all_pos = poses[it]
-
             old_pos = np.array([state["pos"][0]])
-            new_pos = np.array([new_state["pos"][0]])
-
-            debug = False
-            if debug:
-                print("=========TRAINING=========")
-                print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-                print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-                print(old_pos, new_pos)
-                print(reward)
-
             a, b = unwrap_state(state)
-            new_a, new_b = unwrap_state(new_state)
 
             actions1 = self.function(ten(a), ten(b), ten(old_pos))
 
-            # if action == 4:
-            #     action = 2
-            #prob = torch.log(actions[action])
-            det_acts = actions1.detach().cpu().numpy()
-            best_act = list(det_acts).index(max(det_acts))
             actions1[self.num] = -100
             v_rates = F.softmax(actions1, dim=0)
 
-            #prob = actions[action]
-            all_alphas = np.concatenate((agents_list[self.num].alphas, agents_list[self.num].infl_alphas,
-                                       [agents_list[self.num].b0 * agents_list[self.num].b0_rate]))
-
-            #v_value = ten(np.array([np.sum(all_alphas)]))
-
-            #q_value = reward + self.discount * self.get_value_function_with_pos(new_a, new_b, agents_list, all_pos, new_pos)
-            # q_value = self.get_content_value_function(agents_list, action)
-            safe_probs = np.array(F.softmax(actions1, dim=0).detach().cpu().numpy()) * agents_list[self.num].budget
-
-
-            """
-            Get ALolcs
-            """
-
-
-
-            #q_value = ten(np.array([np.sum((1 - np.exp(-safe_probs)) * all_raws)]))
-            if it == -1 and self.num == 0:
-                print("###############################")
-                print("Agent ", self.num)
-                print(all_alphas)
-                #print(all_raws)
-                print("###############################")
-                print("Value,", v_rates, "   Q Value,", q_rates)
-
-            #adv = np.array([q_value.cpu() - v_value.cpu()])
-
-            #adv = ten(adv)
-
-            # if self.critic is not None:
-            #     crit_losses.append(torch.pow(adv, 2))
-            #     print(crit_losses)
-
             losses.append(nn.functional.mse_loss(v_rates, q_rates))
-        #if self.num == 1:
-            # print("AAAAA")
-            # all_raws = np.concatenate(
-            #     (agents_list[self.num].alphas_raw, agents_list[self.num].infl_alphas_raw, [agents_list[self.num].b0]))
-            # print(all_raws)
-            # print(q_rates)
-            # print(v_rates)
-            break
-
 
         if len(states) != 0:
             self.optimizer.zero_grad()
             loss = torch.stack(losses).sum()
             loss.backward()
-            # total_norm = 0
-            # for p in self.function.parameters():
-            #     param_norm = p.grad.detach().data.norm(2)
-            #     total_norm += param_norm.item() ** 2
-            # total_norm = total_norm ** 0.5
-            #print([p.grad for p in self.function.parameters() if p.grad is not None])
-            #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-            #v = linalg.vector_norm(grads, ord=2)
-            # self.vs += total_norm
-            #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
-
             self.optimizer.step()
-
             self.states = []
             self.new_states = []
             self.rewards = []
@@ -475,136 +320,3 @@ class ObserverNetwork():
             for g in self.optimizer.param_groups:
                 g['lr'] = self.alpha
             agents_list[self.num].newly_infl_train = False
-    """
-    Unused Below
-    """
-    def get_collective_adv_basic(self, state, new_state, reward, old_pos, new_pos, poses, agents_list):
-        summ = 0
-        v_sum = 0
-        projection_q_sum = 0
-        #print(poses)
-        for number, agent in enumerate(agents_list):
-            if number == self.num:
-                q, v = agent.policy_value.get_adv_and_train(state, new_state, old_pos, new_pos, reward)
-                summ += q * agents_list[self.num].agent_rates[number]
-                v_sum += v
-            else:
-                q, v = agent.policy_value.get_adv_and_train(state, new_state, np.array(poses[number][0]), np.array(poses[number][0]), 0)
-                summ += q * agents_list[self.num].agent_rates[number]
-                v_sum += v
-            if agents_list[number].alpha_agent or agents_list[number].is_projecting:
-                agents_list[number].alphas[self.num] = agents_list[number].alphas[self.num] * agents_list[number].beta_factor + q * (1 - agents_list[number].beta_factor)
-
-                if agents_list[number].is_projecting:
-                    avg_alpha = np.average(agents_list[number].alphas)
-                    bound = 0.885
-                    val = (q - avg_alpha) / avg_alpha
-                    val = ((val + 1) / 2) / bound
-                    projection_q_sum += val
-                #print(agents_list[number].alphas)
-
-        if agents_list[self.num].is_projecting:
-            agents_list[self.num].beta = agents_list[self.num].beta * agents_list[self.num].beta_factor + projection_q_sum * (
-                    1 - agents_list[self.num].beta_factor)
-        else:
-            agents_list[self.num].beta = agents_list[self.num].beta * agents_list[self.num].beta_factor + summ * (
-                    1 - agents_list[self.num].beta_factor)
-
-
-        if agents_list[self.num].beta_agent:
-            if agents_list[self.num].is_projecting:
-                return projection_q_sum - agents_list[self.num].beta
-            else:
-                return summ - agents_list[self.num].beta
-        else:
-            assert agents_list[self.num].agent_rates[0] == 1
-            return summ - v_sum
-
-    def train_multiple_with_critic(self, agents_list):
-        losses = []
-        crit_losses = []
-        states = self.states
-        #print(len(states))
-        new_states = self.new_states
-        rewards = self.rewards
-        actions = self.actions
-        poses = self.poses
-
-        for it in range(len(states)):
-            state = states[it]
-            new_state = new_states[it]
-            reward = rewards[it]
-            action = actions[it]
-
-            all_pos = poses[it]
-
-            old_pos = np.array([state["pos"][0]])
-            new_pos = np.array([new_state["pos"][0]])
-
-            debug = False
-            if debug:
-                print("=========TRAINING=========")
-                print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-                print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-                print(old_pos, new_pos)
-                print(reward)
-
-            a, b = unwrap_state(state)
-            new_a, new_b = unwrap_state(new_state)
-
-            actions_lst = self.function(ten(a), ten(b), ten(old_pos))
-
-            if action == 4:
-                action = 2
-
-            #prob = torch.log(actions[action])
-            prob = F.log_softmax(actions_lst, dim=0)[action]
-            #prob = actions[action]
-            # if self.beta is None:
-            #     #with torch.no_grad():
-            #     v_value = self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos)
-            # else:
-            #     v_value = self.beta
-            #     #print(self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
-            #     #print("A", v_value)
-            # #with torch.no_grad():
-            # q_value = reward + self.discount * self.get_value_function_with_pos(new_a, new_b, agents_list, all_pos, new_pos)
-            #print(v_value)
-            #print(q_value)
-            adv = self.get_collective_adv_basic(state, new_state, reward, old_pos, new_pos, all_pos, agents_list)
-            #print(adv, "A")
-            #print(q_value - self.get_value_function_with_pos(a, b, agents_list, all_pos, old_pos))
-            #adv = ten(adv)
-
-            losses.append(-1 * torch.mul(prob, adv))
-
-        if len(states) != 0:
-            # if self.critic is not None:
-            #     self.critic.optimizer.zero_grad()
-            #     crit_loss = torch.stack(crit_losses).sum()
-            #     #crit_loss.backward(retain_graph=True)
-            #     #self.critic.optimizer.step()
-
-            self.optimizer.zero_grad()
-
-            loss = torch.stack(losses).sum()
-            loss.backward()
-            # total_norm = 0
-            # for p in self.function.parameters():
-            #     param_norm = p.grad.detach().data.norm(2)
-            #     total_norm += param_norm.item() ** 2
-            # total_norm = total_norm ** 0.5
-            #print([p.grad for p in self.function.parameters() if p.grad is not None])
-            #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-            #v = linalg.vector_norm(grads, ord=2)
-            # self.vs += total_norm
-            #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
-            self.optimizer.step()
-
-
-            self.states = []
-            self.new_states = []
-            self.rewards = []
-            self.actions = []
-            self.poses = []
-

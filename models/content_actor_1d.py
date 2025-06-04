@@ -152,15 +152,15 @@ class ActorNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, agent.position) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, agent.position) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.get_value_function_bin(a, b, pos) #* agents_list[self.num].agent_rates[number]
+                    summ += agent.get_value_function_bin(a, b, pos)  #* agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.get_value_function_bin(a, b, agent.position) #* agents_list[self.num].agent_rates[number]
+                    summ += agent.get_value_function_bin(a, b, agent.position)  #* agents_list[self.num].agent_rates[number]
         return summ
 
     def get_content_value_function(self, agents_list, action):
@@ -182,9 +182,9 @@ class ActorNetwork():
         if agents_list[0].avg_alpha is None:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
-                    summ += agent.policy_value.get_value_function(a, b, pos) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, pos) * agents_list[self.num].agent_rates[number]
                 else:
-                    summ += agent.policy_value.get_value_function(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
+                    summ += agent.policy_value.get_sum_value(a, b, poses[number]) * agents_list[self.num].agent_rates[number]
         else:
             for number, agent in enumerate(agents_list):
                 if number == self.num and pos is not None:
@@ -194,21 +194,11 @@ class ActorNetwork():
         return summ
 
     def get_value_function_central(self, a, b, pos, agents_list):
-        return agents_list[0].policy_value.get_value_function(a, b, pos)
+        return agents_list[0].policy_value.get_sum_value(a, b, pos)
 
     def train(self, state, new_state, reward, action, agents_list):
         old_pos = np.array([state["pos"][0]])
         new_pos = np.array([new_state["pos"][0]])
-
-
-
-        debug = False
-        if debug:
-            print("=========TRAINING=========")
-            print(list(state["agents"].flatten()), list(state["apples"].flatten()))
-            print(list(new_state["agents"].flatten()), list(new_state["apples"].flatten()))
-            print(old_pos, new_pos)
-            print(reward)
 
         a, b = unwrap_state(state)
         new_a, new_b = unwrap_state(new_state)

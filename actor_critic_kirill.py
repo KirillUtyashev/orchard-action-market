@@ -1,173 +1,218 @@
-from ac_utilities import find_ab, find_ab_bin
-from alloc.allocation import find_allocs
-from orchard.environment import *
+from matplotlib import pyplot as plt
+from agents.actor_critic_agent import ACAgent, ACAgentBeta
+from algorithm import Algorithm
+from config import get_config
+from models.actor_dc_1d import ActorNetwork, ActorNetworkCounterfactual, \
+    ActorNetworkWithBeta
+from models.value_function import VNetwork
 import numpy as np
 import random
-from policies.random_policy import random_policy_1d
-from plots import graph_plots, add_to_plots, setup_plots, init_plots
-from orchard.algorithms import single_apple_spawn, single_apple_despawn
-from helpers import convert_position, env_step, generate_sample_states, \
-    eval_network
-
-import torch
-torch.set_default_dtype(torch.float64)
-torch.backends.cudnn.benchmark = True
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device:', device)
+from helpers import env_step
 
 
-def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, epsilon=0, timesteps=100000, iteration=99, has_beta=False, betas_list=None, altname=None):
-    print(orchard_length)
-    print(len(agents_list))
-    print("Using Beta Value:", has_beta)
+def get_discounted_value(old, new, discount_factor=0.05):
+    return old * (1 - discount_factor) + new * discount_factor
 
-    if has_beta:
-        assert betas_list is not None
 
-    env = Orchard(orchard_length, len(agents_list), S, phi, one=True, spawn_algo=single_apple_spawn,
-                  despawn_algo=single_apple_despawn)  # initialize env
-    env.initialize(agents_list)  # attach agents to env
-    print("Experiment", name)
-    v_network_list = []
-    p_network_list = []
+class ActorCritic(Algorithm):
+    def __init__(self, batch_size, alpha):
+        super().__init__(batch_size, alpha, "AC-VALUE")
+        self.p_network_list = []
+        self.v_network_list = []
+        self.actor_loss_history = []
+        self.critic_loss_history = []
+        self.adv_loss_history = []
 
-    for agn in range(len(agents_list)):
-        assert agents_list[agn].policy_value is not None
-        v_network_list.append(agents_list[agn].policy_value)
+    def update_actor(self):
+        res_2 = []
+        res_3 = []
+        for agent in self.agents_list:
+            res = agent.policy_network.train()
+            if res is not None:
+                loss, adv_value = res
+                res_2.append(loss)
+                res_3.append(adv_value)
+        if len(res_2) > 0 and len(res_3) > 0:
+            self.actor_loss_history.append(res_2[0])
+            self.adv_loss_history.append(res_3[0])
 
-        assert agents_list[agn].policy_network is not None
-        p_network_list.append(agents_list[agn].policy_network)
+    def update_critic(self):
+        res = []
+        for agent in self.agents_list:
+            res.append(agent.policy_value.train())
+        self.critic_loss_history.append(res[0])
 
-    total_reward = 0
+    def plot(self):
+        plt.figure()
+        plt.plot(self.actor_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Actor Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+        plt.figure()
+        plt.plot(self.critic_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Critic Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+        plt.figure()
+        plt.plot(self.adv_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Critic Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
 
-    """ Plotting Setup """
-    one_plot, two_plot, loss_plot, loss_plot1, loss_plot2, ratio_plot = init_plots()
-    setup_plots(p_network_list[0].function.state_dict(), one_plot)
-    maxi = 0
-    """"""
-    sample_state, sample_state5, sample_state6 = generate_sample_states(orchard_length, len(agents_list))
 
-    for i in range(timesteps):
-        s, new_s, r, old_pos, agent = env_step(agents_list, env, i, timesteps, "AC")
-        total_reward += r  # Add to reward.
-        for each_agent in range(len(agents_list)):
+    def collect_observation(self, step, timesteps):
+        s, new_s, r, agent, positions, action = env_step(self.agents_list, self.env, step, timesteps, "AC")
+        for each_agent in range(len(self.agents_list)):
             if each_agent == agent:
-                agents_list[each_agent].policy_value.add_experience(np.concatenate([s, convert_position(old_pos)], axis=0),
-                                                                    np.concatenate([new_s, convert_position(agents_list[each_agent].position)], axis=0),
-                                                                    None,
-                                                                    r)
+                self.agents_list[each_agent].policy_value.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r)
+                new_positions = []
+                for j in range(len(self.agents_list)):
+                    new_positions.append(self.agents_list[j].position)
+                self.agents_list[each_agent].policy_network.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r, action, positions, new_positions, agent)
             else:
-                agents_list[each_agent].policy_value.add_experience(np.concatenate([s, convert_position(agents_list[each_agent].position)], axis=0),
-                                                                    np.concatenate([new_s, convert_position(agents_list[each_agent].position)], axis=0),
-                                                                    None,
-                                                                    0)
+                self.agents_list[each_agent].policy_value.add_experience(s, self.agents_list[each_agent].position, new_s, self.agents_list[each_agent].position, 0)
+        return new_s, agent, r
 
-
-
-
-
-        p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        if i % 1000 == 0:
-            # Train every 1k steps for stability
-            add_to_plots(p_network_list[0].function.state_dict(), i, one_plot)
-            v_value = agents_list[1].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["poses"][0])
-            v_value1 = agents_list[1].policy_network.get_function_output(sample_state5["agents"], sample_state5["apples"],
-                                                                         pos=sample_state5["poses"][1])
-            v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
-                                                                         sample_state6["apples"],
-                                                                         pos=sample_state6["poses"][0])
-            if i % 20000 == 0:
-                print("Sample Value:", v_value)
-            loss_plot.append(v_value[0])
-            loss_plot1.append(v_value1[0])
-            loss_plot2.append(v_value2[0])
-            for ntwk in p_network_list:
-                ntwk.train_multiple(agents_list)
-
-        if i % 20000 == 0 and i != 0:
-            print("At timestep: ", i)
-        if i == 50000:
-            for network in p_network_list:
+    def update_lr(self, step, timesteps):
+        if step == (0.33 * timesteps):
+            for network in self.v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.001
-        if i == 100000:
-            for network in p_network_list:
+                    g['lr'] = g['lr'] * 0.5
+        if step == (0.625 * timesteps):
+            for network in self.v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0005
-        if i == 200000:
-            for network in p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
-        if i == 300000:
-            for network in p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
-        if i == 740000:
-            for network in p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
-        if i == 860000:
-            for network in p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00002
-        if i == 1000000:
-            for network in p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
-        if (i % 50000 == 0 and i != 0) or i == timesteps - 1:
-            print("=====Eval at", i, "steps======")
-            fname = name
-            if altname is not None:
-                fname = altname
-            maxi = eval_network(fname, maxi, network_list=p_network_list, iteration=iteration, num_agents=len(agents_list), side_length=orchard_length)
-            print("=====Completed Evaluation=====")
-    graph_plots(p_network_list[0].function.state_dict(), name, one_plot, loss_plot, loss_plot1, loss_plot2)
-    print("Total Reward:", total_reward)
-    print("Total Apples:", env.total_apples)
+                    g['lr'] = g['lr'] * 0.5
+
+    def log_progress(self, sample_state, sample_state5, sample_state6):
+        super(ActorCritic, self).log_progress(sample_state, sample_state5, sample_state6)
+        prob_value = self.agents_list[0].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["poses"][0])
+        print(prob_value)
+
+    def run(self, timesteps):
+        for i in range(get_config()["num_agents"]):
+            agent = ACAgent("learned_policy")
+            agent.policy_network = ActorNetwork(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
+            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
+            self.agents_list.append(agent)
+            self.v_network_list.append(agent.policy_value)
+            self.p_network_list.append(agent.policy_network)
+        self.network_for_eval = self.p_network_list
+        self.train(timesteps)
+        plt.figure()
+        plt.plot(self.actor_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Actor Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+        plt.figure()
+        plt.plot(self.critic_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Critic Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
 
 
+class ActorCriticBeta(ActorCritic):
+    def __init__(self, batch_size, alpha):
+        super().__init__(batch_size, alpha)
+        self.name = "AC-BETA"
 
-from agents.actor_critic_agent import ACAgent
+    def collect_observation(self, step, timesteps):
+        new_s, agent, reward = super().collect_observation(step, timesteps)
+        self.find_ab(new_s, agent, reward)
 
-def train_ac_value(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
-    training_loop(agents_list, side_length, None, None, 0.0013, name, discount, timesteps=timesteps, iteration=iteration)
+    def find_ab(self, new_s, agent, reward):
+        """
+        Compute and update alphas and betas in place for each agent after collecting an observation
+        """
+        beta_sum = 0
+        for num, each_agent in enumerate(self.agents_list):
+            value = each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0]
+            if num == agent:
+                value += reward
+            for agent_num in range(len(self.agents_list)):
+                if agent_num != agent:
+                    each_agent.alphas[agent_num] = get_discounted_value(each_agent.alphas[agent_num], 0)
+                else:
+                    each_agent.alphas[agent] = get_discounted_value(each_agent.alphas[agent], value)
+            beta_sum += value
+        beta = beta_sum
+        self.agents_list[agent].beta = get_discounted_value(self.agents_list[agent].beta, beta.item())
+
+    def run(self, timesteps):
+        for i in range(get_config()["num_agents"]):
+            agent = ACAgentBeta("learned_policy", get_config()["num_agents"])
+            agent.policy_network = ActorNetworkWithBeta(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
+            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
+            self.agents_list.append(agent)
+            self.v_network_list.append(agent.policy_value)
+            self.p_network_list.append(agent.policy_network)
+        self.network_for_eval = self.p_network_list
+        self.train(timesteps)
 
 
-def train_ac_beta(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
-    alphas, betas = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000, iteration=iteration)
+class ActorCriticCounterfactual(ActorCritic):
+    def __init__(self, batch_size, alpha):
+        super(ActorCriticCounterfactual, self).__init__(batch_size, alpha)
+        self.name = "AC-COUNTERFACTUAL"
 
-    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas, has_beta=True, discount=discount,
-                  timesteps=timesteps, iteration=iteration)
-
-
-def train_ac_rate(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
-    # step 1 - find normal A/B
-    alphas1, betas1 = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=20000, iteration=iteration)
-
-    # step 2 - get allocs and regenerate
-    allocs = []
-    for i in range(num_agents):
-        allocs.append(find_allocs(alphas1[i]))
-        allocsf = (1 - np.exp(-allocs[i]))
-        agents_list[i].set_alloc_rates(allocsf, 1)
-
-    alphas1, betas1 = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=20000, iteration=iteration) # regen with rates
-
-    print(betas1)
-
-    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas1, has_beta=True, discount=discount,
-                  timesteps=timesteps, iteration=iteration)
+    def run(self, timesteps):
+        for i in range(get_config()["num_agents"]):
+            agent = ACAgent("learned_policy")
+            agent.policy_network = ActorNetworkCounterfactual(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
+            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
+            self.agents_list.append(agent)
+            self.v_network_list.append(agent.policy_value)
+            self.p_network_list.append(agent.policy_network)
+        self.network_for_eval = self.p_network_list
+        self.train(timesteps)
 
 
-def train_ac_binary(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
-    avg_alphas, betas = find_ab(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000, iteration=iteration)
-    print(avg_alphas)
-    for ida, agent in enumerate(agents_list):
-        agent.avg_alpha = avg_alphas[ida]
-    alphas, betas = find_ab_bin(agents_list, side_length, None, None, 0.0003, name, discount=discount, timesteps=20000,
-                                iteration=iteration)
-    print(betas)
-    training_loop(agents_list, side_length, None, None, 0.0013, name, betas_list=betas, has_beta=True,
-                  discount=discount,
-                  timesteps=timesteps, iteration=iteration)
+class ActorCriticRate(ActorCriticBeta):
+    def __init__(self, batch_size, alpha):
+        super(ActorCriticRate, self).__init__(batch_size, alpha)
+        self.name = "AC-RATE"
+
+    def update_following_rates(self):
+        pass
+
+    def run(self, timesteps):
+        for i in range(get_config()["num_agents"]):
+            agent = ACAgentBeta("learned_policy", get_config()["num_agents"])
+            agent.policy_network = ActorNetworkWithBeta(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
+            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
+            self.agents_list.append(agent)
+            self.v_network_list.append(agent.policy_value)
+            self.p_network_list.append(agent.policy_network)
+        self.network_for_eval = self.p_network_list
+        self.train(timesteps)
+        plt.figure()
+        plt.plot(self.actor_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Actor Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+        plt.figure()
+        plt.plot(self.critic_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Critic Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+        plt.figure()
+        plt.plot(self.adv_loss_history)
+        plt.xlabel("Training Step")
+        plt.ylabel("Critic Loss")
+        plt.title("Training Loss over Time")
+        plt.show()
+
+
+if __name__ == "__main__":
+    # random.seed(42)
+    # np.random.seed(42)
+    # for _ in range(5):
+    for _ in range(10):
+        ac = ActorCriticBeta(8, 0.00005)
+        ac.run(50000)

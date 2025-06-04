@@ -184,7 +184,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             "pos": agents_list[agent].position.copy()
         }
         # p_network_list[agent].train(sp_state, sp_new_state, reward, action, agents_list)
-        p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
+        p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         # if i == 1000:
         #     start = time.time()
         # if i == 2000:
@@ -350,11 +350,6 @@ def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agent
     maxi = max(maxi, val)
     return maxi
 
-def train_ac(side_length, num_agents, agents_list, name, discount, timesteps, iteration=0):
-    #for i in range(num_agents):
-    #    agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents))
-    #    # agents_list[i].policy = "learned_policy"
-    training_loop(agents_list, side_length, None, None, 0.0001, name, discount, timesteps=timesteps, iteration=iteration)
 
 if __name__ == "__main__":
     side_length = 5

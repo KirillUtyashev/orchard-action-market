@@ -355,9 +355,9 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             if agent3.num != agent:
                 agent3.beta *= (1 - agents_list[agent].discount_factor)
 
-        p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        o_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
-        i_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
+        p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        o_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        i_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
 
         if i > gossip_timestep:
             if i % 100 == 0 and i > gossip_timestep + 4:
@@ -391,7 +391,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             for ag in agents_list:
                 ag.shed_influencer(agents_list)
 
-        p_network_list[agent].train_multiple(agents_list)
+        p_network_list[agent].train(agents_list)
         # if i != 0:
         #     if i % 20 == 0:
         #         for ntwk in p_network_list:
@@ -920,41 +920,6 @@ def train_ac_content(side_length, num_agents, agents_list, name, discount, times
     # Influencer set up
     if len(agents_list[0].influencers) > 0:
         agents_list[0].influencers[0].follow_rates = np.array([1] * num_agents)
-
-    # step 1 - find normal A/B
-    # No step one, since agents have to learn on their own
-    # alphas1, betas1 = find_ab_content_infl(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=3000 * num_agents, iteration=iteration)
-
-    """
-    
-    No Alloc. Generation
-    
-    # step 2 - get allocs and regenerate
-    allocs = []
-    print("Allocing")
-    for i in range(num_agents):
-        arates, irates, b0_rate = roundabout_find_allocs_with_b0(agents_list[i].alphas, agents_list[i].infl_alphas, budget=agents_list[i].budget, b0=agents_list[i].b0 * agents_list[i].b0_rate)
-
-        agents_list[i].raw_agent_rates = arates
-        agents_list[i].raw_infl_rates = irates
-        agents_list[i].raw_b0_rate = b0_rate
-
-        a_allocs = (1 - np.exp(-arates))
-        i_allocs = (1 - np.exp(-irates))
-        agents_list[i].agent_rates = a_allocs
-        agents_list[i].infl_rates = i_allocs
-        agents_list[i].b0_rate = (1-np.exp(-1 * b0_rate))
-        print(a_allocs, i_allocs, agents_list[i].b0_rate)
-
-    # influencer
-    for i in range(len(influencers)):
-        arates = find_allocs(influencers[i].agent_alphas, budget=influencers[i].budget)
-        print((1-np.exp(-arates)))
-        influencers[i].raw_follow_rates = arates
-        influencers[i].follow_rates = (1-np.exp(-arates))
-
-    alphas1, betas1 = find_ab_content_infl(agents_list, side_length, None, None, 0.0003, name, discount=0.99, timesteps=3000 * num_agents, iteration=iteration) # regen with rates
-    """
 
     alpha = 0.001
     alpha = 0.002

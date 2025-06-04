@@ -639,7 +639,7 @@ class ContentAgent:
             assert self.avg_alpha is not None
             if pos is None:
                 pos = self.position
-            v = self.policy_value.get_value_function(a, b, pos)[0]
+            v = self.policy_value.get_sum_value(a, b, pos)[0]
             val = (v - self.avg_alpha) / self.avg_alpha
             bound = 0.885
             val = ((val + 1) / 2) / bound
@@ -651,21 +651,21 @@ class ContentAgent:
         else:
             if pos is None:
                 pos = self.position
-            return self.policy_value.get_value_function(a, b, pos)
+            return self.policy_value.get_sum_value(a, b, pos)
 
     def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:
             assert agent_poses is not None
             for num, agent in enumerate(agents_list):
-                sum += agent.policy_value.get_value_function(a, b, np.array(agent_poses[num]))
+                sum += agent.policy_value.get_sum_value(a, b, np.array(agent_poses[num]))
         else:
             assert new_pos is not None
             for agent in agents_list:
                 if agent.num == self.num:
-                    sum += agent.policy_value.get_value_function(a, b, new_pos)
+                    sum += agent.policy_value.get_sum_value(a, b, new_pos)
                 else:
-                    sum += agent.policy_value.get_value_function(a, b, agent.position)
+                    sum += agent.policy_value.get_sum_value(a, b, agent.position)
         return sum
 
     def get_learned_action(self, state):

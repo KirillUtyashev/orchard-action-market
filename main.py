@@ -11,6 +11,7 @@ from metrics.metrics import append_metrics, plot_metrics, append_positional_metr
 
 same_actions = 0
 
+
 def step(agents_list, environment: Orchard):
     agent = random.randint(0, environment.n-1)
 
