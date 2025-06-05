@@ -11,27 +11,38 @@ For the Rate Allocation problem - maximizes Sigma Q * following rate
 #alphas = np.array([0.3152559,  0.31565792, 0.31479956, 0.36986502])
 
 def alloc(mat, alphas):
-    return -((10000 * np.sum((1 - np.exp(-mat)) * alphas)))
+    """
+    Allocation problem expression. Multiply by -1000 to convert minimization problem
+    to maximization problem
+    """
+    return -(np.sum((1 - np.exp(-mat)) * alphas))
 
 
-def find_allocs(alphas, it=0, budget=4):
-    x0 = (alphas / np.sum(alphas))
-    x0 = -np.log(1-x0)
-
-    x0 = (x0 / np.sum(x0)) * budget
-    sum_constraint = lambda x: -np.sum(x) + budget
-    cons = [{'type': 'eq', 'fun': sum_constraint}, {'type': 'ineq', 'fun': lambda x: x}]
-    ret = np.array([budget / len(x0)] * len(x0))
-    res = minimize(alloc, x0, args=alphas, method="SLSQP", constraints=cons)
-    if res.success == False:
-        if it == 40:
-            ret = find_allocs(alphas, it=it + 1, budget=budget)
-        else:
-            print("Not Success", alphas)
-            return ret
+def find_allocs(alphas, agent_id, budget=1):
+    """
+    Find the following rates for other agents. For the agent itself, we keep the following rate of 1.
+    The reason is that the agent can fully assess its own internal information and a following rate of < 1 wouldn't make sense.
+    """
+    alphas = np.delete(alphas, agent_id)
+    if len(alphas) == 1:
+        sol = np.array([budget])
     else:
-        ret = res.x
-    return ret
+        # 1) softmax over alphas
+        exps = np.exp(alphas - np.max(alphas))        # subtract max for numerical stability
+        foll_rates = exps / np.sum(exps)                        # now 0 < p_i < 1, sum(p)=1
+        foll_rates = -np.log(1 - foll_rates)  # Convert following rates from rate to raw lambdas
+
+        foll_rates = (foll_rates / np.sum(foll_rates)) * budget  # Normalize raw lambdas
+        sum_constraint = lambda x: -np.sum(x) + budget  # Budget constraint
+        cons = [{'type': 'eq', 'fun': sum_constraint}, {'type': 'ineq', 'fun': lambda x: x}]  # Optimization problem
+        sol = minimize(alloc, foll_rates, args=alphas, method="SLSQP", constraints=cons)  # Solve the problem
+        if not sol.success:
+            print("Not Success", alphas)
+            sol = np.array([budget / len(foll_rates)] * len(foll_rates))  # Equal following rates
+        else:
+            sol = sol.x
+    return np.insert(sol, agent_id, 1)
+
 
 def roundabout_find_allocs(alphas1, alphas2, it=0, budget=4):
     alphas = np.concatenate((alphas1.flatten(), alphas2.flatten()))
@@ -87,40 +98,3 @@ def rate_allocate(alphas1, alphas2, it=0, b0=0.0, budget=4):
     #     print(np.sum(new_alphas))
     return new_alphas
     #return np.ones(len(alphas)) * 5
-
-
-if __name__ == "__main__":
-    #ex_alpha = 0.0036245971366404782
-    #ex_alpha = 0.01
-    ex_alpha = 0.05
-    no_agents = 20
-    #alphas = np.zeros(100)
-    alphas = np.zeros(100)
-    for i in range(no_agents):
-        alphas[i] = ex_alpha / no_agents
-    # alphas[0] = 0.0055
-    # alphas[1] = 0.001
-    # alphas[2] = 0.001
-
-    #alphas[0] = 0.0004885562105229612
-    #alphas[0] = 0.0024
-    print(alphas)
-    print(sum(alphas))
-    b0 = 100
-    mar = 1
-    alphas *= mar
-    b0 *= mar
-    rates = np.array(rate_allocate(alphas,
-                                   np.array([0]),
-                                   budget=25,
-                                   b0=b0))
-    print(np.sum(rates))
-    print(rates)
-    # alphas = [0.00262189, 0.00366571, 0.00552498, 0.00784672, 0.01172289, 0.01496106,
-    #     0.01787477, 0.   ,      0.01641911, 0.01201591, 0.09265304, 0.02      ]
-    sum_constraint = lambda x: -np.sum(x) + 1
-    cons = [{'type': 'ineq', 'fun': sum_constraint}, {'type':'ineq', 'fun': lambda x: x}]
-    suballoc = np.array([2.796e-04,  2.852e-04,  2.763e-04, 9.992e-01])
-    #res = find_allocs(alphas)
-    #print("Result:", res)
-    #print((1 - np.exp(-res)))

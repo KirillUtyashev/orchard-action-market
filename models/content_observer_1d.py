@@ -4,7 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from helpers import ten, unwrap_state
+
+from config import DEVICE
+from helpers import convert_position, ten, unwrap_state
+from models.main_net import MainNet
 
 torch.set_default_dtype(torch.float64)
 
@@ -20,65 +23,12 @@ action_vectors = [
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-class SimpleConnectedMultiple(nn.Module):
-    def __init__(self, oned_size, num_agents=10, num_influencers=1, is_influencer=False): # we work with 1-d size here.
-        super(SimpleConnectedMultiple, self).__init__()
-        self.layer1 = nn.Linear(oned_size * 2 + 1, 32)
-        self.layer2 = nn.Linear(32, 16)
-        #self.layer3 = nn.Linear(128, 64)
-        if is_influencer:
-            self.layer4 = nn.Linear(16,
-                                    num_agents)  # [0] is move left, [1] is move right, [2] is don't move
-        else:
-            #self.layer4 = nn.Linear(64, num_agents + num_influencers + 1)  # [0] is move left, [1] is move right, [2] is don't move
-            self.layer4 = nn.Linear(16,
-                                    num_agents + 1)  # [0] is move left, [1] is move right, [2] is don't move
-        #self.layer1 = nn.Linear(oned_size * 2, 256)
-
-        # FIRST INPUT TYPE MODEL
-        #self.layer1 = nn.Conv1d(1, 6, 3, 1)
-        ##self.conv_bn = nn.BatchNorm1d(19)
-        ##self.layer2 = nn.Linear(48, 64) # 48 for an input dimension of 10 (i.e. oned size is 5)
-        #self.layer2 = nn.Linear(114, 128)
-        ##self.layer2 = nn.Linear(64, 64)
-        #self.layer3 = nn.Linear(128, 128)
-        #self.layer5 = nn.Linear(128, 128)
-        #self.layer4 = nn.Linear(128, 3)
-
-        # SECOND INPUT TYPE MODEL
-        # self.layer1 = nn.Conv1d(1, 6, 3, 1)
-        # self.layer2 = nn.Linear(12, 32)
-        # self.layer3 = nn.Linear(32, 32)
-        # self.layer4 = nn.Linear(32, 1)
-
-        torch.nn.init.xavier_uniform_(self.layer1.weight)
-        torch.nn.init.xavier_uniform_(self.layer2.weight)
-        #torch.nn.init.xavier_uniform_(self.layer3.weight)
-        torch.nn.init.xavier_uniform_(self.layer4.weight)
-        #torch.nn.init.xavier_uniform_(self.layer5.weight)
-        # print("Initialized Neural Network")
-
-    def forward(self, a, b, pos):
-        x = torch.cat((a.flatten(), b.flatten(), pos.flatten()))
-        #print(x)
-        #print(x)
-        x = x.view(1, -1)
-        #x = F.leaky_relu(self.layer1(x))
-        x = F.leaky_relu(self.layer1(x))
-        x = x.flatten()
-        x = F.leaky_relu(self.layer2(x))
-        # x = F.leaky_relu(self.layer3(x))
-        #x = F.leaky_relu(self.layer5(x))
-        #  F.softmax(self.layer4(x), dim=0)
-        return self.layer4(x)
-
-
-class ObserverNetwork():
+class ObserverNetwork:
     def __init__(self, oned_size, num_agents, alpha, discount, beta=None, avg_alpha=None, num=0, infl_net=False, num_infls=0):
         if infl_net:
-            self.function = SimpleConnectedMultiple(oned_size, num_agents, is_influencer=True)
+            self.function = MainNet(oned_size + 1, num_agents)
         else:
-            self.function = SimpleConnectedMultiple(oned_size, num_agents, num_infls)
+            self.function = MainNet(oned_size + 1, num_agents + 1)
         self.function.to(device)
         self.optimizer = optim.AdamW(self.function.parameters(), lr=alpha, amsgrad=True)
         self.alpha = alpha
@@ -258,11 +208,15 @@ class ObserverNetwork():
 
         a, b = unwrap_state(state)
 
-        actions1 = self.function(ten(a), ten(b), ten(np.array([state["pos"][0]])))
+        x = np.concatenate([a, b, convert_position(state["pos"])], axis=0)
+        x = ten(x, DEVICE)
+        x = x.view(1, -1)
+
+        actions1 = self.function(x)
 
         actions1[self.num] = -100
         v_rates = F.softmax(actions1, dim=0)
-        q_rates = ten(rates)
+        q_rates = ten(rates, DEVICE)
         loss = nn.functional.mse_loss(v_rates, q_rates)
         loss.backward()
 

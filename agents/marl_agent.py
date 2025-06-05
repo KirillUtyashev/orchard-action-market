@@ -352,12 +352,12 @@ class OrchardAgent:
             pos = self.position
 
         if self.utility == "value_function":
-            return self.value_network.get_sum_value(a, b, pos)[0]
+            return self.value_network.get_value_function(a, b, pos)[0]
 
     def get_value_function(self, a, b, pos=None):
         if pos is None:
             pos = self.position
-        return self.value_network.get_sum_value(a, b, pos)
+        return self.value_network.get_value_function(a, b, pos)
     def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:
@@ -444,9 +444,3 @@ class OrchardAgent:
             return random.choice(range(length))
         else:
             return self.policy(state, self.position)
-
-
-
-    """
-    Agentic Feedback Functionality
-    """

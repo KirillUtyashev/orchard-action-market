@@ -28,7 +28,10 @@ class ACAgent(CommAgent):
 
         actions = [0, 1, 4]
         output = self.policy_network.get_function_output(a, b, self.position, tau)
-        action = random.choices(actions, weights=output)[0]
+        try:
+            action = random.choices(actions, weights=output)[0]
+        except Exception as e:
+            print(1)
         return action
 
     def get_action(self, state, agents_list=None):
@@ -43,4 +46,13 @@ class ACAgentBeta(ACAgent):
         super().__init__(policy)
         self.alphas = np.zeros(num_agents)
         self.beta = 0
-        self.baseline_beta = 0
+        self.sum_betas = []
+
+class ACAgentRates(ACAgentBeta):
+    def __init__(self, policy, num_agents, budget=1):
+        super().__init__(policy, num_agents)
+        self.agent_rates = np.zeros(num_agents)
+        self.baseline_beta = []
+        self.budget = budget
+        for i in range(self.agent_rates.size):
+            self.agent_rates[i] = (1 / num_agents) * self.budget

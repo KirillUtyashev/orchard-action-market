@@ -111,7 +111,24 @@ class ActorNetworkWithBeta(ActorNetworkBase):
     def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
         q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
         beta = self.agents_list[agent].beta
-        return q_value - beta
+        res = q_value - beta
+        return res
+
+
+class ActorNetworkWithRates(ActorNetworkBase):
+    def __init__(self, oned_size, agents_list, alpha, discount):
+        super().__init__(oned_size, agents_list, alpha, discount)
+
+    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
+        super().add_experience(state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent)
+
+    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+        q_value = reward
+        for each_agent in self.agents_list:
+            q_value += self.discount * each_agent.get_value_function(new_state["agents"].copy(), new_state["apples"].copy(), each_agent.position)[0] * each_agent.agent_rates[agent]
+        beta = self.agents_list[agent].beta
+        res = q_value - beta
+        return res
 
 
 class ActorNetworkCounterfactual(ActorNetworkBase):
