@@ -209,7 +209,10 @@ def env_step(agents_list, env, step, timesteps, type_):
         else:
             action = agents_list[agent_idx].get_action(state, agents_list=agents_list)
     else:
-        action = agents_list[agent_idx].get_action(state, agents_list)
+        if random.random() < agents_list[agent_idx].acting_rate:
+            action = agents_list[agent_idx].get_action(state, agents_list)
+        else:
+            action = None
     reward, new_pos = env.main_step(agents_list[agent_idx].position.copy(), action)
     agents_list[agent_idx].position = new_pos.copy()
     if type_ == "C":

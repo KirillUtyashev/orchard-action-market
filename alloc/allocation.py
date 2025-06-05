@@ -18,30 +18,97 @@ def alloc(mat, alphas):
     return -(np.sum((1 - np.exp(-mat)) * alphas))
 
 
-def find_allocs(alphas, agent_id, budget=1):
+def find_allocs(alphas, agent_id, beta, budget=1.0):
     """
     Find the following rates for other agents. For the agent itself, we keep the following rate of 1.
     The reason is that the agent can fully assess its own internal information and a following rate of < 1 wouldn't make sense.
     """
-    alphas = np.delete(alphas, agent_id)
-    if len(alphas) == 1:
-        sol = np.array([budget])
-    else:
-        # 1) softmax over alphas
-        exps = np.exp(alphas - np.max(alphas))        # subtract max for numerical stability
-        foll_rates = exps / np.sum(exps)                        # now 0 < p_i < 1, sum(p)=1
-        foll_rates = -np.log(1 - foll_rates)  # Convert following rates from rate to raw lambdas
+    # 1) Build “others” by removing the α for “self = agent_id”
+    others = np.delete(alphas, agent_id)   # shape = (N-1,)
+    n_others = len(others)
 
-        foll_rates = (foll_rates / np.sum(foll_rates)) * budget  # Normalize raw lambdas
-        sum_constraint = lambda x: -np.sum(x) + budget  # Budget constraint
-        cons = [{'type': 'eq', 'fun': sum_constraint}, {'type': 'ineq', 'fun': lambda x: x}]  # Optimization problem
-        sol = minimize(alloc, foll_rates, args=alphas, method="SLSQP", constraints=cons)  # Solve the problem
-        if not sol.success:
-            print("Not Success", alphas)
-            sol = np.array([budget / len(foll_rates)] * len(foll_rates))  # Equal following rates
-        else:
-            sol = sol.x
-    return np.insert(sol, agent_id, 1)
+    # 2) If there is exactly one “other” agent, we can still run the same softmax initialization,
+    #    but be cautious of log(0). We’ll clamp p slightly below 1.0 in that case.
+    if n_others == 1:
+        # Softmax([α]) = [1.0] ⇒ raw = -log(1-1.0) = ∞, so clamp:
+        p = np.array([0.999])
+        raw_others = -np.log(1.0 - p)         # a large finite number
+    else:
+        exps = np.exp(others - np.max(others))
+        p = exps / np.sum(exps)            # shape (N-1,), sum=1
+        raw_others = -np.log(1.0 - p)          # φ = (1 - e^{-λ}) ⇒ λ = -log(1 - p)
+
+    # We now have “raw_others” of length (N-1).  We want the initial guess
+    # for all λ’s to sum to 'budget' once we include λ_{A,y}.
+    # So pick λ_act_guess = budget/(n_others+1), and scale raw_others
+    # so that sum(raw_others) = budget - λ_act_guess.
+    lam_act_guess = budget / (n_others + 1.0)
+    total_raw = np.sum(raw_others)
+    if total_raw > 0:
+        scale = (budget - lam_act_guess) / total_raw
+        x0_others = raw_others * scale
+    else:
+        # If raw_others all zero, split (budget - lam_act_guess) equally
+        x0_others = np.full(n_others, (budget - lam_act_guess) / n_others)
+
+    # Build the combined initial guess vector of length (n_others + 1):
+    #   [ λ_{y,z_1}, λ_{y,z_2}, …, λ_{y,z_{N-1}},   λ_{A,y} ]
+    x0 = np.concatenate([x0_others, [lam_act_guess]])
+
+    # 3) Define the new objective that includes β·(1 - e^{-λ_act})
+    def objective(x):
+        # x[:n_others]    = λ_{y,z} for the (N-1) other agents
+        # x[n_others]     = λ_{A,y}
+        foll_vec = x[:n_others]
+        lam_act = x[n_others]
+
+        # The “follow” portion: sum_i α_i * (1 - exp(-λ_i))
+        # Our old alloc() returns negative of that:
+        val_follow = alloc(foll_vec, others)   # = -(∑ α_i·(1 - e^{-λ_i}))
+        # The “act” portion:        β * (1 - exp(-λ_act))
+        val_act = - beta * (1.0 - np.exp(-lam_act))
+
+        # Total objective to *minimize* = [–(follow_sum) – β·φ_act]
+        return val_follow + val_act
+
+    # 4) Constraints:
+    #    (a) Sum of all λ’s = budget
+    #    (b) each λ_i ≥ 0
+    cons = [
+        {
+            "type": "eq",
+            "fun": lambda x: np.sum(x) - budget
+        },
+        {
+            "type": "ineq",
+            "fun": lambda x: x    # means x[i] ≥ 0 for all i
+        }
+    ]
+
+    # 5) Solve via SLSQP
+    sol = minimize(
+        objective,
+        x0,
+        method="SLSQP",
+        constraints=cons,
+        options={"ftol": 1e-9, "maxiter": 200}
+    )
+
+    if not sol.success:
+        # Fallback: split equally among all (n_others + 1) lambdas
+        equal_val = budget / (n_others + 1.0)
+        sol_x = np.full(n_others + 1, equal_val)
+    else:
+        sol_x = sol.x
+
+    # 6) Extract results
+    lambdas_others = sol_x[:n_others]   # the optimized follow‐rates for z≠y
+    lam_act = sol_x[n_others]    # the optimized acting rate
+
+    # 7) Re‐insert “self” = 1.0 at position = agent_id, to get a length-N array:
+    full_foll = np.insert(lambdas_others, agent_id, 1.0)
+
+    return full_foll, lam_act
 
 
 def roundabout_find_allocs(alphas1, alphas2, it=0, budget=4):

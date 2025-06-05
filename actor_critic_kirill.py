@@ -69,16 +69,17 @@ class ActorCritic(Algorithm):
 
     def collect_observation(self, step, timesteps):
         s, new_s, r, agent, positions, action = env_step(self.agents_list, self.env, step, timesteps, "AC")
-        for each_agent in range(len(self.agents_list)):
-            if each_agent == agent:
-                self.agents_list[each_agent].policy_value.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r)
-                new_positions = []
-                for j in range(len(self.agents_list)):
-                    new_positions.append(self.agents_list[j].position)
-                self.agents_list[each_agent].policy_network.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r, action, positions, new_positions, agent)
-            else:
-                self.agents_list[each_agent].policy_value.add_experience(s, self.agents_list[each_agent].position, new_s, self.agents_list[each_agent].position, 0)
-        return new_s, agent, r
+        if action is not None:
+            for each_agent in range(len(self.agents_list)):
+                if each_agent == agent:
+                    self.agents_list[each_agent].policy_value.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r)
+                    new_positions = []
+                    for j in range(len(self.agents_list)):
+                        new_positions.append(self.agents_list[j].position)
+                    self.agents_list[each_agent].policy_network.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r, action, positions, new_positions, agent)
+                else:
+                    self.agents_list[each_agent].policy_value.add_experience(s, self.agents_list[each_agent].position, new_s, self.agents_list[each_agent].position, 0)
+        return new_s, agent, r, action
 
     def update_lr(self, step, timesteps):
         if step == (0.33 * timesteps):
@@ -185,25 +186,29 @@ class ActorCriticBeta(ActorCritic):
         plt.show()
 
     def collect_observation(self, step, timesteps):
-        new_s, agent, reward = super().collect_observation(step, timesteps)
-        self.find_ab(new_s, agent, reward)
+        new_s, agent, reward, action = super().collect_observation(step, timesteps)
+        self.find_ab(new_s, agent, reward, action)
 
-    def find_ab(self, new_s, agent, reward):
+    def find_ab(self, new_s, agent, reward, action):
         """
         Compute and update alphas and betas in place for each agent after collecting an observation
         """
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
-            value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0]
-            if num == agent:
-                value += reward
+            if action is not None:
+                value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0]
+                if num == agent:
+                    value += reward
+            else:
+                value = 0
             for agent_num in range(len(self.agents_list)):
                 if agent_num != agent:
                     each_agent.alphas[agent_num] = get_discounted_value(each_agent.alphas[agent_num], 0)
                 else:
                     each_agent.alphas[agent] = get_discounted_value(each_agent.alphas[agent], value)
             beta_sum += value
-        self.beta_batch[agent].append(beta_sum.item())
+        if action is not None:
+            self.beta_batch[agent].append(beta_sum.item())
 
     def run(self, timesteps):
         for i in range(get_config()["num_agents"]):
@@ -243,25 +248,29 @@ class ActorCriticRate(ActorCriticBeta):
     def update_actor(self):
         super().update_actor()
         for id_, agent in enumerate(self.agents_list):
-            agent.agent_rates = find_allocs(agent.alphas, id_, agent.beta)
+            agent.agent_rates, agent.acting_rate = find_allocs(agent.alphas, id_, agent.beta)
 
-    def find_ab(self, new_s, agent, reward):
+    def find_ab(self, new_s, agent, reward, action):
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
-            value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0] * each_agent.agent_rates[agent]
-            if num == agent:
-                value += reward
+            if action is not None:
+                value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0] * each_agent.agent_rates[agent]
+                if num == agent:
+                    value += reward
+            else:
+                value = np.array(0)
             for agent_num in range(len(self.agents_list)):
                 if agent_num != agent:
                     each_agent.alphas[agent_num] = get_discounted_value(each_agent.alphas[agent_num], 0)
                 else:
                     each_agent.alphas[agent] = get_discounted_value(each_agent.alphas[agent], value.item())
             beta_sum += value
-        self.beta_batch[agent].append(beta_sum.item())
+        if action is not None:
+            self.beta_batch[agent].append(beta_sum.item())
 
     def run(self, timesteps):
         for i in range(get_config()["num_agents"]):
-            agent = ACAgentRates("learned_policy", get_config()["num_agents"])
+            agent = ACAgentRates("learned_policy", get_config()["num_agents"], i)
             agent.policy_network = ActorNetworkWithRates(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
             agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
             self.agents_list.append(agent)

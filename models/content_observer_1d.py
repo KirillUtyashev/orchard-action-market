@@ -117,8 +117,6 @@ class ObserverNetwork:
         old_pos = np.array([state["pos"][0]])
         new_pos = np.array([new_state["pos"][0]])
 
-
-
         debug = False
         if debug:
             print("=========TRAINING=========")

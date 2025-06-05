@@ -323,10 +323,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             action = agents_list[agent].get_action(state, discount)  # Get action.
 
         action_val = random.random()
-        # if action_val > agents_list[agent].acting_rate:
-        #     agent += 1
-        # if agent == 0:
-        #     agent += 1
         if action_val < agents_list[agent].acting_rate:
             reward, new_position = env.main_step(agents_list[agent].position.copy(), action)
             acted = True
@@ -416,12 +412,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                         each_agent.alphas_asinfl_raw[agent_num] = get_discounted_value(
                             each_agent.alphas_asinfl_raw[agent_num], 0, each_agent.discount_factor)
 
-                # for following_agent in agents_list:
-                #     if following_agent.target_influencer == each_agent.num:
-                #         bval = each_agent.agent_rates[agent] * action_utils_raw[following_agent.num] * following_agent.infl_rate
-                #         infl_sum += bval
-                # action_utils_infl[numnow] = infl_sum
-
         """ Utility Observations - Indirect Following & Influencer Totals"""
         # Influencer Retweet
         for numnow, each_agent in enumerate(agents_list):
@@ -471,12 +461,8 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                     indirect_agent.indirect_alphas[numnow] *= 0  # (1 - indirect_agent.discount_factor)
                     indirect_agent.indirect_alphas_raw[numnow] *= 0  # (1 - indirect_agent.discount_factor)
 
-        # agents_list[agent].bqueue.append(beta_sum)
-
-        # p_network_list[agent].addexp(sp_state, sp_new_state, reward, action, agents_list)
         o_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         i_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
-        # v_network_list[agent].addexp(state, new_state, reward, action, agents_list)
         if i % 500 == 0 and th:
             for agent1 in agents_list:
                 agent1.generate_rates_only(samp_state["agents"], samp_state["apples"], const_ext=False)
@@ -559,15 +545,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         if acted and i > training_timestep:
             p_network_list[agent].add_experience(train_state, train_new_state, reward, action, agents_list, feedback,
                                                  action_utils_raw)
-            # for agnum in range(len(agents_list)):
-            #     if agnum == agent:
-            #         v_network_list[agnum].train(state, new_state, reward, old_pos, agents_list[agnum].position)
-            #     else:
-            #         v_network_list[agnum].train(state, new_state, 0, agents_list[agnum].position, agents_list[agnum].position)
-        # if acted and i > 5000:
-        #
-        #     # p_network_list[agent].train_with_feedback(state, old_pos, action, feedback, reward, agents_list)
-        #     p_network_list[agent].train_with_v_value(state, old_pos, action, feedback, reward, agents_list)
         if i > training_timestep + (num_agents * 100):
             if i % (num_agents * 100) == 1:
                 for a in range(0, len(agents_list)):

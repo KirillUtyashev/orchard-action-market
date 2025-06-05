@@ -136,11 +136,12 @@ class Orchard:
         :return:
         """
         # Find the new position of the agent based on their old position and their action
-        new_pos = np.clip(position + action_vectors[action], [0, 0], [self.length-1, self.width-1])
-
-        self.agents[new_pos[0], new_pos[1]] += 1
-        self.agents[position[0], position[1]] -= 1
-
+        if action is not None:
+            new_pos = np.clip(position + action_vectors[action], [0, 0], [self.length-1, self.width-1])
+            self.agents[new_pos[0], new_pos[1]] += 1
+            self.agents[position[0], position[1]] -= 1
+        else:
+            new_pos = position
         if self.apples[new_pos[0], new_pos[1]] >= 1:
             self.apples[new_pos[0], new_pos[1]] -= 1
             return 1, new_pos
