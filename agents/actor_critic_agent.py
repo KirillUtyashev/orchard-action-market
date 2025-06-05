@@ -48,11 +48,15 @@ class ACAgentBeta(ACAgent):
         self.beta = 0
         self.sum_betas = []
 
+
 class ACAgentRates(ACAgentBeta):
-    def __init__(self, policy, num_agents, budget=1):
+    def __init__(self, policy, num_agents, id_, budget=1):
         super().__init__(policy, num_agents)
+        self.id_ = id_
         self.agent_rates = np.zeros(num_agents)
         self.baseline_beta = []
         self.budget = budget
         for i in range(self.agent_rates.size):
             self.agent_rates[i] = (1 / num_agents) * self.budget
+        self.agent_rates[id_] = 1
+        self.acting_rate = (1 / num_agents) * self.budget
