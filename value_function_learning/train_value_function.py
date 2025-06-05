@@ -70,26 +70,36 @@ class DecentralizedValueFunction(Algorithm):
                                                                     new_s, self.agents_list[each_agent].position, 0)
 
     def update_lr(self, step, timesteps):
-        if step == (0.33 * timesteps):
-            for network in self.network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00025
-        if step == (0.625 * timesteps):
-            for network in self.network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
+        # if step == (0.33 * timesteps):
+        #     for network in self.network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.00025
+        # if step == (0.625 * timesteps):
+        #     for network in self.network_list:
+        #         for g in network.optimizer.param_groups:
+        #             g['lr'] = 0.0001
+        pass
 
-    def run(self, timesteps):
-        for _ in range(get_config()["num_agents"]):
-            agent = CommAgent(policy="value_function")
-            network = VNetwork(get_config()["orchard_length"] + 1, self.alpha, get_config()["discount"])
-            agent.policy_value = network
-            self.network_list.append(network)
-            self.agents_list.append(agent)
-        self.network_for_eval = self.network_list
-        self.train(timesteps)
+    def run(self, timesteps, agents=None):
+        print("I'm in it baby")
+        if agents:
+            for agent in agents:
+                self.network_list.append(agent.policy_value)
+                self.agents_list.append(agent)
+            self.network_for_eval = self.network_list
+            self.train(timesteps)
+            return self.network_list[0], self.network_list[1]
+        else:
+            for _ in range(get_config()["num_agents"]):
+                agent = CommAgent(policy="value_function")
+                network = VNetwork(get_config()["orchard_length"] + 1, self.alpha, get_config()["discount"])
+                agent.policy_value = network
+                self.network_list.append(network)
+                self.agents_list.append(agent)
+            self.network_for_eval = self.network_list
+            self.train(timesteps)
 
 
 if __name__ == "__main__":
-    test = DecentralizedValueFunction(8, 0.0005)
+    test = DecentralizedValueFunction(16, 0.0005)
     test.run(25000)

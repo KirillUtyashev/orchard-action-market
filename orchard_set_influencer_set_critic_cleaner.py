@@ -2,9 +2,8 @@ import random
 import numpy as np
 random.seed(35279038)
 np.random.seed(389043)
-import time
 from actor_critic import eval_network
-from main import run_environment_1d, run_environment_1d_acting_rate
+from main import run_environment_1d_acting_rate
 from orchard.environment import *
 import matplotlib.pyplot as plt
 
@@ -13,8 +12,6 @@ from models.jan_action_actor import ActorNetwork
 from models.content_observer_1d import ObserverNetwork
 from models.jan_value_actor import ValueNetwork
 
-#from models.actor_dc_1d_altinput import ActorNetwork # USING ALTINPUT
-#from models.simple_connected_multiple_dc_altinput import SCMNetwork, SimpleConnectedMultiple
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
 import torch
@@ -29,8 +26,8 @@ def get_discounted_value(old, new, discount):
     return old * (1 - discount) + new * discount
 
 def construct_sample_state(o_length, n_agents):
-    samp_state1 = np.zeros(o_length)
-    samp_state2 = np.zeros(o_length)
+    samp_state1 = np.zeros((o_length, 1))
+    samp_state2 = np.zeros((o_length, 1))
     samp_state1[0] = n_agents - 1
     samp_state1[2] = 1
     samp_state2[3] = 1
@@ -60,9 +57,7 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
     o_network_list = []  # Observer Networks
     i_network_list = []  # Influencer Networks
 
-    v_network_list = [] # Since we trained the value functions earlier, we just use this list for loading the state dicts of the value networks
-    pathinghere = str(num_agents)
-    aname = "Decentralized_" + pathinghere + "_" + str(orchard_length)
+    v_network_list = []  # Since we trained the value functions earlier, we just use this list for loading the state dicts of the value networks
     for agn in range(len(agents_list)):
         p_network_list.append(agents_list[agn].policy_network)
         o_network_list.append(agents_list[agn].follower_network)
@@ -72,8 +67,8 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
         if agn >= 0:
             # Load the state
             print("Loading State Dict for Agent", agn)
-            agents_list[agn].value_network.function.load_state_dict(torch.load("policyitchk/" + aname + "/" + aname + "_decen_" + str(agn) + "_it_99.pt"))
-            v_network_list[agn].function.load_state_dict(torch.load("policyitchk/" + aname + "/" + aname + "_decen_" + str(agn) + "_it_99.pt"))
+            agents_list[agn].value_network.function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_2_10/" + f"DC-RANDOM_2_10_decen_{agn}_it_99.pt"))
+            v_network_list[agn].function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_2_10/" + f"DC-RANDOM_2_10_decen_{agn}_it_99.pt"))
 
     total_reward = 0
 
@@ -342,7 +337,7 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
                     peragprod_plots[agent2.num][1].append(outpt[1])
                     peragprod_plots[agent2.num][2].append(outpt[2])
                     peragval_plots[agent2.num].append(
-                        agent2.get_sum_value(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
+                        agent2.get_value_function(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
 
         feedback = np.sum(action_utils) + np.sum(action_utils_infl) + agents_list[agent].get_utility(state_a,
                                                                                                           state_b,
@@ -591,5 +586,5 @@ import os
 
 if __name__ == "__main__":
 
-    call_experiment(2, 5, 100000)
+    call_experiment(2, 10, 1000000)
     # call_experiment(14, 70, 1000000)
