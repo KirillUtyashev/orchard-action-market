@@ -256,7 +256,6 @@ class ActorNetwork():
             poses.append(i.position.copy())
         self.poses.append(poses)
 
-
     def train_multiple(self, agents_list):
         losses = []
         crit_losses = []

@@ -1,5 +1,7 @@
 import numpy as np
 import random
+
+from helpers import get_discounted_value
 from agents.communicating_agent import CommAgent
 
 
@@ -47,16 +49,24 @@ class ACAgentBeta(ACAgent):
         self.alphas = np.zeros(num_agents)
         self.beta = 0
         self.sum_betas = []
+        self.beta_batch = []
+
+    def update_beta(self):
+        mean = np.mean(self.beta_batch)
+        if not np.isnan(mean):
+            self.beta = get_discounted_value(self.beta, mean)
+        self.beta_batch = []
 
 
 class ACAgentRates(ACAgentBeta):
-    def __init__(self, policy, num_agents, id_, budget=1):
+    def __init__(self, policy, num_agents, id_, budget=4):
         super().__init__(policy, num_agents)
         self.id_ = id_
         self.agent_rates = np.zeros(num_agents)
         self.baseline_beta = []
         self.budget = budget
         for i in range(self.agent_rates.size):
-            self.agent_rates[i] = (1 / num_agents) * self.budget
-        self.agent_rates[id_] = 1
-        self.acting_rate = (1 / num_agents) * self.budget
+            self.agent_rates[i] = (1 / (num_agents - 1)) * self.budget
+        self.agent_rates[id_] = 0
+        # self.acting_rate = (1 / num_agents) * self.budget
+

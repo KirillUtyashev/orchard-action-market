@@ -1,43 +1,87 @@
 import numpy as np
 import random
-
+from enum import Enum, auto
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
 
 action_algo: an algorithm that is used to process actions (agent movements). Defaults to just updating the environment from the singular agent action.
 """
 
-action_vectors = [
-            np.array([-1, 0]),
-            np.array([1, 0]),
-            np.array([0, 1]),
-            np.array([0, -1]),
-            np.array([0, 0])
-        ]
+
+class ActionMixin:
+    """Mixin providing common methods for action enums."""
+    @property
+    def vector(self):
+        """Return the action vector as a NumPy array."""
+        return np.array(self._vector, dtype=np.int8)
+
+    @property
+    def idx(self):
+        """Return the numeric index of the action."""
+        return self._idx
+
+    @property
+    def one_hot(self):
+        """Return a one-hot encoding of the action."""
+        n = len(self.__class__)
+        oh = np.zeros(n, dtype=np.float32)
+        oh[self.idx] = 1.0
+        return oh
+
+    @classmethod
+    def from_idx(cls, idx):
+        """Lookup action by its numeric index."""
+        try:
+            return next(a for a in cls if a.idx == idx)
+        except StopIteration:
+            raise ValueError(f"Invalid action index: {idx}")
+
+
+class Action1D(ActionMixin, Enum):
+    LEFT = (0, [0,  -1])
+    RIGHT = (1, [0,  1])
+    STAY = (2, [0,  0])
+
+    def __init__(self, idx, vector):
+        self._idx = idx
+        self._vector = vector
+
+
+class Action2D(ActionMixin, Enum):
+    LEFT = (0, [0,  -1])
+    RIGHT = (1, [0,  1])
+    UP = (2, [1,  0])
+    DOWN = (3, [-1, 0])
+    STAY = (4, [0,  0])
+
+    def __init__(self, idx, vector):
+        self._idx = idx
+        self._vector = vector
 
 
 class Orchard:
     def __init__(self,
-                 side_length,
+                 length,
+                 width,
                  num_agents,
                  s=None,
                  phi=None,
                  agents_list=None,
-                 one=False,
                  action_algo=None,
                  spawn_algo=None,
                  despawn_algo=None):
-        self.length = side_length
-
-        if one:
-            self.width = 1
+        self.length = length
+        self.width = width
+        if width == 1:
+            self.available_actions = Action1D
         else:
-            self.width = side_length
+            self.available_actions = Action2D
 
         self.n = num_agents
 
-        self.agents = np.zeros((self.length, self.width), dtype=int)
-        self.apples = np.zeros((self.length, self.width), dtype=int)
+        self.agents = np.zeros((self.width, self.length), dtype=int)
+        self.apples = np.zeros((self.width, self.length), dtype=int)
+        self._apple_ages = None
 
         if agents_list is None:
             self.agents_list = None
@@ -67,6 +111,7 @@ class Orchard:
             self.action_algorithm = action_algo
 
         self.total_apples = 0
+        self.apples_despawned = 0
 
         # Variables needed when visualizing Orchard environment
         self._rendering_initialized = False
@@ -76,22 +121,22 @@ class Orchard:
         """
         Populate the Orchard environment with agents in agent_list and randomly spawn the first apple
         """
-        self.agents = np.zeros((self.length, self.width), dtype=int)
+        self.agents = np.zeros((self.width, self.length), dtype=int)
         if apples is None:
-            self.apples = np.zeros((self.length, self.width), dtype=int)
+            self.apples = np.zeros((self.width, self.length), dtype=int)
         else:
             self.apples = apples  # This has to be an array
         self.agents_list = agents_list
+        self._apple_ages = [[[] for _ in range(self.apples.shape[1])] for _ in range(self.apples.shape[0])]
         self.set_positions(agent_pos)
-        self.spawn_algorithm(self)
+        self.spawn_algorithm(self, self._apple_ages)
 
     def set_positions(self, agent_pos=None):
-        self.agents = np.zeros((self.length, self.width), dtype=int)
         for i in range(self.n):
             if agent_pos is not None:
                 position = np.array(agent_pos[i])
             else:
-                position = np.random.randint(0, [self.length, self.width])
+                position = np.random.randint(0, [self.width, self.length])
             self.agents_list[i].position = position
             self.agents[position[0], position[1]] += 1
 
@@ -107,8 +152,8 @@ class Orchard:
         :return:
         """
         apples = 0
-        for i in range(self.length):
-            for j in range(self.width):
+        for i in range(self.width):
+            for j in range(self.length):
                 chance = random.random()
                 if chance < self.S[i, j]:
                     self.apples[i, j] += 1
@@ -120,8 +165,8 @@ class Orchard:
         Despawn apples. Not used if there is a specific algorithm.
         :return:
         """
-        for i in range(self.length):
-            for j in range(self.width):
+        for i in range(self.width):
+            for j in range(self.length):
                 count = self.apples[i, j]
                 for k in range(int(count)):
                     chance = random.random()
@@ -137,20 +182,23 @@ class Orchard:
         """
         # Find the new position of the agent based on their old position and their action
         if action is not None:
-            new_pos = np.clip(position + action_vectors[action], [0, 0], [self.length-1, self.width-1])
+            new_pos = np.clip(position + self.available_actions.from_idx(action).vector, [0, 0], [self.width-1, self.length-1])
             self.agents[new_pos[0], new_pos[1]] += 1
             self.agents[position[0], position[1]] -= 1
         else:
             new_pos = position
         if self.apples[new_pos[0], new_pos[1]] >= 1:
             self.apples[new_pos[0], new_pos[1]] -= 1
+            # Randomly pick one apple from the position
+            # index = random.randint(0, len(self._apple_ages[new_pos[0]][new_pos[1]]) - 1)
+            # self._apple_ages[new_pos[0]][new_pos[1]].pop(index)
             return 1, new_pos
         return 0, new_pos
 
     def main_step(self, position, action):
         reward, new_position = self.action_algorithm(position, action)
-        self.total_apples += self.spawn_algorithm(self)
-        self.despawn_algorithm(self)
+        self.total_apples += self.spawn_algorithm(self, self._apple_ages)
+        self.apples_despawned += self.despawn_algorithm(self, self._apple_ages)
 
         return reward, new_position
 
@@ -158,8 +206,8 @@ class Orchard:
         return sum(self.agents) == self.n
 
     def validate_apples(self):
-        for i in range(self.length):
-            for j in range(self.width):
+        for i in range(self.width):
+            for j in range(self.length):
                 assert self.apples[i, j] >= 0
 
     def validate_agent_pos(self, agents_list):

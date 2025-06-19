@@ -64,9 +64,7 @@ class ValueNetwork():
 
         return t, ap
 
-    def train_with_learned_util(self, state, new_state, reward, old_pos, new_pos, target, att):
-        old_pos = np.array([old_pos[0]])
-        new_pos = np.array([new_pos[0]])
+    def train_with_learned_util(self, state, new_state, reward, old_pos, new_pos):
 
         debug = False
         if debug:
@@ -77,13 +75,12 @@ class ValueNetwork():
             print(reward)
         a, b = unwrap_state(state)
         new_a, new_b = unwrap_state(new_state)
-        approx = self.function(ten(a), ten(b), ten(old_pos))
+        approx = self.function(ten(np.concatenate([a, b, convert_position(old_pos)], axis=0), DEVICE).view(1, -1))
         with torch.no_grad():
-            q = self.discount * self.function(ten(new_a), ten(new_b), ten(new_pos))
+            q = self.discount * self.function(ten(np.concatenate([new_a, new_b, convert_position(new_pos)], axis=0), DEVICE).view(1, -1))
             if q < 0:
-                q = ten([0])
+                q = ten(np.array(0), DEVICE)
             target = reward + q
-        print(approx, target, reward)
 
         criterion = torch.nn.MSELoss()
         self.optimizer.zero_grad()

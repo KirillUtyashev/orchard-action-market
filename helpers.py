@@ -2,12 +2,14 @@ import math
 import random
 import numpy as np
 import torch
+
+from config import get_config
 from policies.random_policy import random_policy_1d
 
 
 def convert_position(pos):
     if pos is not None:
-        temp = np.zeros((2, 1), dtype=int)
+        temp = np.zeros((len(pos), 1), dtype=int)
         for i in range(len(pos)):
             temp[i] = np.array(pos[i])
         return temp
@@ -45,17 +47,16 @@ def unwrap_state(state):
 def convert_input(state, agent_pos):
     a, b = unwrap_state(state)
     #print(list(a.flatten()), list(b.flatten()), agent_pos)
+    fill = np.array([[-1] for _ in range(get_config()["vision"])])
+    ap = np.concatenate((fill, a, fill))
+    bp = np.concatenate((fill, b, fill))
 
-    a[agent_pos[0], agent_pos[1]] -= 1
-    a = a.flatten()
-    b = b.flatten()
-    #print(list(a), list(b), agent_pos)
-    left1, right1 = get_closest_left_right_1d(b, agent_pos[0])
-    left2, right2 = get_closest_left_right_1d(a, agent_pos[0])
-    arr = [left1, right1]
-    arr1 = [left2, right2]
-    #print(arr, arr1)
-    return [np.array(arr), np.array(arr1)]
+    leftmost = agent_pos[0] - (get_config()["vision"] // 2)
+    rightmost = agent_pos[0] + (get_config()["vision"] // 2)
+    true_a = ap[leftmost + get_config()["vision"]: rightmost + 1 + get_config()["vision"]]
+    true_b = bp[leftmost + get_config()["vision"]: rightmost + 1 + get_config()["vision"]]
+
+    return {"agents": true_a, "apples": true_b}
 
 
 # def convert_input(a, b, agent_pos):
@@ -111,22 +112,28 @@ def get_possible_states(state, agent_pos):
     return state1, state2, state3
 
 
-def get_empty_fields(env_length):
+def get_empty_fields(env_length, env_width):
     return {
-        "agents": np.zeros((env_length, 1), dtype=int),
-        "apples": np.zeros((env_length, 1), dtype=int),
-        "poses": np.zeros((env_length, 1), dtype=int)
+        "agents": np.zeros((env_width, env_length), dtype=int),
+        "apples": np.zeros((env_width, env_length), dtype=int),
+        "poses": np.zeros((env_width, env_length), dtype=int)
     }
 
 
-def generate_sample_states(env_length, num_agents):
+def generate_sample_states(env_length, env_width, num_agents, alt_vision=False):
+    # if not alt_vision:
+    res = [get_empty_fields(env_length, env_width), get_empty_fields(env_length, env_width), get_empty_fields(env_length, env_width)]
+    for i in range(len(res)):
+        res[i]["agents"][0][i + 1] = num_agents
+        res[i]["poses"] = np.array([[0, i + 1] for _ in range(num_agents)])
+        res[i]["apples"][0][0] = 1
+    return tuple(res)
+
+
+def generate_alt_states(env_length, num_agents):
     res = [get_empty_fields(env_length), get_empty_fields(env_length), get_empty_fields(env_length)]
     for i in range(len(res)):
         res[i]["agents"][i + 1] = np.array(num_agents)
-        res[i]["poses"] = np.array([[i + 1, 0] for _ in range(num_agents)])
-        res[i]["apples"][0] = np.array(1)
-
-    return tuple(res)
 
 
 def debug_before_loop(env, agents_list):
@@ -149,7 +156,7 @@ def get_epsilon(step, total_steps,
     where decay_steps = int(decay_frac * total_steps)
     """
     # 1) Pure exploration phase
-    warmup_steps = 0.2 * total_steps
+    warmup_steps = 0.4 * total_steps
     if step <= warmup_steps:
         return eps_start
     # 2) Decay phase
@@ -197,22 +204,15 @@ def staged_linear_tau(step, total_steps,
 def env_step(agents_list, env, step, timesteps, type_):
     # --- interact with the env and get one transition ---
     agent_idx = random.randint(0, env.n - 1)
-
     positions = []
     for i in range(len(agents_list)):
         positions.append(agents_list[i].position)
     state = env.get_state()  # this is assumed to be a dict with "agents" and "apples"
     old_pos = agents_list[agent_idx].position
     if type_ == "C" or type_ == "DC":
-        if get_epsilon(step, timesteps) > random.random():
-            action = random_policy_1d(state, agents_list[agent_idx].position)
-        else:
-            action = agents_list[agent_idx].get_action(state, agents_list=agents_list)
+        action = random_policy_1d(state, agents_list[agent_idx].position)
     else:
-        if random.random() < agents_list[agent_idx].acting_rate:
-            action = agents_list[agent_idx].get_action(state, agents_list)
-        else:
-            action = None
+        action = agents_list[agent_idx].get_action(state, agents_list)
     reward, new_pos = env.main_step(agents_list[agent_idx].position.copy(), action)
     agents_list[agent_idx].position = new_pos.copy()
     if type_ == "C":
@@ -221,3 +221,7 @@ def env_step(agents_list, env, step, timesteps, type_):
         return state, env.get_state(), reward, old_pos, agent_idx
     else:
         return state, env.get_state(), reward, agent_idx, positions, action
+
+
+def get_discounted_value(old, new, discount_factor=0.01):
+    return old * (1 - discount_factor) + new * discount_factor

@@ -49,15 +49,17 @@ class ObserverNetwork:
         self.critic = None
 
     def get_function_output(self, a, b, pos=None, infl=False):
-        pose = np.array([pos[0]])
-        acts = self.function(ten(a), ten(b), ten(pose))
+        x = np.concatenate([convert_position(a), convert_position(b), convert_position(pos)], axis=0)
+        x = ten(x, DEVICE)
+        x = x.view(1, -1)
+        acts = self.function(x).T
         if not infl:
             acts[self.num] = -100
         return F.softmax(acts, dim=0).detach().cpu().numpy()
 
     def get_function_output_v(self, a, b, pos=None):
         poses = np.array(pos[:, 0])
-        return self.function(ten(a), ten(b), ten(poses)).detach().cpu().numpy()
+        return self.function(ten(a, DEVICE), ten(b, DEVICE), ten(poses, DEVICE)).detach().cpu().numpy()
 
     def get_value_function2(self, state):
         #a, b = unwrap_state(state)
@@ -161,17 +163,6 @@ class ObserverNetwork:
         loss = -1 * torch.mul(prob, adv)
 
         loss.backward()
-        # total_norm = 0
-        # for p in self.function.parameters():
-        #     param_norm = p.grad.detach().data.norm(2)
-        #     total_norm += param_norm.item() ** 2
-        # total_norm = total_norm ** 0.5
-        #print([p.grad for p in self.function.parameters() if p.grad is not None])
-        #grads = [p.grad.cpu() for p in self.function.parameters() if p.grad is not None]
-        #v = linalg.vector_norm(grads, ord=2)
-        # self.vs += total_norm
-        #torch.nn.utils.clip_grad_value_(self.function.parameters(), -0.01, 0.01)
-
         self.optimizer.step()
 
     def addexp(self, state, new_state, reward, action, agents_list):
@@ -210,7 +201,7 @@ class ObserverNetwork:
         x = ten(x, DEVICE)
         x = x.view(1, -1)
 
-        actions1 = self.function(x)
+        actions1 = self.function(x).T
 
         actions1[self.num] = -100
         v_rates = F.softmax(actions1, dim=0)

@@ -43,7 +43,8 @@ def find_ab(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, eps
 
         beta_sum = 0
         for each_agent in agents_list:
-            valued = discount * each_agent.get_value_function(new_state["agents"].copy(), new_state["apples"].copy())[0]
+            valued = discount * each_agent.get_value_function(
+                new_state["agents"].copy())[0]
             if each_agent is agents_list[agent]:
                 valued += reward
                 each_agent.times += 1

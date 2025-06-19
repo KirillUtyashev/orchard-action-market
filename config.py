@@ -16,7 +16,9 @@ def get_config():
         "num_agents": num_agents,
         "S": S,
         "phi": phi,
-        "discount": discount
+        "discount": discount,
+        "alt_input": True,
+        "vision": 201
     }
 
 

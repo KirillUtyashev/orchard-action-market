@@ -71,7 +71,7 @@ class SimpleConnectedMultiple(nn.Module):
         self.layer2 = nn.Linear(256, 256)
         self.layer3 = nn.Linear(256, 256)
         # self.layer5 = nn.Linear(256, 256)
-        self.layer4 = nn.Linear(256, 3) # [0] is move left, [1] is move right, [2] is don't move
+        self.layer4 = nn.Linear(256, 3)  # [0] is move left, [1] is move right, [2] is don't move
 
         torch.nn.init.xavier_uniform_(self.layer1.weight)
         torch.nn.init.xavier_uniform_(self.layer2.weight)
@@ -407,7 +407,6 @@ class ActorNetwork():
             new_pos = np.array([new_state["pos"][0]])
 
             old_pos_a = np.array([state["pos"][0]])
-            new_pos_a = np.array([new_state["pos"][0]])
             feedback = feedbacks[it]
             action_utils_raw = action_utils_raws[it]
 
@@ -432,7 +431,7 @@ class ActorNetwork():
             q_value = 0.0
             for agent in agents_list:
                 if agent.num == self.num:
-                    q, v = agents_list[self.num].value_network.train(state, new_state, reward, old_pos, new_pos)
+                    q, v = agents_list[self.num].value_network.train_with_learned_util(state, new_state, reward, state["pos"], new_state["pos"])
                     # q, v = agents_list[self.num].value_network.just_get_q_v(state, new_state, reward, old_pos, new_pos)
                     v_value += v
                     q_value += q.item()
@@ -444,7 +443,7 @@ class ActorNetwork():
                         #q, v = agent.value_network.train_with_learned_util(state, new_state, 0, all_pos[agent.num], all_pos[agent.num], action_utils_raw[agent.num], agent.agent_rates[self.num])
                         # q, v = agents_list[self.num].value_network.just_get_q_v(state, new_state, reward, old_pos,
                         #                                                        new_pos)
-                        q, v = agents_list[agent.num].value_network.train(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
+                        q, v = agents_list[agent.num].value_network.train_with_learned_util(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
                         v_value += v * agent.agent_rates[self.num]
                         v_value += v * agents_list[agents_list[agent.num].target_influencer].agent_rates[self.num] * agent.infl_rate
                         q_value += q.item() * agent.agent_rates[self.num]
@@ -454,7 +453,7 @@ class ActorNetwork():
 
             adv = q_value - v_value
 
-            adv = ten(adv)
+            adv = ten(np.array(adv))
 
             losses.append(-1 * torch.mul(prob, adv))
         if len(states) != 0:
