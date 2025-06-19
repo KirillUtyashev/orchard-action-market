@@ -10,13 +10,9 @@ from models.actor_dc_1d import ActorNetwork, ActorNetworkCounterfactual, \
 from models.value_function import VNetwork
 import numpy as np
 import random
-from helpers import env_step
-from alloc.allocation import find_allocs
+from helpers import env_step, get_discounted_value
+from alloc.allocation import find_allocs, rate_allocate
 from value_function_learning.train_value_function import DecentralizedValueFunction
-
-
-def get_discounted_value(old, new, discount_factor=0.05):
-    return old * (1 - discount_factor) + new * discount_factor
 
 
 class ActorCritic(Algorithm):
@@ -28,7 +24,7 @@ class ActorCritic(Algorithm):
         self.critic_loss_history = []
         self.adv_loss_history = []
 
-    def update_actor(self):
+    def update_actor(self, t_ratio=None):
         res_2 = []
         res_3 = []
         for agent in self.agents_list:
@@ -81,15 +77,60 @@ class ActorCritic(Algorithm):
                     self.agents_list[each_agent].policy_value.add_experience(s, self.agents_list[each_agent].position, new_s, self.agents_list[each_agent].position, 0)
         return new_s, agent, r, action
 
-    def update_lr(self, step, timesteps):
-        if step == (0.33 * timesteps):
+    def update_lr(self, i, timesteps):
+        if i == 50000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.001
+        if i == 100000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.0005
+        # was: 500000
+        if i == 200000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.0001
+        # was: 700000
+        if i == 300000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.00005
+        if i == 740000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.00005
+        if i == 860000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.00002
+        if i == 1000000:
+            for network in self.p_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.00001
+        """
+        Critic LR
+        """
+        if i == 50000:
             for network in self.v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = g['lr'] * 0.5
-        if step == (0.625 * timesteps):
+                    g['lr'] = 0.0001
+        if i == 150000:
             for network in self.v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = g['lr'] * 0.5
+                    g['lr'] = 0.00005
+        if i == 250000:
+            for network in self.v_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.00001
+        if i == 400000:
+            for network in self.v_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.000005
+        if i == 600000:
+            for network in self.v_network_list:
+                for g in network.optimizer.param_groups:
+                    g['lr'] = 0.000002
 
     def log_progress(self, sample_state, sample_state5, sample_state6):
         super(ActorCritic, self).log_progress(sample_state, sample_state5, sample_state6)
@@ -98,8 +139,8 @@ class ActorCritic(Algorithm):
         print(prob_value1)
         print(prob_value2)
 
-    def train_batch(self):
-        self.update_actor()
+    def train_batch(self, t_ratio=None):
+        self.update_actor(t_ratio)
         self.update_critic()
 
     def evaluate_checkpoint(self, step, timesteps, maxi):
@@ -134,8 +175,6 @@ class ActorCriticBeta(ActorCritic):
     def __init__(self, batch_size, alpha):
         super().__init__(batch_size, alpha)
         self.name = "AC-BETA"
-        self.beta_batch = [[] for _ in range(get_config()["num_agents"])]
-
         self.alpha_1_1 = []
         self.alpha_1_2 = []
         self.alpha_2_1 = []
@@ -143,13 +182,10 @@ class ActorCriticBeta(ActorCritic):
         self.beta_1 = []
         self.beta_2 = []
 
-    def update_actor(self):
+    def update_actor(self, t_ratio=None):
         super().update_actor()
-        for i in range(len(self.beta_batch)):
-            mean = np.mean(self.beta_batch[i])
-            if not np.isnan(mean):
-                self.agents_list[i].beta = get_discounted_value(self.agents_list[i].beta, mean)
-            self.beta_batch[i] = []
+        for agent in self.agents_list:
+            agent.update_beta()
         self.alpha_1_1.append(self.agents_list[0].alphas[0])
         self.alpha_1_2.append(self.agents_list[1].alphas[0])
         self.alpha_2_1.append(self.agents_list[0].alphas[1])
@@ -196,7 +232,8 @@ class ActorCriticBeta(ActorCritic):
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
             if action is not None:
-                value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0]
+                value = self.discount * each_agent.get_value_function(
+                    new_s["agents"].copy())[0]
                 if num == agent:
                     value += reward
             else:
@@ -208,13 +245,13 @@ class ActorCriticBeta(ActorCritic):
                     each_agent.alphas[agent] = get_discounted_value(each_agent.alphas[agent], value)
             beta_sum += value
         if action is not None:
-            self.beta_batch[agent].append(beta_sum.item())
+            self.agents_list[agent].beta_batch.append(beta_sum.item())
 
     def run(self, timesteps):
         for i in range(get_config()["num_agents"]):
             agent = ACAgentBeta("learned_policy", get_config()["num_agents"])
             agent.policy_network = ActorNetworkWithBeta(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
-            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
+            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0002, get_config()["discount"])
             self.agents_list.append(agent)
             self.v_network_list.append(agent.policy_value)
             self.p_network_list.append(agent.policy_network)
@@ -245,28 +282,28 @@ class ActorCriticRate(ActorCriticBeta):
         super(ActorCriticRate, self).__init__(batch_size, alpha)
         self.name = "AC-RATE"
 
-    def update_actor(self):
+    def update_actor(self, t_ratio=None):
         super().update_actor()
-        for id_, agent in enumerate(self.agents_list):
-            agent.agent_rates, agent.acting_rate = find_allocs(agent.alphas, id_, agent.beta)
+        if t_ratio % 0.0001:
+            for id_, agent in enumerate(self.agents_list):
+                agent.alphas[id_] = 0
+                agent.agent_rates = rate_allocate(agent.alphas, np.array([]))[0:len(self.agents_list)]
+                agent.agent_rates[id_] = 0
 
     def find_ab(self, new_s, agent, reward, action):
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
-            if action is not None:
-                value = self.discount * each_agent.get_value_function(new_s["agents"].copy(), new_s["apples"].copy(), each_agent.position)[0] * each_agent.agent_rates[agent]
-                if num == agent:
-                    value += reward
-            else:
-                value = np.array(0)
+            value = self.discount * each_agent.get_value_function(
+                new_s["agents"].copy())[0] * (1 - np.exp(-each_agent.agent_rates[agent]))
+            if num == agent:
+                value += reward
             for agent_num in range(len(self.agents_list)):
                 if agent_num != agent:
                     each_agent.alphas[agent_num] = get_discounted_value(each_agent.alphas[agent_num], 0)
                 else:
                     each_agent.alphas[agent] = get_discounted_value(each_agent.alphas[agent], value.item())
             beta_sum += value
-        if action is not None:
-            self.beta_batch[agent].append(beta_sum.item())
+        self.agents_list[agent].beta_batch.append(beta_sum.item())
 
     def run(self, timesteps):
         for i in range(get_config()["num_agents"]):
@@ -282,8 +319,5 @@ class ActorCriticRate(ActorCriticBeta):
 
 
 if __name__ == "__main__":
-    random.seed(42)
-    np.random.seed(42)
-    # for _ in range(5):
-    ac = ActorCriticRate(8, 0.00005)
-    ac.run(50000)
+    ac = ActorCriticBeta(1, 0.001)
+    ac.run(1000000)

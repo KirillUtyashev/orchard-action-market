@@ -1,3 +1,4 @@
+from agents.communicating_agent import CommAgent
 from agents.jan_marl_agent import OrchardAgent
 from agents.simple_agent import SimpleAgent
 from orchard.environment import *
@@ -7,16 +8,19 @@ from policies.nearest_uniform import replace_agents_1d
 from policies.random_policy import random_policy_1d, random_policy
 from policies.nearest import nearest_1d, nearest
 from metrics.metrics import append_metrics, plot_metrics, append_positional_metrics, plot_agent_specific_metrics
-
-
+from controllers import AgentController, AgentControllerCentralized, \
+    AgentControllerDecentralized, ViewController
+import time
 same_actions = 0
 
 
-def step(agents_list, environment: Orchard):
+def step(agents_list, environment: Orchard, agent_controller):
     agent = random.randint(0, environment.n-1)
-
     state = environment.get_state()
-    action = agents_list[agent].get_action(state, agents_list=agents_list)
+    if agents_list[agent].policy == "value_function":
+        action = agent_controller.get_best_action(state, agent, environment.available_actions)
+    else:
+        action = agents_list[agent].policy(environment.available_actions)
     global same_actions
     same_actions += (action == nearest(state, agents_list[agent].position))
     reward, new_position = environment.main_step(agents_list[agent].position.copy(), action)
@@ -38,7 +42,7 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
     #     for _ in range(num_agents):
     #         agents_list.append(Agent(policy=policy))
 
-    env = Orchard(side_length, num_agents, S, phi, agents_list=agents_list, one=True, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo)
+    env = Orchard(side_length, num_agents, S, phi, agents_list=agents_list, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo)
     env.initialize(agents_list) #, agent_pos=[np.array([1, 0]), np.array([3, 0])]) #, agent_pos=[np.array([2, 0]), np.array([5, 0]), np.array([8, 0])])
     reward = 0
     for i in range(timesteps):
@@ -80,20 +84,26 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
     return reward
 
 
-def run_environment_1d(num_agents, policy, side_length, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None):
+def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None):
     metrics = []
     agent_metrics = []
     for j in range(5):
         metrics.append([])
     for j in range(num_agents):
         agent_metrics.append([])
-    env = Orchard(side_length, num_agents, S, phi, agents_list=agents_list, one=True, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo)
+    env = Orchard(side_length, width, num_agents, S, phi, agents_list=agents_list, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo)
     env.initialize(agents_list) #, agent_pos=[np.array([1, 0]), np.array([3, 0])]) #, agent_pos=[np.array([2, 0]), np.array([5, 0]), np.array([8, 0])])
     reward = 0
+    if type(agents_list[0]) is CommAgent:
+        agent_controller = AgentControllerDecentralized(agents_list, ViewController(vision))
+    else:
+        agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
     for i in range(timesteps):
+        # env.render()
+        # time.sleep(0.05)
         if i % 1000 == 0:
             print(i)
-        agent, i_reward = step(agents_list, env)
+        agent, i_reward = step(agents_list, env, agent_controller)
         reward += i_reward
         if name != "test" and experiment != "test":
             agent_metrics = append_positional_metrics(agent_metrics, agents_list)

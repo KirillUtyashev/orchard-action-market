@@ -14,7 +14,7 @@ action_vectors = [
 
 
 def calculate_ir(a, b, pos, action):
-    new_pos = np.clip(pos + action_vectors[action], [0, 0], a.shape-np.array([1, 1]))
+    new_pos = np.clip(pos + action, [0, 0], a.shape-np.array([1, 1]))
     agents = a.copy()
     apples = b.copy()
     agents[new_pos[0], new_pos[1]] += 1
@@ -33,7 +33,7 @@ class Agent:
         self.policy_value = None
 
     @abstractmethod
-    def get_value_function(self, agents, apples, position=None):
+    def get_value_function(self, state):
         raise NotImplementedError
 
     def get_best_action(self, state, agents_list=None):
@@ -57,7 +57,7 @@ class Agent:
             return self.policy(state, self.position)
 
     @abstractmethod
-    def evaluate_interface(self, agents, apples, agents_list=None, positions=None):
+    def add_experience(self, old_state, new_state, reward, action=None):
         raise NotImplementedError
 
     @abstractmethod

@@ -67,8 +67,8 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
         if agn >= 0:
             # Load the state
             print("Loading State Dict for Agent", agn)
-            agents_list[agn].value_network.function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_2_10/" + f"DC-RANDOM_2_10_decen_{agn}_it_99.pt"))
-            v_network_list[agn].function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_2_10/" + f"DC-RANDOM_2_10_decen_{agn}_it_99.pt"))
+            agents_list[agn].value_network.function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_4_10/" + f"DC-RANDOM_4_10_decen_{agn}_it_99.pt"))
+            v_network_list[agn].function.load_state_dict(torch.load("policyitchk/" + "DC-RANDOM_4_10/" + f"DC-RANDOM_4_10_decen_{agn}_it_99.pt"))
 
     total_reward = 0
 
@@ -310,7 +310,7 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
                 action_utils_infl[numnow] = tot_val
                 each_agent.alphas_asinfl[agent] = get_discounted_value(each_agent.alphas_asinfl[agent], tot_val, each_agent.discount_factor)
                 each_agent.alphas_asinfl_raw[agent] = get_discounted_value(each_agent.alphas_asinfl_raw[agent], tot_val_raw,
-                                                                      each_agent.discount_factor)
+                                                                           each_agent.discount_factor)
             else:
                 """
                 If you have no followers clearly you aren't sharing anything
@@ -324,8 +324,6 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
             else:
                 o_network_list[ag.num].addexp(sp_state, sp_new_state, reward, action, agents_list)
 
-
-
         if i % 200 == 0:
             for agent2 in agents_list:
                 outpt = agent2.get_learned_action_record(samp_state)
@@ -337,12 +335,12 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
                     peragprod_plots[agent2.num][1].append(outpt[1])
                     peragprod_plots[agent2.num][2].append(outpt[2])
                     peragval_plots[agent2.num].append(
-                        agent2.get_value_function(samp_state["agents"], samp_state["apples"], samp_state["pos"]))
+                        agent2.get_value_function(samp_state["agents"]))
 
         feedback = np.sum(action_utils) + np.sum(action_utils_infl) + agents_list[agent].get_utility(state_a,
-                                                                                                          state_b,
-                                                                                                          agents_list[
-                                                                                                              agent].position)
+                                                                                                     state_b,
+                                                                                                     agents_list[
+                                                                                                         agent].position)
         p_network_list[agent].train_with_feedback(train_state, train_state["pos"], action, feedback, reward,
                                                   agents_list)
         agents_list[agent].beta = get_discounted_value(agents_list[agent].beta, feedback + reward, agents_list[agent].beta_discount_factor)
@@ -395,16 +393,16 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
             plt.savefig(name + "_positions.png")
             plt.close()
 
-            for agent_y in agents_list:
-                plt.figure("Productions" + str(agent_y.num) + "temp")
-                plt.plot(peragprod_plots[agent_y.num][0], label="Left")
-                plt.plot(peragprod_plots[agent_y.num][1], label="Right")
-                plt.plot(peragprod_plots[agent_y.num][2], label="Stay")
-                plt.plot(peragval_plots[agent_y.num], label="Value Function")
-                plt.legend()
-                plt.title("Agent Productions for Agent " + str(agent_y.num))
-                plt.savefig(name + "_" + str(agent_y.num) + "_prodalls.png")
-                plt.close()
+            # for agent_y in agents_list:
+            #     plt.figure("Productions" + str(agent_y.num) + "temp")
+            #     plt.plot(peragprod_plots[agent_y.num][0], label="Left")
+            #     plt.plot(peragprod_plots[agent_y.num][1], label="Right")
+            #     plt.plot(peragprod_plots[agent_y.num][2], label="Stay")
+            #     plt.plot(peragval_plots[agent_y.num], label="Value Function")
+            #     plt.legend()
+            #     plt.title("Agent Productions for Agent " + str(agent_y.num))
+            #     plt.savefig(name + "_" + str(agent_y.num) + "_prodalls.png")
+            #     plt.close()
 
             print("=====Eval at", i, "steps======")
             fname = name
@@ -533,7 +531,7 @@ def eval_network(name, discount, gen_budget, maxi, p_network_list, v_network_lis
         trained_agent.acting_rate = 1
     with torch.no_grad():
         val = run_environment_1d_acting_rate(num_agents2, random_policy_1d, side_length, None, None, "MARL", name, agents_list=a_list,
-                           spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=10000)
+                                             spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=10000)
     if val > maxi:
         print("saving best")
         if not os.path.exists("policyitchk/" + name):
@@ -554,7 +552,7 @@ def train_ac_content(side_length, num_agents, agents_list, name, discount, times
     alpha = base_alpha
     for nummer, agn in enumerate(agents_list):
         agn.policy_network = ActorNetwork(side_length, alpha, discount, num=nummer)
-        agn.policy = random_policy_1d
+        agn.policy = "learned_policy"
         agn.observer_network = ObserverNetwork(side_length, num_agents, alpha, discount, num=nummer)
         agn.follower_network = agn.observer_network
         agn.influencer_network = ObserverNetwork(side_length, num_agents, alpha, discount, num=nummer,
@@ -585,6 +583,5 @@ import os
 
 
 if __name__ == "__main__":
-
-    call_experiment(2, 10, 1000000)
+    call_experiment(4, 10, 1000000)
     # call_experiment(14, 70, 1000000)

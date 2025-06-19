@@ -141,7 +141,6 @@ class OrchardAgent:
             mut = (self.base_a / self.varKappa) * np.exp(-1 * self.varAlpha * time)
             return var < mut
 
-
     def identify_influencer(self, agents_list):
         if not self.lategame:
             for ag in agents_list:
@@ -159,7 +158,7 @@ class OrchardAgent:
             if len(ag.followers) > len(agents_list[frontrun].followers):
                 frontrun = ag.num
 
-        # follow the influencer with the highest OR
+        # follow the influencer with the highest R
         # Should only occur after initial alphas have been established
         self.PR = np.copy(self.alphas) + np.copy(self.indirect_alphas)
         oldinf = self.target_influencer
@@ -249,7 +248,7 @@ class OrchardAgent:
         """
         self.budget = self.base_budget
         self.LRF = len(self.followers)
-        b0 = max(5, self.beta + 5)
+        b0 = max(5, ((self.beta if type(self.beta) is (float or int) else self.beta.item())) + 5)
         if self.LRF >= 6:
             b0 = max(0, self.beta * np.power((10 - self.LRF) / 10, 2))
         if const_ext:
@@ -298,7 +297,7 @@ class OrchardAgent:
     def generate_agent_rates_static(self, a, b, agents_list):
         self.budget = self.base_budget
         self.LRF = len(self.followers)
-        b0 = self.beta * 10
+        b0 = (self.beta if type(self.beta) is int else self.beta.item()) * 10
         if len(self.followers) > 0:
             self.rate_alloc_count += 1
             temp_alphas = self.alphas_asinfl + 0.00001
@@ -352,12 +351,12 @@ class OrchardAgent:
             pos = self.position
 
         if self.utility == "value_function":
-            return self.value_network.get_value_function(a, b, pos)[0]
+            return self.value_network.get_value_function(a)[0]
 
     def get_value_function(self, a, b, pos=None):
         if pos is None:
             pos = self.position
-        return self.value_network.get_value_function(a, b, pos)
+        return self.value_network.get_value_function(a)
     def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:

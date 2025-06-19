@@ -38,7 +38,7 @@ def distance_to_nearest_apple(state, total_reward, timestep):
             for k in range(agents[i, j]):
                 dist_list.append(smallest_distance_helper(state["apples"], (i, j)))
     dist_list = np.array(dist_list)
-    return np.sum(dist_list) / dist_list.size 
+    return np.sum(dist_list) / dist_list.size
 
 def average_agent_distance(state, total_reward, timestep):
     agents = state["agents"]
@@ -82,7 +82,7 @@ def append_metrics(metrics, state, total_reward, timestep, avg_picked=True, avg_
 
 def append_positional_metrics(agent_metrics, agents_list):
     for i, metric in enumerate(agent_metrics):
-        agent_metrics[i].append(agents_list[i].position[0])
+        agent_metrics[i].append(agents_list[i].position[1])
 
     return agent_metrics
 

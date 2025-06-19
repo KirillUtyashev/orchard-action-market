@@ -74,6 +74,9 @@ class VNetwork:
         return target.detach(), approx.detach()
 
     def train(self):
+        if len(self.batch_states) == 0:  # Meaning that agent didn't act / collect any observations in this batch
+            return
+
         states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
         approx = self.function(states)               # shape [B]
@@ -97,11 +100,7 @@ class VNetwork:
         self.batch_rewards = []
         return loss.item()
 
-    def add_experience(self, state, old_pos, new_state, new_pos, reward):
-        if old_pos is not None and new_pos is not None:
-            self.batch_states.append(np.concatenate([np.concatenate([state["agents"], state["apples"]], axis=0), convert_position(old_pos)], axis=0))
-            self.batch_new_states.append(np.concatenate([np.concatenate([new_state["agents"], new_state["apples"]], axis=0), convert_position(new_pos)], axis=0))
-        else:
-            self.batch_states.append(np.concatenate([state["agents"], state["apples"]], axis=0))
-            self.batch_new_states.append(np.concatenate([new_state["agents"], new_state["apples"]], axis=0))
+    def add_experience(self, state, new_state, reward):
+        self.batch_states.append(state)
+        self.batch_new_states.append(new_state)
         self.batch_rewards.append(reward)
