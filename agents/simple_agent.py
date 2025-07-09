@@ -1,4 +1,3 @@
-import numpy as np
 from agents.agent import Agent
 from policies.random_policy import random_policy
 
@@ -18,6 +17,3 @@ class SimpleAgent(Agent):
 
     def get_value_for_agent(self, agents, apples, agents_list=None, hypothetical_pos=None):
         return self.evaluate_interface(agents, apples)
-
-
-

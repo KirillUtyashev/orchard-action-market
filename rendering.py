@@ -170,8 +170,8 @@ class Viewer(object):
 
         for row in range(env.width):
             # print(env.field)
-            for col in range(len(idxes)):
-                if idxes[col][row] > 0:
+            for col in range(env.length):
+                if idxes[row][col] > 0:
                     apples.append(
                         pyglet.sprite.Sprite(
                             self.img_apple,
@@ -189,7 +189,7 @@ class Viewer(object):
         batch = pyglet.graphics.Batch()
 
         for player in env.agents_list:
-            col, row = player.position
+            row, col = player.position
             players.append(
                 pyglet.sprite.Sprite(
                     self.img_agent,
@@ -201,8 +201,8 @@ class Viewer(object):
         for p in players:
             p.update(scale=self.grid_size / p.width)
         batch.draw()
-        for row in range(len(env.agents)):
-            for col in range(len(env.agents[row])):
+        for row in range(env.width):
+            for col in range(env.length):
                 self._draw_num_objects(row, col, env.agents)
 
     def _draw_num_objects(self, row, col, lst):

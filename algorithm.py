@@ -1,10 +1,17 @@
+import logging
+import time
 from abc import abstractmethod
+from pathlib import Path
+from typing import Optional, Tuple
 
 import torch
 import os
+
+from numpy import floating
+
 from config import CHECKPOINT_DIR
 from main import run_environment_1d
-from orchard.algorithms import single_apple_spawn, single_apple_despawn, apple_spawn, apple_despawn
+from orchard.algorithms import single_apple_spawn, single_apple_despawn
 from plots import graph_plots
 from eval_network import eval_network
 from orchard.environment import *
@@ -13,24 +20,28 @@ from config import get_config
 
 
 class Algorithm:
-    def __init__(self, batch_size, alpha, name, num_agents, orchard_length, orchard_width, alt_input=False, vision=None):
-        self.discount = get_config()["discount"]
-        self.agents_list = []
-        self.env = None  # Orchard environment
-        self.alpha = alpha  # Learning rate
-        self.num_agents = num_agents
-        self.orchard_length = orchard_length
-        self.orchard_width = orchard_width
-        self.alt_input = alt_input
-        self.vision = vision
-        name = f"{name}_{self.num_agents}_{self.orchard_length}"  # Name of the experiment
-        if self.alt_input:
-            name = name + f"-ALT-INPUT-VISION-{vision}-{self.orchard_width}"
+    def __init__(self, config, name):
+        self.train_config = config.train_config
+        self.env_config = config.env_config
+        self.env = None
         self.name = name
 
-        self.batch_size = batch_size  # Batch size for learning
+        log_folder = Path("logs")
+        log_folder.mkdir(parents=True, exist_ok=True)
 
-        # Plots for evaluating value of sample states
+        filename = log_folder / f"{name}.log"
+
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            filename=str(filename),
+            filemode='a'
+        )
+
+        self.logger = logging.getLogger(self.name)
+        self.agents_list = []
+
         self.loss_plot = []
         self.loss_plot5 = []
         self.loss_plot6 = []
@@ -42,11 +53,8 @@ class Algorithm:
         self.view_controller = None
         self.agent_controller = None
 
-    def create_env(self, spawn_apples=None, despawn_apples=None):
-        if not spawn_apples or not despawn_apples:
-            self.env = Orchard(self.orchard_length, self.orchard_width, self.num_agents, get_config()["S"], get_config()["phi"], self.agents_list, spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn)
-        else:
-            self.env = Orchard(self.orchard_length, self.orchard_width, self.num_agents, get_config()["S"], get_config()["phi"], self.agents_list, spawn_algo=spawn_apples, despawn_algo=despawn_apples)
+    def create_env(self):
+        self.env = Orchard(self.env_config.length, self.env_config.width, self.train_config.num_agents, self.agents_list, spawn_algo=self.env_config.spawn_algo, despawn_algo=self.env_config.despawn_algo, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
         self.env.initialize(self.agents_list)
 
     @abstractmethod
@@ -58,28 +66,29 @@ class Algorithm:
         raise NotImplementedError
 
     @abstractmethod
-    def collect_observation(self, step, timesteps, alt_vision=False):
+    def collect_observation(self, step):
         raise NotImplementedError
 
-    def train_batch(self, t_ratio=None):
-        self.update_critic()
-        self.update_actor(t_ratio)
+    def train_batch(self, t_ratio: Optional[float] = None) -> None:
+        """Train on a batch of experiences with error handling."""
+        try:
+            self.update_critic()
+            self.update_actor(t_ratio)
+        except Exception as e:
+            self.logger.error(f"Error during batch training: {e}")
+            raise
 
     def log_progress(self, sample_state, sample_state5, sample_state6):
-        # print("Spawned", self.env.total_apples)
-        # print("Despawned", self.env.apples_despawned)
-        print("Number of non-zero apples:", np.count_nonzero(self.env.apples))
-
         agent_obs = []
-        for i in range(len(self.agents_list)):
+        for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state, sample_state["poses"][i]))
         v_value = self.agent_controller.get_collective_value(agent_obs)
         agent_obs = []
-        for i in range(len(self.agents_list)):
+        for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state5, sample_state5["poses"][i]))
         v_value5 = self.agent_controller.get_collective_value(agent_obs)
         agent_obs = []
-        for i in range(len(self.agents_list)):
+        for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state6, sample_state6["poses"][i]))
         v_value6 = self.agent_controller.get_collective_value(agent_obs)
 
@@ -89,41 +98,47 @@ class Algorithm:
         self.loss_plot6.append(v_value6.item())
 
     @abstractmethod
-    def update_lr(self, step, timesteps):
+    def update_lr(self, step):
         raise NotImplementedError
 
-    def evaluate_checkpoint(self, step, timesteps, maxi, spawn_algo, despawn_algo):
+    def evaluate_checkpoint(self, step):
         print("=====Eval at", step, "steps======")
-        maxi, ratio = self.eval_network(maxi, spawn_algo, despawn_algo)
-        if ratio > self.max_ratio:
-            self.max_ratio = ratio
+        total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec = self.eval_network()
         print("=====Completed Evaluation=====")
+        return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
-    def eval_network(self, maxi, spawn_algo, despawn_algo):
+    def eval_network(self):
         agents_list = self.init_agents_for_eval()
         with torch.no_grad():
-            val, ratio = run_environment_1d(len(self.agents_list), self.orchard_length, self.orchard_width, None, None, self.name,
-                                            agents_list=agents_list,
-                                            spawn_algo=spawn_algo,
-                                            despawn_algo=despawn_algo,
-                                            timesteps=20000, vision=self.vision)
+            total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec = run_environment_1d(self.train_config.num_agents, self.env_config.length, self.env_config.width, None, None, self.name,
+                                                                                                                          agents_list=agents_list,
+                                                                                                                          spawn_algo=self.env_config.spawn_algo,
+                                                                                                                          despawn_algo=self.env_config.despawn_algo,
+                                                                                                                          timesteps=10000, vision=self.train_config.vision, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
         print("saving best")
         path = os.path.join(CHECKPOINT_DIR, self.name)
         if not os.path.isdir(path):
+            print("new_path")
             os.makedirs(path)
         self.save_networks(path)
-        return maxi, ratio
+        self.logger.info(f"Ratio picked: {per_agent}")
+        return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
-    def env_step(self):
-        agent_id = random.randint(0, len(self.agents_list) - 1)
+    def env_step(self, timestep, tick):
+        agent_id = random.randint(0, self.train_config.num_agents - 1)
         state = self.env.get_state()  # this is assumed to be a dict with "agents" and "apples"
         old_pos = self.agents_list[agent_id].position
         positions = []
-        for i in range(len(self.agents_list)):
+        for i in range(self.train_config.num_agents):
             positions.append(self.agents_list[i].position)
         action = self.agent_get_action(agent_id)
         reward, new_pos = self.env.main_step(self.agents_list[agent_id].position.copy(), action)
         self.agents_list[agent_id].position = new_pos.copy()
+        if tick == self.train_config.num_agents - 1:
+            self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
+            self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
+            # self.env.apples_despawned += self.env.despawn_algorithm(self.env, timestep)
+            # self.env.total_apples += self.env.spawn_algorithm(self.env, timestep)
         return self._format_env_step_return(state, self.env.get_state(), reward, agent_id, positions, action, old_pos)
 
     @abstractmethod
@@ -142,33 +157,59 @@ class Algorithm:
     def save_networks(self, path):
         raise NotImplementedError
 
-    def train(self, timesteps, spawn_algo, despawn_algo, alt_vision=False):
-        self.create_env(spawn_apples=spawn_algo, despawn_apples=despawn_algo)
-        sample_state, sample_state5, sample_state6 = generate_sample_states(self.env.length, self.env.width, len(self.agents_list))
-        maxi = 0
-        total_reward = 0
-        for step in range(timesteps):
-            for _ in range(self.batch_size):
-                self.collect_observation(step, timesteps, alt_vision)
-            self.train_batch(step / timesteps)
+    def train(self) -> Tuple[floating, ...] | None:
+        """Train the value function."""
+        try:
+            self.create_env()
 
-            if step % (0.02 * timesteps) == 0:
-                self.log_progress(sample_state, sample_state5, sample_state6)
-            self.update_lr(step, timesteps)
+            sample_state, sample_state5, sample_state6 = generate_sample_states(
+                self.env.length, self.env.width, self.train_config.num_agents)
 
-            if (step % (timesteps * 0.2) == 0 and step != 0) or step == timesteps - 1:
-                self.evaluate_checkpoint(step, timesteps, maxi, spawn_algo, despawn_algo)
-                graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
-        graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
-        for _ in range(2):
-            self.evaluate_checkpoint(timesteps - 1, timesteps, maxi, spawn_algo, despawn_algo)
-        print("Total Reward:", total_reward)
-        print("Total Apples:", self.env.total_apples)
-        return self.max_ratio
+            for step in range(self.train_config.timesteps):
+                # Collect and process observations
+                self.collect_observation(step)
+
+                # Train if enough samples collected
+                if len(self.agents_list[0].policy_value.batch_states) >= self.train_config.batch_size:
+                    self.train_batch(step / self.train_config.timesteps)
+
+                # Log progress and update a learning rate
+                if step % (0.02 * self.train_config.timesteps) == 0:
+                    self.log_progress(sample_state, sample_state5, sample_state6)
+                self.update_lr(step)
+
+                # Periodic evaluation
+                if (step % (self.train_config.timesteps * 0.2) == 0 and step != 0) and (step != self.train_config.timesteps - 1):
+                    self.evaluate_checkpoint(step)
+                    self.evaluate_checkpoint(step)
+                    graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
+            # Final evaluation
+            graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
+            return self._evaluate_final()
+        except Exception as e:
+            self.logger.error(f"Failed during training: {e}")
+            return None
+
+    def _evaluate_final(self) -> Tuple[floating, ...]:
+        """Perform final evaluation."""
+        mean_metrics = {
+            'total': [], 'picked': [], 'picked_per_agent': [],
+            'per_agent': [], 'distance': [], 'apple_per_sec': []
+        }
+
+        for _ in range(3):
+            metrics = self.evaluate_checkpoint(self.train_config.timesteps - 1)
+            for i, key in enumerate(mean_metrics.keys()):
+                mean_metrics[key].append(metrics[i])
+
+        self.logger.info(f"Ratio picked: {np.mean(mean_metrics['per_agent'])}")
+
+        return tuple(np.mean(val) for val in mean_metrics.values())
 
     @abstractmethod
-    def run(self, timesteps, spawn_algo, despawn_algo):
+    def run(self):
         raise NotImplementedError
+
 
 #         elif "AC" in name:
 #         for nummer, netwk in enumerate(network_list):

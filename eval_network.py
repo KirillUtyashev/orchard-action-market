@@ -8,7 +8,6 @@ from agents.communicating_agent import CommAgent
 from agents.simple_agent import SimpleAgent
 from main import run_environment_1d
 from orchard.algorithms import single_apple_despawn, single_apple_spawn
-from policies.random_policy import random_policy_1d
 
 
 def eval_network(name, maxi, num_agents, network_list, side_length=10,

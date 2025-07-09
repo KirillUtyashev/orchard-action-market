@@ -79,63 +79,53 @@ class ViewController:
         height, length = agents.shape
 
         if self.perfect_info:
-            agents_vector = None
-            apples_vector = None
-            for i in range(height):
-                if agents_vector is not None:
-                    agents_vector = np.concatenate([agents_vector, agents[i].reshape(-1, 1)], axis=0)
-                    apples_vector = np.concatenate([apples_vector, apples[i].reshape(-1, 1)], axis=0)
-                else:
-                    agents_vector = agents[i].reshape(-1, 1)
-                    apples_vector = apples[i].reshape(-1, 1)
+            agents_vector = agents[0].reshape(-1, 1)
+            apples_vector = apples[0].reshape(-1, 1)
+            for i in range(1, height):
+                agents_vector = np.concatenate([agents_vector, agents[i].reshape(-1, 1)], axis=0)
+                apples_vector = np.concatenate([apples_vector, apples[i].reshape(-1, 1)], axis=0)
 
             res = np.concatenate([agents_vector, apples_vector], axis=0)
             if agent_pos is not None:
                 pos = convert_position(agent_pos)
                 res = np.concatenate([res, pos], axis=0)
             return res
-
-        half = self.vision // 2
-
-        fill = np.full((half, len(agents[0])), -1, dtype=int)
-
-        if height != 1:
-            ap = np.concatenate((fill, agents, fill))
-            bp = np.concatenate((fill, apples, fill))
         else:
-            ap = agents
-            bp = apples
+            half = self.vision // 2
 
-        # build a column‐fill of shape (ap.shape[0], pad)
-        col_fill = np.full((ap.shape[0], half), -1, dtype=int)
+            fill = np.full((half, len(agents[0])), -1, dtype=int)
 
-        # now pad left and right:
-        ap = np.concatenate((col_fill, ap, col_fill), axis=1)
-        bp = np.concatenate((col_fill, bp, col_fill), axis=1)
-        r, c = agent_pos
+            if height != 1:
+                ap = np.concatenate((fill, agents, fill))
+                bp = np.concatenate((fill, apples, fill))
+            else:
+                ap = agents
+                bp = apples
 
-        # get initial coordinate
-        r_true, c_true = r + half, c + half
+            # build a column‐fill of shape (ap.shape[0], pad)
+            col_fill = np.full((ap.shape[0], half), -1, dtype=int)
 
-        true_a = ap[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
-        true_b = bp[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
+            # now pad left and right:
+            ap = np.concatenate((col_fill, ap, col_fill), axis=1)
+            bp = np.concatenate((col_fill, bp, col_fill), axis=1)
+            r, c = agent_pos
 
+            # get initial coordinate
+            r_true, c_true = r + half, c + half
 
-        if height != 1:
-            agents_vector = None
-            apples_vector = None
-            for i in range(self.vision):
-                if agents_vector is not None:
+            true_a = ap[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
+            true_b = bp[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
+
+            if height != 1:
+                agents_vector = true_a[0].reshape(-1, 1)
+                apples_vector = true_b[0].reshape(-1, 1)
+                for i in range(1, self.vision):
                     agents_vector = np.concatenate([agents_vector, true_a[i].reshape(-1, 1)], axis=0)
                     apples_vector = np.concatenate([apples_vector, true_b[i].reshape(-1, 1)], axis=0)
-                else:
-                    agents_vector = true_a[i].reshape(-1, 1)
-                    apples_vector = true_b[i].reshape(-1, 1)
-
-            res = np.concatenate([agents_vector, apples_vector], axis=0)
-        else:
-            res = np.concatenate([true_a.T, true_b.T], axis=0)
-        if agent_pos is not None:
-            pos = convert_position(agent_pos)
-            res = np.concatenate([res, pos], axis=0)
-        return res
+                res = np.concatenate([agents_vector, apples_vector], axis=0)
+            else:
+                res = np.concatenate([true_a.T, true_b.T], axis=0)
+            if agent_pos is not None:
+                pos = convert_position(agent_pos)
+                res = np.concatenate([res, pos], axis=0)
+            return res

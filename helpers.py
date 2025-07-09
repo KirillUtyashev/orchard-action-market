@@ -4,8 +4,6 @@ import numpy as np
 import torch
 
 from config import get_config
-from policies.random_policy import random_policy_1d
-
 
 def convert_position(pos):
     if pos is not None:

@@ -16,8 +16,8 @@ action_vectors = [
 
 
 class VNetwork:
-    def __init__(self, input_dim, alpha, discount):
-        self.function = MainNet(input_dim, 1).to(DEVICE)
+    def __init__(self, input_dim, alpha, discount, hidden_dim=128, num_layers=4):
+        self.function = MainNet(input_dim, 1, hidden_dim, num_layers).to(DEVICE)
         self.optimizer = optim.AdamW(self.function.parameters(), lr=alpha,
                                      amsgrad=True)
         self.alpha = alpha

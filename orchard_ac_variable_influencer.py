@@ -481,7 +481,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
                 if agent2.num == 1:
                     print("OUT:", outpt)
                 peragval_plots[agent2.num].append(
-                    agent2.get_value_function(
+                    agent2.get_q_value(
                         convert_position(samp_state["agents"])).item())
         if i > gossip_timestep:
             if i % 200 == 0 and i > gossip_timestep:

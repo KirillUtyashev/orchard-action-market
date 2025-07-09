@@ -36,26 +36,6 @@ class Agent:
     def get_value_function(self, state):
         raise NotImplementedError
 
-    def get_best_action(self, state, agents_list=None):
-        a = state["agents"]
-        b = state["apples"]
-        action = 0
-        best_val = 0
-
-        for act in [0, 1, 4]:
-            val, new_a, new_b, new_pos = calculate_ir(a, b, self.position, act)
-            val += get_config()["discount"] * self.get_value_for_agent(new_a, new_b, agents_list, new_pos)
-            if val > best_val:
-                action = act
-                best_val = val
-        return action
-
-    def get_action(self, state, agents_list=None):
-        if self.policy == "value_function":
-            return self.get_best_action(state, agents_list)
-        else:
-            return self.policy(state, self.position)
-
     @abstractmethod
     def add_experience(self, old_state, new_state, reward, action=None):
         raise NotImplementedError

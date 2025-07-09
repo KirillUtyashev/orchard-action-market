@@ -11,7 +11,7 @@ import orchard.environment_one
 import random
 from policies.nearest_uniform import replace_agents_1d
 from policies.random_policy import random_policy_1d, random_policy
-from policies.nearest import nearest_1d, nearest
+from policies.nearest import nearest_policy, nearest
 from metrics.metrics import append_metrics, plot_metrics, append_positional_metrics, plot_agent_specific_metrics
 from agents.simple_agent import SimpleAgent
 from models.simple_connected import SimpleConnected
