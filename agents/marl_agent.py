@@ -351,12 +351,12 @@ class OrchardAgent:
             pos = self.position
 
         if self.utility == "value_function":
-            return self.value_network.get_value_function(a)[0]
+            return self.value_network.get_q_value(a)[0]
 
     def get_value_function(self, a, b, pos=None):
         if pos is None:
             pos = self.position
-        return self.value_network.get_value_function(a)
+        return self.value_network.get_q_value(a)
     def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
         sum = 0
         if debug:

@@ -1,5 +1,3 @@
-import numpy as np
-
 from agents.agent import Agent
 from config import get_config
 from helpers import convert_input, convert_position
@@ -22,15 +20,15 @@ class CommAgent(Agent):
             if agent is self:
                 if get_config()["alt_input"]:
                     alt_state = convert_input({"agents": agents, "apples": apples}, hypothetical_pos)
-                    sum_ += agent.get_value_function(alt_state["agents"])
+                    sum_ += agent.get_q_value(alt_state["agents"])
                 else:
-                    sum_ += agent.get_value_function(agents)
+                    sum_ += agent.get_q_value(agents)
             else:
                 if get_config()["alt_input"]:
                     alt_state = convert_input({"agents": agents, "apples": apples}, agent.position)
-                    sum_ += agent.get_value_function(alt_state["agents"])
+                    sum_ += agent.get_q_value(alt_state["agents"])
                 else:
-                    sum_ += agent.get_value_function(agents)
+                    sum_ += agent.get_q_value(agents)
         return sum_
 
     def add_experience(self, old_state, new_state, reward, action=None):

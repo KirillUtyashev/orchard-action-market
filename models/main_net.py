@@ -2,12 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+# #
 # class MainNet(nn.Module):
-#     def __init__(self, input_dim, output_dim):
+#     def __init__(self, input_dim, output_dim, hidden_dim=128, num_layers=4):
 #         super().__init__()
 #         # --- 1D conv: from 2 channels (agents, apples) → 6 channels, kernel=3, padding=1 to keep length == input_dim
 #         self.layer1 = nn.Conv1d(1, 6, kernel_size=3, stride=1)
+#         self.layer2 = nn.Linear(6 * ((input_dim * 2) - 2), hidden_dim)
+#         self.layer3 = nn.Linear(hidden_dim, hidden_dim)
+#         self.layer4 = nn.Linear(hidden_dim, output_dim)
 #
 #         # 1D conv: from 1 channel → 6 channels, kernel=3, no padding -> length_out = input_dim - 2
 #
@@ -31,13 +34,13 @@ import torch.nn.functional as F
 #
 #         # After conv, feature length remains input_dim, so flattened size is 6 * input_dim
 #         # conv_output_dim = 6 * input_dim
-#         # # We append 2 scalars (row, col)
+#         # We append 2 scalars (row, col)
 #         # fc_input_dim = conv_output_dim + 2
 #
 #         # Fully connected layers
-#         self.layer2 = nn.Linear(6 * ((input_dim * 2) - 2), 64)
-#         self.layer3 = nn.Linear(64, 64)
-#         self.layer4 = nn.Linear(64, output_dim)
+#         # self.layer2 = nn.Linear(6 * ((input_dim * 2) - 2), 64)
+#         # self.layer3 = nn.Linear(64, 64)
+#         # self.layer4 = nn.Linear(64, output_dim)
 #
 #         # Xavier initialization
 #         for m in [self.layer1, self.layer2, self.layer3, self.layer4]:
@@ -54,35 +57,31 @@ import torch.nn.functional as F
 #         x = F.leaky_relu(self.layer2(x))          # [B, 128]
 #         x = F.leaky_relu(self.layer3(x))          # [B, 128]
 #         return self.layer4(x)
+#
+# #
 
 
 class MainNet(nn.Module):
-    def __init__(self, input_dim, output_dim, hidden_dim=128):
+    def __init__(self, input_dim, output_dim, hidden_dim=128, num_layers=4):
         super().__init__()
-        # Fully connected layers: input_dim → 64 → 64 → output_dim
-        self.layer1 = nn.Linear(input_dim * 2, hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, hidden_dim)
-        self.layer3 = nn.Linear(hidden_dim, hidden_dim)
-        self.layer4 = nn.Linear(hidden_dim, output_dim)
+        self.layers_list = nn.ModuleList()
+
+        if num_layers == 1:
+            self.layers_list.append(nn.Linear(input_dim * 2, output_dim))
+        else:
+            self.layers_list.append(nn.Linear(input_dim * 2, hidden_dim))
+            for _ in range(num_layers - 2):
+                self.layers_list.append(nn.Linear(hidden_dim, hidden_dim))
+            self.layers_list.append(nn.Linear(hidden_dim, output_dim))
 
         # Xavier initialization
-        for m in [self.layer1, self.layer2, self.layer3, self.layer4]:
+        for m in self.layers_list:
             if hasattr(m, 'weight'):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        """
-        Forward pass for the feedforward network.
-
-        Args:
-            x (torch.Tensor): shape [B, input_dim]
-
-        Returns:
-            torch.Tensor: shape [B, output_dim]
-        """
-        x = F.leaky_relu(self.layer1(x))  # [B, 64]
-        x = F.leaky_relu(self.layer2(x))  # [B, 64]
-        x = F.leaky_relu(self.layer3(x))  # [B, 64]
-        return self.layer4(x)  # [B, output_dim]
+        for i in range(len(self.layers_list)):
+            x = F.leaky_relu(self.layers_list[i](x))
+        return x

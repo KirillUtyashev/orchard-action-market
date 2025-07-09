@@ -41,7 +41,7 @@ class ActorNetworkBase:
     def get_sum_value(self, state, positions):
         sum_ = 0
         for number, agent in enumerate(self.agents_list):
-            sum_ += agent.policy_value.get_value_function(np.concatenate(
+            sum_ += agent.policy_value.get_q_value(np.concatenate(
                 [state["agents"], state["apples"],
                  convert_position(positions[number])], axis=0))
         return sum_
@@ -127,7 +127,7 @@ class ActorNetworkWithRates(ActorNetworkBase):
     def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
         q_value = reward
         for each_agent in self.agents_list:
-            q_value += self.discount * each_agent.get_value_function(
+            q_value += self.discount * each_agent.get_q_value(
                 new_state["agents"].copy())[0] * (1 - np.exp(-each_agent.agent_rates[agent]))
         beta = self.agents_list[agent].beta
         res = q_value - beta

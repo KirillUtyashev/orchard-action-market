@@ -335,7 +335,7 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
                     peragprod_plots[agent2.num][1].append(outpt[1])
                     peragprod_plots[agent2.num][2].append(outpt[2])
                     peragval_plots[agent2.num].append(
-                        agent2.get_value_function(samp_state["agents"]))
+                        agent2.get_q_value(samp_state["agents"]))
 
         feedback = np.sum(action_utils) + np.sum(action_utils_infl) + agents_list[agent].get_utility(state_a,
                                                                                                      state_b,

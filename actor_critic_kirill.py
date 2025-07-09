@@ -232,7 +232,7 @@ class ActorCriticBeta(ActorCritic):
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
             if action is not None:
-                value = self.discount * each_agent.get_value_function(
+                value = self.discount * each_agent.get_q_value(
                     new_s["agents"].copy())[0]
                 if num == agent:
                     value += reward
@@ -293,7 +293,7 @@ class ActorCriticRate(ActorCriticBeta):
     def find_ab(self, new_s, agent, reward, action):
         beta_sum = 0
         for num, each_agent in enumerate(self.agents_list):
-            value = self.discount * each_agent.get_value_function(
+            value = self.discount * each_agent.get_q_value(
                 new_s["agents"].copy())[0] * (1 - np.exp(-each_agent.agent_rates[agent]))
             if num == agent:
                 value += reward
