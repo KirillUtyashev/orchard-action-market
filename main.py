@@ -150,19 +150,19 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     rate_per_tick = np.asarray(apples_picked) / num_agents
     cum_mean = np.cumsum(rate_per_tick) / np.arange(1, len(rate_per_tick)+1)
     print(cum_mean[-1])
-
-    sec_axis = np.arange(len(cum_mean))
-    plt.plot(sec_axis, cum_mean, linewidth=1.5)
-
-    apples_per_tick = np.asarray(apples_dropped) / num_agents
-    cum_mean = np.cumsum(apples_per_tick) / np.arange(1, len(apples_per_tick)+1)
-    sec_axis = np.arange(len(cum_mean))   # seconds
-    plt.plot(sec_axis, cum_mean, linewidth=1.5)
-    plt.ylim(0, 0.5)
-
-    plt.xlabel('simulated seconds')
-    plt.ylabel('cumulative mean  apples/agent/sec')
-    plt.tight_layout(); plt.show(); plt.close()
+    #
+    # sec_axis = np.arange(len(cum_mean))
+    # plt.plot(sec_axis, cum_mean, linewidth=1.5)
+    #
+    # apples_per_tick = np.asarray(apples_dropped) / num_agents
+    # cum_mean = np.cumsum(apples_per_tick) / np.arange(1, len(apples_per_tick)+1)
+    # sec_axis = np.arange(len(cum_mean))   # seconds
+    # plt.plot(sec_axis, cum_mean, linewidth=1.5)
+    # plt.ylim(0, 0.5)
+    #
+    # plt.xlabel('simulated seconds')
+    # plt.ylabel('cumulative mean  apples/agent/sec')
+    # plt.tight_layout(); plt.show(); plt.close()
     print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
     print("Average distance:", np.mean(nearest_neighbour_mean_distance))
     print("Results for", name)

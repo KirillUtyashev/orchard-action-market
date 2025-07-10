@@ -1,62 +1,19 @@
 import random
 import time
 from abc import ABC, abstractmethod
-import logging
-import os
-from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import torch
 import numpy as np
-from controllers import AgentControllerCentralized, \
+
+from configs.config import ExperimentConfig
+from .controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 from main import run_environment_1d
 from models.value_function import VNetwork
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
-from orchard.algorithms import despawn_apple, single_apple_despawn_new, \
-    single_apple_spawn_new, \
-    spawn_apple
-from policies.nearest import nearest_policy
 from policies.random_policy import random_policy
 from algorithm import Algorithm
-
-
-@dataclass
-class TrainingConfig:
-    """Configuration for training parameters."""
-    batch_size: int = 128
-    alpha: float = 0.0025
-    lr_schedule: dict = field(
-        default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075}
-    )
-    timesteps: int = 1000000
-    num_agents: int = 4
-    eval_interval: float = 0.2
-    checkpoint_dir: str = "checkpoints"
-    log_dir: str = "logs"
-    discount: float = 0.99
-    alt_input: bool = False
-    vision: Optional[int] = None
-    hidden_dimensions: Optional[int] = 128
-    num_layers: int = 4
-
-
-@dataclass
-class EnvironmentConfig:
-    """Configuration for environment parameters."""
-    s_target: float = 0.03
-    apple_mean_lifetime: float = 3.5
-    spawn_algo: callable = spawn_apple
-    despawn_algo: callable = despawn_apple
-    length: int = 20
-    width: int = 1
-
-
-@dataclass
-class ExperimentConfig:
-    """Configuration for experiment parameters."""
-    train_config: TrainingConfig = None
-    env_config: EnvironmentConfig = None
 
 
 class ValueFunction(Algorithm, ABC):
@@ -118,9 +75,12 @@ class CentralizedValueFunction(ValueFunction):
             action = self.agent_controller.get_best_action(self.env.get_state(),
                                                            agent_id,
                                                            self.env.available_actions)
-        else:
+        elif self.agents_list[agent_id].policy is random_policy:
             action = self.agents_list[agent_id].policy(
                 self.env.available_actions)
+        else:
+            action = self.agents_list[agent_id].policy(
+                self.env.get_state(), self.agents_list[agent_id].position)
         return action
 
     def _update_network_lr(self, lr: float) -> None:
@@ -136,7 +96,6 @@ class CentralizedValueFunction(ValueFunction):
                 processed_state = self.view_controller.process_state(s, None)
                 processed_new_state = self.view_controller.process_state(new_s, None)
                 self.agents_list[0].add_experience(processed_state, processed_new_state, r)
-
 
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
@@ -179,9 +138,12 @@ class DecentralizedValueFunction(ValueFunction):
             action = self.agent_controller.get_best_action(self.env.get_state(),
                                                            agent_id,
                                                            self.env.available_actions)
-        else:
+        elif self.agents_list[agent_id].policy is random_policy:
             action = self.agents_list[agent_id].policy(
                 self.env.available_actions)
+        else:
+            action = self.agents_list[agent_id].policy(
+                self.env.get_state(), self.agents_list[agent_id].position)
         return action
 
     def _format_env_step_return(self, state: dict, new_state: dict,
@@ -333,71 +295,3 @@ def make_network_factory(checkpoint_path, input_dim, discount, alpha, hidden_dim
         return agent
 
     return factory
-
-
-if __name__ == "__main__":
-    # storage for results
-    # results = {
-    #     "baseline": [],
-    #     "centralized": [],
-    #     # "decentralized": [],  # if you add that later
-    # }
-    #
-    # # common env_config
-    widths = [5]
-    # for width in widths:
-    env_config = EnvironmentConfig(
-        s_target=0.1,
-        apple_mean_lifetime=2.5,
-        length=5,
-        width=5,
-        spawn_algo=spawn_apple,
-        despawn_algo=despawn_apple
-    )
-        #
-        # 1) Baseline
-        # baseline_metrics = evaluate_policy(
-        #     env_config,
-        #     num_agents=2,
-        #     agent_factory=make_baseline_factory(nearest_policy),
-        #     timesteps=10000,
-        #     seed=42069
-        # )
-        # print(baseline_metrics)
-    #
-    # # 2) Centralized network
-    # ckpt = "/path/to/Centralized-..._cen_.pt"
-    # input_dim = env_config.length * env_config.width
-    # net_factory = make_network_factory(
-    #     ckpt, input_dim, discount=0.99, alpha=0.0025, hidden_dim=8, num_layers=4
-    # )
-    # central_metrics = evaluate_policy(
-    #     env_config,
-    #     num_agents=2,
-    #     agent_factory=net_factory,
-    #     timesteps=10000,
-    #     seed=42069
-    # )
-    # results["centralized"].append(central_metrics)
-    #
-    # # Print everything neatly
-    # for key, runs in results.items():
-    #     for run in runs:
-    #         print(f"{key}: {run}")
-
-    train_config = TrainingConfig(
-        batch_size=256,
-        alpha=0.00125,
-        num_agents=2,
-        hidden_dimensions=64,
-        num_layers=4,
-    )
-
-    experiment_config = ExperimentConfig(
-        env_config=env_config,
-        train_config=train_config,
-    )
-
-    algo = DecentralizedValueFunction(experiment_config)
-
-    print(float(i) for i in algo.run())
