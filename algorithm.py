@@ -203,6 +203,8 @@ class Algorithm:
                 mean_metrics[key].append(metrics[i])
 
         self.logger.info(f"Ratio picked: {np.mean(mean_metrics['per_agent'])}")
+        self.logger.info(f"Mean distance: {np.mean(mean_metrics['distance'])}")
+        self.logger.info(f"Total apples: {np.mean(mean_metrics['total'])}")
 
         return tuple(np.mean(val) for val in mean_metrics.values())
 

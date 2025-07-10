@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 
 
@@ -34,6 +36,8 @@ graph = 0
 def graph_plots(dictn, name, plot, loss_plot, loss_plot1, loss_plot2, ratio_plot):
     global graph
     graph += 1
+    graph_folder = Path("graphs")
+    graph_folder.mkdir(parents=True, exist_ok=True)
 
     # --- parameter trajectories (unchanged) ---
     # plt.figure("plots" + str(graph) + name, figsize=(10, 5))
@@ -58,8 +62,9 @@ def graph_plots(dictn, name, plot, loss_plot, loss_plot1, loss_plot2, ratio_plot
     plt.plot(loss_plot)
     plt.plot(loss_plot1)
     plt.plot(loss_plot2)
+    filename = graph_folder / f"Val_{name}_{str(graph)}.png"
     plt.title("Value Function for Sample State, iteration " + str(graph))
-    plt.savefig("Val_" + name + str(graph) + ".png")
+    plt.savefig(filename)
     plt.close()
 
     # --- ratio plot (new) ---
