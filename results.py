@@ -105,15 +105,14 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
     else:
         raise ValueError("Architecture must be either 'Centralized' or 'Decentralized'")
 
-
-    # Centralized-<7>_agents-_length-<12>_width-<12>_s_target-<0.16>-apple_mean_lifetime-<5.0>-<0.00125>-discount-<0.99>-hidden_dimensions-<256>-dimensions-<4>.log
-
     for log_file in log_dir.glob("*.log"):
         if re.fullmatch(pattern, log_file.name):
             # Found the matching file
             last_ratio = None
             mean_distance = None
             total_apples = None
+            picked_per_agents = None
+            total_picked = None
 
             with open(log_file, "r") as f:
                 for line in f:
@@ -129,8 +128,16 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
                         match = re.search(r"Total apples: ([0-9.eE+-]+)", line)
                         if match:
                             total_apples = float(match.group(1))
+                    elif "Picked per agents" in line:
+                        match = re.search(r"Picked per agents: ([0-9.eE+-]+)", line)
+                        if match:
+                            picked_per_agents = float(match.group(1))
+                    elif "Total picked" in line:
+                        match = re.search(r"Total picked: ([0-9.eE+-]+)", line)
+                        if match:
+                            total_picked = float(match.group(1))
 
-            return last_ratio, mean_distance, total_apples
+            return last_ratio, mean_distance, total_apples, picked_per_agents, total_picked
 
     return None  # if no file matched
 
@@ -161,13 +168,17 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
-            "last_ratios": []
+            "last_ratios": [],
+            "total_picked": [],
+            "picked_per_agent": []
         },
         "decentralized": {
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
-            "last_ratios": []
+            "last_ratios": [],
+            "total_picked": [],
+            "picked_per_agent": []
         }
     }
 
@@ -194,11 +205,10 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             results[arch_key]["last_ratios"].append(result[0] if result else None)
             results[arch_key]["mean_distances"].append(result[1] if result else None)
             results[arch_key]["total_apples"].append(result[2] if result else None)
+            results[arch_key]["picked_per_agent"].append(result[3] if result else None)
+            results[arch_key]["total_picked"].append(result[4] if result else None)
 
     return results
-
-#
-
 
 
 def init_dicts():
@@ -214,6 +224,8 @@ def run(base_config: dict, sweep_params: dict):
     ratios = init_dicts()
     total_apples = init_dicts()
     mean_distances = init_dicts()
+    total_picked = init_dicts()
+    picked_per_agents = init_dicts()
 
     # first, get the results for random
     if "hidden_dimensions" in sweep_params or "dimensions" in sweep_params:
@@ -222,6 +234,16 @@ def run(base_config: dict, sweep_params: dict):
             ratios["Random"].append(random_res["ratio_per_agent"])
             total_apples["Random"].append(random_res["total_apples"])
             mean_distances["Random"].append(random_res["mean_distance"])
+            picked_per_agents["Random"].append(random_res["picked_per_agent"])
+            total_picked["Random"].append(random_res["total_picked"])
+    else:
+        for width in sweep_params["width"]:
+            random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
+            ratios["Random"].append(random_res["ratio_per_agent"])
+            total_apples["Random"].append(random_res["total_apples"])
+            mean_distances["Random"].append(random_res["mean_distance"])
+            picked_per_agents["Random"].append(random_res["picked_per_agent"])
+            total_picked["Random"].append(random_res["total_picked"])
     result = sweep_logs(base_config, sweep_params)
     ratios["Centralized"].extend(result["centralized"]["last_ratios"])
     ratios["Decentralized"].extend(result["decentralized"]["last_ratios"])
@@ -240,14 +262,14 @@ def run(base_config: dict, sweep_params: dict):
 
 if __name__ == '__main__':
     base = {
-        "length": 12,
-        "num_agents": 7,
-        "width": 12,
-        "hidden_dimensions": 256  # default placeholder
+        "length": 5,
+        "num_agents": 4,
+        "hidden_dimensions": 16,
+        "dimensions": 4,
     }
 
     sweep = {
-        "dimensions": [4, 8, 16]
+        "width": [1, 2]
     }
 
     run(base, sweep)

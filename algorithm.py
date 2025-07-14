@@ -205,6 +205,8 @@ class Algorithm:
         self.logger.info(f"Ratio picked: {np.mean(mean_metrics['per_agent'])}")
         self.logger.info(f"Mean distance: {np.mean(mean_metrics['distance'])}")
         self.logger.info(f"Total apples: {np.mean(mean_metrics['total'])}")
+        self.logger.info(f"Total picked: {np.mean(mean_metrics['picked'])}")
+        self.logger.info(f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}")
 
         return tuple(np.mean(val) for val in mean_metrics.values())
 
