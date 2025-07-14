@@ -219,6 +219,14 @@ def init_dicts():
     }
 
 
+def add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res):
+    ratios["Random"].append(random_res["ratio_per_agent"])
+    total_apples["Random"].append(random_res["total_apples"])
+    mean_distances["Random"].append(random_res["mean_distance"])
+    picked_per_agents["Random"].append(random_res["picked_per_agent"])
+    total_picked["Random"].append(random_res["total_picked"])
+
+
 def run(base_config: dict, sweep_params: dict):
     # init the dictionaries
     ratios = init_dicts()
@@ -231,19 +239,11 @@ def run(base_config: dict, sweep_params: dict):
     if "hidden_dimensions" in sweep_params or "dimensions" in sweep_params:
         random_res = evaluate_factory(base_config["length"], base_config["width"], base_config["num_agents"])
         for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-            ratios["Random"].append(random_res["ratio_per_agent"])
-            total_apples["Random"].append(random_res["total_apples"])
-            mean_distances["Random"].append(random_res["mean_distance"])
-            picked_per_agents["Random"].append(random_res["picked_per_agent"])
-            total_picked["Random"].append(random_res["total_picked"])
+            add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res)
     else:
         for width in sweep_params["width"]:
             random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
-            ratios["Random"].append(random_res["ratio_per_agent"])
-            total_apples["Random"].append(random_res["total_apples"])
-            mean_distances["Random"].append(random_res["mean_distance"])
-            picked_per_agents["Random"].append(random_res["picked_per_agent"])
-            total_picked["Random"].append(random_res["total_picked"])
+            add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res)
     result = sweep_logs(base_config, sweep_params)
     ratios["Centralized"].extend(result["centralized"]["last_ratios"])
     ratios["Decentralized"].extend(result["decentralized"]["last_ratios"])
@@ -262,14 +262,14 @@ def run(base_config: dict, sweep_params: dict):
 
 if __name__ == '__main__':
     base = {
-        "length": 5,
+        "length": 20,
         "num_agents": 4,
-        "hidden_dimensions": 16,
+        "hidden_dimensions": 128,
         "dimensions": 4,
     }
 
     sweep = {
-        "width": [1, 2]
+        "width": [1, 8]
     }
 
     run(base, sweep)
