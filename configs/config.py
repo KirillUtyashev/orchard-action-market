@@ -10,7 +10,7 @@ class TrainingConfig:
     batch_size: int = 128
     alpha: float = 0.0025
     lr_schedule: dict = field(
-        default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075}
+        default_factory=lambda: {0.33: 0.000125, 0.625: 0.0000375}
     )
     timesteps: int = 1000000
     num_agents: int = 4
