@@ -1,7 +1,7 @@
 #!/bin/sh
 
 algo="Centralized"
-num_agents=4
+num_agents=1
 
 for width in 1 2
 do
