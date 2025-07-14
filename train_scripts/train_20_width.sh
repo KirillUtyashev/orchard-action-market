@@ -15,7 +15,7 @@ num_agents=4
 algo="Centralized"
 num_agents=4
 
-for width in 1 8
+for width in 8
 do
   echo "20 by ${width}, ${num_agents}"
   python -u ../run_experiments.py \
