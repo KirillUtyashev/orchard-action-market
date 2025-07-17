@@ -17,6 +17,58 @@ from eval_network import eval_network
 from orchard.environment import *
 from helpers import generate_sample_states
 from config import get_config
+import os
+import time
+import psutil
+
+
+def memory_snapshot(label="mem", show_children=False, top_n=5):
+    """
+    Print a memory usage summary for the current process (and optionally top child processes).
+
+    Parameters
+    ----------
+    label : str
+        Tag to include in the printed line (e.g., 'step=1000', 'eval', etc.).
+    show_children : bool
+        If True, prints top-N child processes by RSS.
+    top_n : int
+        Number of child processes to display when show_children=True.
+    """
+    proc = psutil.Process(os.getpid())
+    try:
+        mi = proc.memory_info()
+    except psutil.NoSuchProcess:
+        return
+
+    rss = mi.rss  # resident set size (bytes)
+    vms = mi.vms  # virtual mem size (bytes)
+
+    children = proc.children(recursive=True)
+    rss_children = 0
+    child_stats = []
+    for ch in children:
+        try:
+            chi = ch.memory_info()
+        except psutil.NoSuchProcess:
+            continue
+        rss_children += chi.rss
+        if show_children:
+            child_stats.append((chi.rss, ch.pid, " ".join(ch.cmdline()[:3]) or ch.name()))
+
+    total_rss = rss + rss_children
+
+    print(
+        f"[{time.strftime('%H:%M:%S')}] {label}: "
+        f"RSS_self={rss/1e6:.1f}MB | RSS_children={rss_children/1e6:.1f}MB | TOTAL={total_rss/1e6:.1f}MB | VMS={vms/1e6:.1f}MB",
+        flush=True,
+    )
+
+    if show_children and child_stats:
+        child_stats.sort(reverse=True)  # largest first
+        print("  Top child processes (RSS MB):", flush=True)
+        for rss_bytes, pid, cmd in child_stats[:top_n]:
+            print(f"    PID {pid}: {rss_bytes/1e6:.1f}MB  {cmd}", flush=True)
 
 
 class Algorithm:
@@ -25,6 +77,7 @@ class Algorithm:
         self.env_config = config.env_config
         self.env = None
         self.name = name
+        self.debug = config.debug
 
         log_folder = Path("logs")
         log_folder.mkdir(parents=True, exist_ok=True)
@@ -176,6 +229,8 @@ class Algorithm:
                 # Log progress and update a learning rate
                 if step % (0.02 * self.train_config.timesteps) == 0:
                     self.log_progress(sample_state, sample_state5, sample_state6)
+                    if self.debug:
+                        memory_snapshot(label=f"step={step}", show_children=True)
                 self.update_lr(step)
 
                 # Periodic evaluation
