@@ -181,7 +181,7 @@ class Algorithm:
                 # Periodic evaluation
                 if (step % (self.train_config.timesteps * 0.2) == 0 and step != 0) and (step != self.train_config.timesteps - 1):
                     self.evaluate_checkpoint(step)
-                    self.evaluate_checkpoint(step)
+                    # self.evaluate_checkpoint(step)
                     graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
             # Final evaluation
             graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
