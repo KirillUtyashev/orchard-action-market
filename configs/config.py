@@ -40,4 +40,5 @@ class ExperimentConfig:
     """Configuration for experiment parameters."""
     train_config: TrainingConfig = None
     env_config: EnvironmentConfig = None
+    debug: bool = False
 
