@@ -24,6 +24,7 @@ def parse_args(args):
     parser.add_argument("--alpha", type=float, default=0.00125, help="Learning rate.")
     parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer size.")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
+    parser.add_argument("--debug", type=bool, default=True, help="Debug.")
 
     return parser.parse_args(args)
 
@@ -50,6 +51,7 @@ def main(args):
     exp_config = ExperimentConfig(
         env_config=env_config,
         train_config=train_config,
+        debug=args.debug
     )
 
     if args.algorithm == "Centralized":
@@ -57,7 +59,7 @@ def main(args):
     else:
         algo = DecentralizedValueFunction(exp_config)
     np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    torch.manual_seed(1234)
     random.seed(args.seed)
 
     algo.run()
