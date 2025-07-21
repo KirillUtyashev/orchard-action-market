@@ -204,13 +204,12 @@ class DecentralizedValueFunction(ValueFunction):
         """Run the decentralized training process."""
         try:
             self.view_controller = ViewController(self.train_config.vision)
-            self.logger.error(self.train_config.vision, self.view_controller.perfect_info)
             self.agent_controller = AgentControllerDecentralized(self.agents_list, self.view_controller)
 
             # Initialize networks and agents
             for _ in range(self.train_config.num_agents):
                 agent = CommAgent(policy=random_policy)
-                if self.train_config.alt_input:
+                if self.train_config.alt_input == 0:
                     if self.env_config.width != 1:
                         network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                     else:
