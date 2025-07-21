@@ -25,7 +25,7 @@ def parse_args(args):
     parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer size.")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
     parser.add_argument("--debug", type=bool, default=True, help="Debug.")
-    parser.add_argument("--alt_vision", type=bool, default=False, help="Alternative Vision.")
+    parser.add_argument("--alt_vision", type=int, default=1, help="Alternative Vision.")
     parser.add_argument("--vision", type=int, default=None, help="Vision.")
 
     return parser.parse_args(args)
@@ -48,7 +48,7 @@ def main(args):
         num_agents=args.num_agents,
         hidden_dimensions=args.hidden_dim,
         num_layers=args.num_layers,
-        alt_input=args.alt_vision,
+        alt_input=True if args.alt_vision == 0 else False,
         vision=args.vision
     )
 
