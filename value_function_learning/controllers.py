@@ -66,7 +66,7 @@ class AgentControllerCentralized(AgentController):
 
 class ViewController:
     def __init__(self, vision=None):
-        if not vision:
+        if vision == 0:
             self.perfect_info = True
             self.vision = vision
         else:
