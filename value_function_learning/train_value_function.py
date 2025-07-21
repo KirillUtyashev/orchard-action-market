@@ -210,7 +210,10 @@ class DecentralizedValueFunction(ValueFunction):
             for _ in range(self.train_config.num_agents):
                 agent = CommAgent(policy=random_policy)
                 if self.train_config.alt_input:
-                    network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                    if self.env_config.width != 1:
+                        network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                    else:
+                        network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 else:
                     network = VNetwork(self.env_config.length * self.env_config.width + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 agent.policy_value = network
