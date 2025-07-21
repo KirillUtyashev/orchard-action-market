@@ -213,6 +213,7 @@ class Algorithm:
     def train(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
+            self.logger.info("Hi")
             self.create_env()
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
