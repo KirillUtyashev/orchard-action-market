@@ -25,6 +25,6 @@ def evaluate_factory(length, width, num_agents):
 
 
 if __name__ == "__main__":
-    widths = [1, 3, 5, 8]
+    widths = [1, 3, 6]
     for width in widths:
-        print(evaluate_factory(20, width, 4))
+        print(evaluate_factory(50, width, 10))
