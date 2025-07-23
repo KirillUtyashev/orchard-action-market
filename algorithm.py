@@ -79,10 +79,10 @@ class Algorithm:
         self.name = name
         self.debug = config.debug
 
-        log_folder = Path("logs")
-        log_folder.mkdir(parents=True, exist_ok=True)
+        self.log_folder = Path("logs")
+        self.log_folder.mkdir(parents=True, exist_ok=True)
 
-        filename = log_folder / f"{name}.log"
+        filename = self.log_folder / f"{name}.log"
 
         logging.basicConfig(
             level=logging.INFO,
@@ -98,6 +98,7 @@ class Algorithm:
         self.loss_plot = []
         self.loss_plot5 = []
         self.loss_plot6 = []
+        self.picked_over_time = []
 
         self.max_ratio = 0
 
@@ -157,6 +158,7 @@ class Algorithm:
     def evaluate_checkpoint(self, step):
         print("=====Eval at", step, "steps======")
         total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec = self.eval_network()
+        self.picked_over_time.append(per_agent)
         print("=====Completed Evaluation=====")
         return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
@@ -237,9 +239,9 @@ class Algorithm:
                 if (step % (self.train_config.timesteps * 0.2) == 0 and step != 0) and (step != self.train_config.timesteps - 1):
                     self.evaluate_checkpoint(step)
                     # self.evaluate_checkpoint(step)
-                    graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
+                    graph_plots(self.name, self.loss_plot, self.loss_plot5, self.loss_plot6)
             # Final evaluation
-            graph_plots(None, self.name, None, self.loss_plot, self.loss_plot5, self.loss_plot6, None)
+            graph_plots(self.name, self.loss_plot, self.loss_plot5, self.loss_plot6)
             return self._evaluate_final()
         except Exception as e:
             self.logger.error(f"Failed during training: {e}")
@@ -262,6 +264,11 @@ class Algorithm:
         self.logger.info(f"Total apples: {np.mean(mean_metrics['total'])}")
         self.logger.info(f"Total picked: {np.mean(mean_metrics['picked'])}")
         self.logger.info(f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}")
+
+        self.picked_over_time.append(mean_metrics["picked_per_agent"])
+
+        with open(self.log_folder / f"Res_{self.name}.txt", "w") as f:
+            f.write(",".join(map(str, self.picked_over_time)))
 
         return tuple(np.mean(val) for val in mean_metrics.values())
 

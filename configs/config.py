@@ -22,6 +22,7 @@ class TrainingConfig:
     vision: Optional[int] = None
     hidden_dimensions: Optional[int] = 128
     num_layers: int = 4
+    epsilon: float = 0.1
 
 
 @dataclass

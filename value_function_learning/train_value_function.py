@@ -30,13 +30,30 @@ class ValueFunction(Algorithm, ABC):
 
     def update_lr(self, step: int) -> None:
         """Update a learning rate based on training progress."""
-        for threshold, lr in self.train_config.lr_schedule.items():
-            if step == (threshold * self.train_config.timesteps):
-                try:
-                    self._update_network_lr(lr)
-                    self.logger.info(f"Learning rate updated to {lr}")
-                except Exception as e:
-                    self.logger.error(f"Failed to update learning rate: {e}")
+        # for threshold, lr in self.train_config.lr_schedule.items():
+        #     if step == (threshold * self.train_config.timesteps):
+        #         try:
+        #             self._update_network_lr(lr)
+        #             self.logger.info(f"Learning rate updated to {lr}")
+        #         except Exception as e:
+        #             self.logger.error(f"Failed to update learning rate: {e}")
+
+    def agent_get_action(self, agent_id: int) -> int:
+        if self.agents_list[agent_id].policy == "value_function":
+            if random.random() < self.train_config.epsilon:
+                action = random_policy(self.env.available_actions)
+            else:
+                with torch.no_grad():
+                    action = self.agent_controller.get_best_action(self.env.get_state(),
+                                                                   agent_id,
+                                                                   self.env.available_actions)
+        elif self.agents_list[agent_id].policy is random_policy:
+            action = self.agents_list[agent_id].policy(
+                self.env.available_actions)
+        else:
+            action = self.agents_list[agent_id].policy(
+                self.env.get_state(), self.agents_list[agent_id].position)
+        return action
 
 
 class CentralizedValueFunction(ValueFunction):
@@ -69,19 +86,6 @@ class CentralizedValueFunction(ValueFunction):
         torch.save(self.network_for_eval[0].function.state_dict(),
                    path + "/" + self.name + "_cen_" + ".pt")
         print("saved_network", time.time())
-
-    def agent_get_action(self, agent_id: int) -> int:
-        if self.agents_list[agent_id].policy == "value_function":
-            action = self.agent_controller.get_best_action(self.env.get_state(),
-                                                           agent_id,
-                                                           self.env.available_actions)
-        elif self.agents_list[agent_id].policy is random_policy:
-            action = self.agents_list[agent_id].policy(
-                self.env.available_actions)
-        else:
-            action = self.agents_list[agent_id].policy(
-                self.env.get_state(), self.agents_list[agent_id].position)
-        return action
 
     def _update_network_lr(self, lr: float) -> None:
         """Update learning rate for centralized network."""
@@ -132,19 +136,6 @@ class DecentralizedValueFunction(ValueFunction):
         super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
 
         self.network_list = []
-
-    def agent_get_action(self, agent_id: int) -> int:
-        if self.agents_list[agent_id].policy == "value_function":
-            action = self.agent_controller.get_best_action(self.env.get_state(),
-                                                           agent_id,
-                                                           self.env.available_actions)
-        elif self.agents_list[agent_id].policy is random_policy:
-            action = self.agents_list[agent_id].policy(
-                self.env.available_actions)
-        else:
-            action = self.agents_list[agent_id].policy(
-                self.env.get_state(), self.agents_list[agent_id].position)
-        return action
 
     def _format_env_step_return(self, state: dict, new_state: dict,
                                 reward: float, agent_id: int,
@@ -208,7 +199,7 @@ class DecentralizedValueFunction(ValueFunction):
 
             # Initialize networks and agents
             for _ in range(self.train_config.num_agents):
-                agent = CommAgent(policy=random_policy)
+                agent = CommAgent(policy="value_function")
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
                         network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
