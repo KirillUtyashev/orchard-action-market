@@ -33,7 +33,7 @@ colours = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
 graph = 0
 
 
-def graph_plots(dictn, name, plot, loss_plot, loss_plot1, loss_plot2, ratio_plot):
+def graph_plots(name, loss_plot, loss_plot1, loss_plot2):
     global graph
     graph += 1
     graph_folder = Path("graphs")

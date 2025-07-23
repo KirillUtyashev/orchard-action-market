@@ -6,7 +6,7 @@ from agents.simple_agent import SimpleAgent
 from orchard.algorithms import spawn_apple, despawn_apple
 from policies.random_policy import random_policy
 import numpy as np
-
+from plots import graph_plots
 
 class TestOrchard:
     def setup_orchard(self, width):
@@ -126,6 +126,18 @@ class TestViewController:
         result = view_controller.process_state(orchard.get_state(), agents_list[1].position)
         expected = np.array([1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]).reshape(-1, 1)
         assert np.array_equal(result, expected)
+
+
+class TestGraphPlots:
+    def test_no_erros(self):
+        plot1 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        plot2 = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        plot3 = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+        eval_x = [0, 10000, 100000, 500000, 1000000]
+        eval_y = [0, 100, 200, 300, 310]
+
+        graph_plots("Test", plot1, plot2, plot3, eval_x, eval_y)
 
 
 if __name__ == '__main__':

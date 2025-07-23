@@ -4,31 +4,7 @@ import numpy as np
 import re
 from pathlib import Path
 
-
-def plot_connected(x, y, label, label_, **plot_kwargs):
-    valid = ~np.isnan(y)
-    idx = np.where(valid)[0]
-
-    # Draw only the line segments (no label here)
-    for i, j in zip(idx, idx[1:]):
-        plt.plot(
-            x[[i, j]],
-            y[[i, j]],
-            linestyle=plot_kwargs.get("linestyle", "-"),
-            color=plot_kwargs.get("color", None),
-            marker="",      # no marker on the segments
-            # note: no label
-        )
-
-    # Draw the markers once, with the label
-    plt.scatter(
-        x[valid],
-        y[valid],
-        label=label,
-        marker=plot_kwargs.get("marker", "o"),
-        color=plot_kwargs.get("color", None),
-    )
-    plt.xlabel(label_)
+COLOURS = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
 
 
 def interpolate_nans(x, y):
@@ -69,6 +45,21 @@ def plot_apple_picking(widths, series_dict, title, label_x, label_y):
     plt.title(title)
     plt.legend()
     plt.xticks(widths)
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_series(changing_param, series_dict, title, label_x, label_y):
+    plt.figure()
+    for label, series in series_dict.items():
+        for i in range(len(series)):
+            y_interp = interpolate_nans(changing_param, series[i])
+            plt.plot(changing_param, y_interp, marker='o', label=label + f"({changing_param[i]})")
+    plt.xlabel(label_x)
+    plt.ylabel(label_y)
+    plt.title(title)
+    plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.show()
@@ -148,6 +139,34 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
     return None  # if no file matched
 
 
+def parse_txt_metrics(architecture: str, num_agents: int, length: int, width: int, hidden_dimensions: int, dimensions: int) -> list | None:
+    log_dir = Path("train_scripts/logs")
+
+    if architecture == "Centralized":
+        pattern = (
+            f"Centralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
+            f"-apple_mean_lifetime-<.*?>-<.*?>"
+            f"-discount-<.*?>-hidden_dimensions-<{hidden_dimensions}>-dimensions-<{dimensions}>.txt"
+        )
+    elif architecture == "Decentralized":
+        pattern = (
+            f"Decentralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
+            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>.txt"
+        )
+    else:
+        pattern = (
+            f"Decentralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
+            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<5>.txt"
+        )
+
+    for txt_file in log_dir.glob("*.txt"):
+        if re.fullmatch(pattern, txt_file.name):
+            with open(txt_file, "r") as f:
+                values = list(map(int, f.read().split(",")))
+            return values
+    return None
+
+
 def sweep_logs(base_config: dict, sweep_params: dict):
     """
     Sweeps over experiment configs and returns separate metric lists per architecture.
@@ -176,7 +195,8 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "total_apples": [],
             "last_ratios": [],
             "total_picked": [],
-            "picked_per_agent": []
+            "picked_per_agent": [],
+            "picked_over_time": []
         },
         "decentralized": {
             "sweep_values": [],
@@ -184,7 +204,8 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "total_apples": [],
             "last_ratios": [],
             "total_picked": [],
-            "picked_per_agent": []
+            "picked_per_agent": [],
+            "picked_over_time": []
         },
         "decentralized local": {
             "sweep_values": [],
@@ -192,7 +213,8 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "total_apples": [],
             "last_ratios": [],
             "total_picked": [],
-            "picked_per_agent": []
+            "picked_per_agent": [],
+            "picked_over_time": []
         }
     }
 
@@ -222,6 +244,16 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             results[arch_key]["picked_per_agent"].append(result[3] if result else None)
             results[arch_key]["total_picked"].append(result[4] if result else None)
 
+            pick_series = parse_txt_metrics(
+                architecture=arch,
+                num_agents=config["num_agents"],
+                length=config["length"],
+                width=config["width"],
+                hidden_dimensions=config["hidden_dimensions"],
+                dimensions=config["dimensions"]
+            )
+            results[arch_key]["picked_over_time"].append(pick_series if pick_series else None)
+
     return results
 
 
@@ -249,6 +281,7 @@ def run(base_config: dict, sweep_params: dict):
     mean_distances = init_dicts()
     total_picked = init_dicts()
     picked_per_agents = init_dicts()
+    picked_series = init_dicts()
 
     # first, get the results for random
     if "width" not in sweep_params or "dimensions" in sweep_params:
@@ -275,6 +308,10 @@ def run(base_config: dict, sweep_params: dict):
     picked_per_agents["Centralized"].extend(result["centralized"]["picked_per_agent"])
     picked_per_agents["Decentralized"].extend(result["decentralized"]["picked_per_agent"])
     picked_per_agents["Decentralized (local view = 5)"].extend(result["decentralized local"]["picked_per_agent"])
+    picked_series["Centralized"].extend(result["centralized"]["picked_over_time"])
+    picked_series["Decentralized"].extend(result["decentralized"]["picked_over_time"])
+    picked_series["Decentralized (local view = 5)"].extend(result["decentralized local"]["picked_over_time"])
+
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], ratios,
                        'Ratio of Apples Picked Per Agent',
                        "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Ratio')
@@ -286,6 +323,7 @@ def run(base_config: dict, sweep_params: dict):
                        "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], picked_per_agents, 'Total Apples Picked Per Agent',
                        "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
+    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], picked_series, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
 
 
 if __name__ == '__main__':
