@@ -162,7 +162,7 @@ def parse_txt_metrics(architecture: str, num_agents: int, length: int, width: in
     for txt_file in log_dir.glob("*.txt"):
         if re.fullmatch(pattern, txt_file.name):
             with open(txt_file, "r") as f:
-                values = list(map(int, f.read().split(",")))
+                values = list(map(int, f.read().split("\n")))
             return values
     return None
 

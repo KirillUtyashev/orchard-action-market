@@ -79,10 +79,10 @@ class Algorithm:
         self.name = name
         self.debug = config.debug
 
-        self.log_folder = Path("logs")
-        self.log_folder.mkdir(parents=True, exist_ok=True)
+        log_folder = Path("logs")
+        log_folder.mkdir(parents=True, exist_ok=True)
 
-        filename = self.log_folder / f"{name}.log"
+        filename = log_folder / f"{name}.log"
 
         logging.basicConfig(
             level=logging.INFO,
@@ -93,6 +93,10 @@ class Algorithm:
         )
 
         self.logger = logging.getLogger(self.name)
+
+        filename_txt = log_folder / f"{name}.txt"
+        self.res_txt = open(filename_txt, "a")
+
         self.agents_list = []
 
         self.loss_plot = []
@@ -158,7 +162,7 @@ class Algorithm:
     def evaluate_checkpoint(self, step):
         print("=====Eval at", step, "steps======")
         total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec = self.eval_network()
-        self.picked_over_time.append(per_agent)
+        self.res_txt.write(str(picked_per_agent) + "\n")
         print("=====Completed Evaluation=====")
         return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
