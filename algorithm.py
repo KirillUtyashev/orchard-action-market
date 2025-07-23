@@ -94,15 +94,11 @@ class Algorithm:
 
         self.logger = logging.getLogger(self.name)
 
-        filename_txt = log_folder / f"{name}.txt"
-        self.res_txt = open(filename_txt, "a")
-
         self.agents_list = []
 
         self.loss_plot = []
         self.loss_plot5 = []
         self.loss_plot6 = []
-        self.picked_over_time = []
 
         self.max_ratio = 0
 
@@ -162,7 +158,6 @@ class Algorithm:
     def evaluate_checkpoint(self, step):
         print("=====Eval at", step, "steps======")
         total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec = self.eval_network()
-        self.res_txt.write(str(picked_per_agent) + "\n")
         print("=====Completed Evaluation=====")
         return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
@@ -180,7 +175,7 @@ class Algorithm:
             print("new_path")
             os.makedirs(path)
         self.save_networks(path)
-        self.logger.info(f"Ratio picked: {per_agent}")
+        self.logger.info(f"Picked per agents: {picked_per_agent}")
         return total_apples, total_picked, picked_per_agent, per_agent, average_distance, apple_per_sec
 
     def env_step(self, timestep, tick):
@@ -268,11 +263,6 @@ class Algorithm:
         self.logger.info(f"Total apples: {np.mean(mean_metrics['total'])}")
         self.logger.info(f"Total picked: {np.mean(mean_metrics['picked'])}")
         self.logger.info(f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}")
-
-        self.picked_over_time.append(mean_metrics["picked_per_agent"])
-
-        with open(self.log_folder / f"Res_{self.name}.txt", "w") as f:
-            f.write(",".join(map(str, self.picked_over_time)))
 
         return tuple(np.mean(val) for val in mean_metrics.values())
 
