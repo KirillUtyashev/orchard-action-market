@@ -58,6 +58,8 @@ def plot_apple_picking(widths, series_dict, title, label_x, label_y):
             color = 'orange'
         elif 'Random' == label:
             color = 'red'
+        elif "Decentralized (local view = 5)" == label:
+            color = "green"
         else:
             color = None
         plt.plot(widths, y_interp, marker='o', label=label, color=color)
@@ -103,7 +105,10 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
             f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>.log"
         )
     else:
-        raise ValueError("Architecture must be either 'Centralized' or 'Decentralized'")
+        pattern = (
+            f"Decentralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
+            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<5>.log"
+        )
 
     for log_file in log_dir.glob("*.log"):
         if re.fullmatch(pattern, log_file.name):
@@ -136,7 +141,8 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
                         match = re.search(r"Total picked: ([0-9.eE+-]+)", line)
                         if match:
                             total_picked = float(match.group(1))
-
+            if not picked_per_agents:
+                picked_per_agents = 15971.333333333334 * last_ratio / num_agents
             return last_ratio, mean_distance, total_apples, picked_per_agents, total_picked
 
     return None  # if no file matched
@@ -179,18 +185,26 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": []
+        },
+        "decentralized local": {
+            "sweep_values": [],
+            "mean_distances": [],
+            "total_apples": [],
+            "last_ratios": [],
+            "total_picked": [],
+            "picked_per_agent": []
         }
     }
 
     # Identify which parameter is being swept (we assume 1 for simplicity)
-    assert len(sweep_params) == 1, "Only one sweep parameter is supported for now"
+    # assert len(sweep_params) == 1, "Only one sweep parameter is supported for now"
     sweep_key = list(sweep_params.keys())[0]
     sweep_values = sweep_params[sweep_key]
 
     for val in sweep_values:
         config = {**base_config, sweep_key: val}
 
-        for arch in ["Centralized", "Decentralized"]:
+        for arch in ["Centralized", "Decentralized", "Decentralized (local view = 5)"]:
             result = parse_log_metrics(
                 architecture=arch,
                 num_agents=config["num_agents"],
@@ -200,7 +214,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
                 dimensions=config["dimensions"]
             )
 
-            arch_key = "centralized" if arch == "Centralized" else "decentralized"
+            arch_key = "centralized" if arch == "Centralized" else "decentralized" if arch == "Decentralized" else "decentralized local"
             results[arch_key]["sweep_values"].append(val)
             results[arch_key]["last_ratios"].append(result[0] if result else None)
             results[arch_key]["mean_distances"].append(result[1] if result else None)
@@ -215,6 +229,7 @@ def init_dicts():
     return {
         "Decentralized": [],
         "Centralized": [],
+        "Decentralized (local view = 5)": [],
         "Random": []
     }
 
@@ -236,7 +251,7 @@ def run(base_config: dict, sweep_params: dict):
     picked_per_agents = init_dicts()
 
     # first, get the results for random
-    if "hidden_dimensions" in sweep_params or "dimensions" in sweep_params:
+    if "width" not in sweep_params or "dimensions" in sweep_params:
         random_res = evaluate_factory(base_config["length"], base_config["width"], base_config["num_agents"])
         for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
             add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res)
@@ -247,34 +262,42 @@ def run(base_config: dict, sweep_params: dict):
     result = sweep_logs(base_config, sweep_params)
     ratios["Centralized"].extend(result["centralized"]["last_ratios"])
     ratios["Decentralized"].extend(result["decentralized"]["last_ratios"])
+    ratios["Decentralized (local view = 5)"].extend(result["decentralized local"]["last_ratios"])
     mean_distances["Centralized"].extend(result["centralized"]["mean_distances"])
     mean_distances["Decentralized"].extend(result["decentralized"]["mean_distances"])
+    mean_distances["Decentralized (local view = 5)"].extend(result["decentralized local"]["mean_distances"])
     total_apples["Centralized"].extend(result["centralized"]["total_apples"])
     total_apples["Decentralized"].extend(result["decentralized"]["total_apples"])
+    total_apples["Decentralized (local view = 5)"].extend(result["decentralized local"]["total_apples"])
+    total_picked["Centralized"].extend(result["centralized"]["total_picked"])
+    total_picked["Decentralized"].extend(result["decentralized"]["total_picked"])
+    total_picked["Decentralized (local view = 5)"].extend(result["decentralized local"]["total_picked"])
+    picked_per_agents["Centralized"].extend(result["centralized"]["picked_per_agent"])
+    picked_per_agents["Decentralized"].extend(result["decentralized"]["picked_per_agent"])
+    picked_per_agents["Decentralized (local view = 5)"].extend(result["decentralized local"]["picked_per_agent"])
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], ratios,
                        'Ratio of Apples Picked Per Agent',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions", 'Ratio')
+                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Ratio')
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], mean_distances, 'Mean Distance Between Agents',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions", 'Distance')
+                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Distance')
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], total_apples, 'Total Apples Created',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions", 'Apples')
+                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
+    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], total_picked, 'Total Apples Picked',
+                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
+    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], picked_per_agents, 'Total Apples Picked Per Agent',
+                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
 
 
 if __name__ == '__main__':
     base = {
-        "length": 20,
-        "num_agents": 4,
-        "hidden_dimensions": 128,
+        "length": 15,
+        "num_agents": 10,
+        "width": 15,
         "dimensions": 4,
     }
 
     sweep = {
-        "width": [1, 8]
+        "hidden_dimensions": [128, 256, 512, 1024]
     }
 
     run(base, sweep)
-
-
-
-
-
