@@ -118,7 +118,7 @@ class CentralizedValueFunction(ValueFunction):
                 network = VNetwork(self.env_config.vision, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions)
 
             for _ in range(self.train_config.num_agents):
-                agent = SimpleAgent(policy=random_policy)
+                agent = SimpleAgent(policy="value_function")
                 agent.policy_value = network
                 self.agents_list.append(agent)
             self.network_for_eval = [network]
