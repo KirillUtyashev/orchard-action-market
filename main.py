@@ -15,11 +15,14 @@ from value_function_learning.controllers import AgentControllerCentralized, \
 same_actions = 0
 
 
-def step(agents_list, environment: Orchard, agent_controller):
+def step(agents_list, environment: Orchard, agent_controller, epsilon):
     agent = random.randint(0, environment.n - 1)
     state = environment.get_state()
     if agents_list[agent].policy == "value_function":
-        action = agent_controller.get_best_action(state, agent, environment.available_actions)
+        if random.random() < epsilon:
+            action = random_policy(environment.available_actions)
+        else:
+            action = agent_controller.get_best_action(state, agent, environment.available_actions)
     elif agents_list[agent].policy is random_policy:
         action = agents_list[agent].policy(environment.available_actions)
     else:
@@ -80,7 +83,7 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
     return reward
 
 
-def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35):
+def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
     metrics = []
     agent_metrics = []
     apple_metrics = []
@@ -122,7 +125,7 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
         apples_dropped.append(after - before)
         apples_per_second = 0
         for tick in range(num_agents):
-            agent, i_reward = step(agents_list, env, agent_controller)
+            agent, i_reward = step(agents_list, env, agent_controller, epsilon)
             reward += i_reward
             apples_per_second += i_reward
             if tick == num_agents - 1:
