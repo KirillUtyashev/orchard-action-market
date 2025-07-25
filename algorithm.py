@@ -238,7 +238,7 @@ class Algorithm:
                 self.update_lr(step)
 
                 # Periodic evaluation
-                if (step % (self.train_config.timesteps * 0.2) == 0 and step != 0) and (step != self.train_config.timesteps - 1):
+                if (step % (self.train_config.timesteps * 0.1) == 0) and (step != self.train_config.timesteps - 1):
                     self.evaluate_checkpoint(step)
                     # self.evaluate_checkpoint(step)
                     graph_plots(self.name, self.loss_plot, self.loss_plot5, self.loss_plot6)
