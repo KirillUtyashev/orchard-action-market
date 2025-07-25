@@ -42,6 +42,8 @@ class ValueFunction(Algorithm, ABC):
         if self.agents_list[agent_id].policy == "value_function":
             if random.random() < self.train_config.epsilon:
                 action = random_policy(self.env.available_actions)
+                if self.train_config.test:
+                    self.count_random_actions += 1
             else:
                 with torch.no_grad():
                     action = self.agent_controller.get_best_action(self.env.get_state(),
@@ -133,7 +135,7 @@ class DecentralizedValueFunction(ValueFunction):
     """Decentralized implementation of a value function."""
     def __init__(self, config: ExperimentConfig):
         """Initialize the value function algorithm."""
-        super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
+        super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.train_config.alpha}>-alpha-<{config.env_config.s_target}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
 
         self.network_list = []
 
