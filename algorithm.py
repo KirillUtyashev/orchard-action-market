@@ -107,6 +107,9 @@ class Algorithm:
         self.view_controller = None
         self.agent_controller = None
 
+        if self.train_config.test:
+            self.count_random_actions = 0
+
     def create_env(self):
         self.env = Orchard(self.env_config.length, self.env_config.width, self.train_config.num_agents, self.agents_list, spawn_algo=self.env_config.spawn_algo, despawn_algo=self.env_config.despawn_algo, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
         self.env.initialize(self.agents_list)
