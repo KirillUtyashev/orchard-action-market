@@ -139,15 +139,15 @@ class Algorithm:
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state, sample_state["poses"][i]))
-        v_value = self.agent_controller.get_collective_value(agent_obs)
+        v_value = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state5, sample_state5["poses"][i]))
-        v_value5 = self.agent_controller.get_collective_value(agent_obs)
+        v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state6, sample_state6["poses"][i]))
-        v_value6 = self.agent_controller.get_collective_value(agent_obs)
+        v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
         print("P", v_value)
         self.loss_plot.append(v_value.item())
