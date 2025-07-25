@@ -25,7 +25,7 @@ class AgentController:
                 else:
                     positions.append(new_pos)
             observations = self.get_all_agent_obs({"agents": new_a, "apples": new_b}, positions)
-            val += get_config()["discount"] * self.get_collective_value(observations)
+            val += get_config()["discount"] * self.get_collective_value(observations, agent_id)
             if val > best_val:
                 action = act
                 best_val = val
@@ -41,7 +41,7 @@ class AgentController:
         return obs
 
     @abstractmethod
-    def get_collective_value(self, states):
+    def get_collective_value(self, states, agent_id):
         raise NotImplementedError
 
 
@@ -49,7 +49,7 @@ class AgentControllerDecentralized(AgentController):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)
 
-    def get_collective_value(self, states):
+    def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             sum_ += agent.get_value_function(states[num])
@@ -60,8 +60,8 @@ class AgentControllerCentralized(AgentController):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)
 
-    def get_collective_value(self, states):
-        return self.agents_list[0].get_value_function(states[0])
+    def get_collective_value(self, states, agent_id):
+        return self.agents_list[0].get_value_function(states[agent_id])
 
 
 class ViewController:
