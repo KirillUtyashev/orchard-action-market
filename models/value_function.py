@@ -27,12 +27,17 @@ class VNetwork:
         self.batch_new_states = []
         self.batch_rewards = []
 
+        self._input_dim = input_dim * 2
+
     def get_value_function(self, x):
         res = ten(x, DEVICE)
         res = res.view(1, -1)
         with torch.no_grad():
             val = self.function(res).cpu().numpy()
         return val
+
+    def get_input_dim(self):
+        return self._input_dim
 
     def get_value_function_v(self, As, Bs, poses):
         poses = poses[:, 0]

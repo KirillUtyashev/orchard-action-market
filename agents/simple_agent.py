@@ -13,7 +13,7 @@ class SimpleAgent(Agent):
         return self.get_value_function(agents)
 
     def get_value_function(self, state):
-        return self.policy_value.get_value_function(state[:len(state) - 2])
+        return self.policy_value.get_value_function(state[:self.policy_value.get_input_dim()])
 
     def get_value_for_agent(self, agents, apples, agents_list=None, hypothetical_pos=None):
         return self.evaluate_interface(agents, apples)
