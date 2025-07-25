@@ -73,8 +73,8 @@ class CentralizedValueFunction(ValueFunction):
     def _format_env_step_return(self, state: dict, new_state: dict,
                                 reward: float, agent_id: int,
                                 positions: np.ndarray, action: int,
-                                old_pos: np.ndarray) -> Tuple[dict, dict, float]:
-        return state, new_state, reward
+                                old_pos: np.ndarray) -> Tuple[dict, dict, float, int, np.array]:
+        return state, new_state, reward, agent_id, old_pos
 
     def init_agents_for_eval(self) -> List[SimpleAgent]:
         a_list = []
@@ -98,9 +98,9 @@ class CentralizedValueFunction(ValueFunction):
         """Collect observations with vectorized operations where possible."""
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r = self.env_step(step, tick)
-                processed_state = self.view_controller.process_state(s, None)
-                processed_new_state = self.view_controller.process_state(new_s, None)
+                s, new_s, r, agent_id, old_pos = self.env_step(step, tick)
+                processed_state = self.view_controller.process_state(s, old_pos)
+                processed_new_state = self.view_controller.process_state(new_s, self.agents_list[0].position)
                 self.agents_list[0].add_experience(processed_state, processed_new_state, r)
 
         except Exception as e:
@@ -117,7 +117,10 @@ class CentralizedValueFunction(ValueFunction):
             if not self.train_config.alt_input:
                 network = VNetwork(self.env_config.width * self.env_config.length, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
             else:
-                network = VNetwork(self.env_config.vision, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions)
+                if self.env_config.width != 1:
+                    network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                else:
+                    network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
 
             for _ in range(self.train_config.num_agents):
                 agent = SimpleAgent(policy="value_function")
