@@ -101,7 +101,7 @@ class CentralizedValueFunction(ValueFunction):
                 s, new_s, r, agent_id, old_pos = self.env_step(step, tick)
                 processed_state = self.view_controller.process_state(s, old_pos)
                 processed_new_state = self.view_controller.process_state(new_s, self.agents_list[0].position)
-                self.agents_list[0].add_experience(processed_state, processed_new_state, r)
+                self.agents_list[0].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], r)
 
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
