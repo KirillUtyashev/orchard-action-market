@@ -24,6 +24,7 @@ class TrainingConfig:
     num_layers: int = 4
     epsilon: float = 0.1
     test: bool = False
+    skip: bool = False
 
 
 @dataclass

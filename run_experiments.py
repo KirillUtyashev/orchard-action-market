@@ -27,6 +27,7 @@ def parse_args(args):
     parser.add_argument("--debug", type=bool, default=True, help="Debug.")
     parser.add_argument("--alt_vision", type=int, default=1, help="Alternative Vision.")
     parser.add_argument("--vision", type=int, default=None, help="Vision.")
+    parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
 
     return parser.parse_args(args)
 
@@ -49,7 +50,8 @@ def main(args):
         hidden_dimensions=args.hidden_dim,
         num_layers=args.num_layers,
         alt_input=True if args.alt_vision == 0 else False,
-        vision=args.vision
+        vision=args.vision,
+        skip=True if args.skip == 0 else False
     )
 
     exp_config = ExperimentConfig(
