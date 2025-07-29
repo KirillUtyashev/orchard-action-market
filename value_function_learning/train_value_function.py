@@ -1,10 +1,11 @@
+import os
 import random
 import time
 from abc import ABC, abstractmethod
 from typing import List, Optional, Tuple
 import torch
 import numpy as np
-
+from config import CHECKPOINT_DIR
 from configs.config import ExperimentConfig
 from .controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
@@ -122,6 +123,8 @@ class CentralizedValueFunction(ValueFunction):
                 else:
                     network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
 
+            if self.train_config.skip:
+                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, self.name) + "/" + self.name + "_cen_" + ".pt"))
             for _ in range(self.train_config.num_agents):
                 agent = SimpleAgent(policy="value_function")
                 agent.policy_value = network
@@ -203,7 +206,7 @@ class DecentralizedValueFunction(ValueFunction):
             self.agent_controller = AgentControllerDecentralized(self.agents_list, self.view_controller)
 
             # Initialize networks and agents
-            for _ in range(self.train_config.num_agents):
+            for nummer in range(self.train_config.num_agents):
                 agent = CommAgent(policy="value_function")
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
@@ -212,6 +215,8 @@ class DecentralizedValueFunction(ValueFunction):
                         network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 else:
                     network = VNetwork(self.env_config.length * self.env_config.width + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                if self.train_config.skip:
+                    network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, self.name) + "/" + self.name + "_decen_" + str(nummer) + ".pt"))
                 agent.policy_value = network
                 self.network_list.append(network)
                 self.agents_list.append(agent)
