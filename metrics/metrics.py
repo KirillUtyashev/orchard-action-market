@@ -96,6 +96,12 @@ def append_positional_metrics(agent_metrics, agents_list):
     return agent_metrics
 
 
+def append_y_coordinates(agent_y_coordinates, agents_list):
+    for i, metric in enumerate(agent_y_coordinates):
+        agent_y_coordinates[i].append(agents_list[i].position[0])
+
+    return agent_y_coordinates
+
 metric_titles = [
     "Average Apples Picked per Timestep",
     "Average Apples on Field",
@@ -123,7 +129,7 @@ def plot_metrics(metrics, name, experiment):
         plt.savefig(str(filename))
 
 
-def plot_agent_specific_metrics(agent_metrics, apples, experiment, name):
+def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector):
     """Plot per-agent x-coords and overlay apples as a scatter cloud.
 
     Parameters
@@ -146,10 +152,10 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name):
 
     # --- agents: keep as connected lines ------------------------------
     for i, series in enumerate(agent_metrics):
-        series1 = series[1:1000]        # or whatever window you like
+        series1 = series[1:2000]        # or whatever window you like
         plt.plot(series1, label=f"agent {i}")
 
-    check = apples[1:1000]
+    check = apples[1:2000]
 
     xs, ys = [], []
 
@@ -162,9 +168,12 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name):
     plt.scatter(xs, ys, c=ys, cmap='tab10', s=30, alpha=0.8, edgecolors='none')
 
     # -----------------------------------------------------------------
-    plt.title(f"Agent X-Axis Coordinates Under Policy {name}")
+    if vector == "x":
+        plt.title(f"Agent X-Axis Coordinates")
+    else:
+        plt.title(f"Agent Y-Axis Coordinates")
     plt.legend()
-    filename = graph_folder / f"graph_{name}_distances_{str(graph)}.png"
+    filename = graph_folder / f"graph_{name}_distances_{str(graph)}_{vector}.png"
     plt.tight_layout()
     plt.savefig(filename, dpi=150)
     plt.close()

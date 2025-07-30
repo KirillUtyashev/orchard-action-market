@@ -8,7 +8,8 @@ import random
 from policies.nearest_uniform import replace_agents_1d
 from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
-from metrics.metrics import append_metrics, append_positional_metrics, plot_agent_specific_metrics
+from metrics.metrics import append_metrics, append_positional_metrics, \
+    append_y_coordinates, plot_agent_specific_metrics
 from value_function_learning.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 
@@ -85,12 +86,12 @@ def run_environment_1d_acting_rate(num_agents, policy, side_length, S, phi, name
 
 def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
     metrics = []
-    agent_metrics = []
-    apple_metrics = []
+    agent_x_coordinates = [[] for _ in range(num_agents)]
+    agent_y_coordinates = [[] for _ in range(num_agents)]
+    apple_x_coordinates = []
+    apple_y_coordinates = []
     for j in range(5):
         metrics.append([])
-    for j in range(num_agents):
-        agent_metrics.append([])
     env = Orchard(side_length, width, num_agents, agents_list=agents_list, action_algo=action_algo, spawn_algo=spawn_algo, despawn_algo=despawn_algo, s_target=s_target, apple_mean_lifetime=apple_mean_lifetime)
     env.initialize(agents_list) #, agent_pos=[np.array([1, 0]), np.array([3, 0])]) #, agent_pos=[np.array([2, 0]), np.array([5, 0]), np.array([8, 0])])
     reward = 0
@@ -134,12 +135,17 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
                 # env.apples_despawned += env.despawn_algorithm(env, i)
                 # env.total_apples += env.spawn_algorithm(env, i)
             if name != "test" and experiment != "test":
-                agent_metrics = append_positional_metrics(agent_metrics, agents_list)
-                to_add = []
-                for j in range(env.apples.shape[1]):
-                    if env.apples[0, j] != 0:
-                        to_add.append(j)
-                apple_metrics.append(to_add)
+                agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
+                agent_y_coordinates = append_y_coordinates(agent_y_coordinates, agents_list)
+                to_add_x = []
+                to_add_y = []
+                for k in range(env.apples.shape[0]):
+                    for j in range(env.apples.shape[1]):
+                        if env.apples[k, j] != 0:
+                            to_add_x.append(j)
+                            to_add_y.append(k)
+                apple_x_coordinates.append(to_add_x)
+                apple_y_coordinates.append(to_add_y)
             apples_picked.append(apples_per_second)
         # Calculate mean nearest neighbor distance for this timestep
         timestep_distances = []
@@ -176,16 +182,16 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     print("Average Reward: ", reward / env.total_apples)
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
     if name != "test" and experiment != "test":
-        plot_agent_specific_metrics(agent_metrics, apple_metrics, experiment, name)
-        # plot_metrics(metrics, name, experiment)
+        plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, experiment, name, "x")
+        plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, experiment, name, "y")
 
     return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second)
 
 
-def all_three_1d(num_agents, length, S, phi, experiment, time=5000):
-    run_environment_1d(num_agents, nearest, length, S, phi, "Nearest", experiment, time)
-    run_environment_1d(num_agents, nearest, length, S, phi, "Nearest-Uniform", experiment, time, action_algo=replace_agents_1d)
-    run_environment_1d(num_agents, random_policy, length, S, phi, "Random", experiment, time)
+# def all_three_1d(num_agents, length, S, phi, experiment, time=5000):
+#     run_environment_1d(num_agents, nearest, length, S, phi, "Nearest", experiment, time)
+#     run_environment_1d(num_agents, nearest, length, S, phi, "Nearest-Uniform", experiment, time, action_algo=replace_agents_1d)
+#     run_environment_1d(num_agents, random_policy, length, S, phi, "Random", experiment, time)
 
 
 if __name__ == "__main__":
