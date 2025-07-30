@@ -165,7 +165,7 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector)
 
 
     # --- apples: unconnected scatter ---------------------------------
-    plt.scatter(xs, ys, c=ys, cmap='tab10', s=30, alpha=0.8, edgecolors='none')
+    plt.scatter(xs, ys, c=ys, cmap='tab10', s=30, alpha=0.1, edgecolors='none')
 
     # -----------------------------------------------------------------
     if vector == "x":
