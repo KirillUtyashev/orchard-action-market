@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+graph = 0
 
 def avg_apples_picked(state, total_reward, timestep):
     return total_reward / timestep
@@ -137,9 +137,11 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name):
     name : str
         Extra tag for the plot title and file name.
     """
+    global graph
+    graph += 1
     graph_folder = Path("graphs")
     graph_folder.mkdir(parents=True, exist_ok=True)
-    fig_id = f"{experiment}_{name}"
+    fig_id = f"{experiment}_{name}_{str(graph)}"
     plt.figure(fig_id, figsize=(6, 5))
 
     # --- agents: keep as connected lines ------------------------------
@@ -162,7 +164,7 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name):
     # -----------------------------------------------------------------
     plt.title(f"Agent X-Axis Coordinates Under Policy {name}")
     plt.legend()
-    filename = graph_folder / f"graph_{name}_{experiment}_distances.png"
+    filename = graph_folder / f"graph_{name}_distances_{str(graph)}.png"
     plt.tight_layout()
     plt.savefig(filename, dpi=150)
-    plt.close(fig_id)
+    plt.close()
