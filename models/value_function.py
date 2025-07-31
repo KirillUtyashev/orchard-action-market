@@ -94,7 +94,7 @@ class VNetwork:
             y = ten(np.array(self.batch_rewards), DEVICE) + self.discount * target.squeeze(1)
 
         # 3) Compute MSE loss & backpropagate
-        criterion = torch.nn.MSELoss()
+        criterion = torch.nn.MSELoss(reduction='mean')
         self.optimizer.zero_grad()
         loss = criterion(approx, y)
         loss.backward()
