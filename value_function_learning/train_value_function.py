@@ -39,25 +39,6 @@ class ValueFunction(Algorithm, ABC):
         #         except Exception as e:
         #             self.logger.error(f"Failed to update learning rate: {e}")
 
-    def agent_get_action(self, agent_id: int) -> int:
-        if self.agents_list[agent_id].policy == "value_function":
-            if random.random() < self.train_config.epsilon:
-                action = random_policy(self.env.available_actions)
-                if self.train_config.test:
-                    self.count_random_actions += 1
-            else:
-                with torch.no_grad():
-                    action = self.agent_controller.get_best_action(self.env.get_state(),
-                                                                   agent_id,
-                                                                   self.env.available_actions)
-        elif self.agents_list[agent_id].policy is random_policy:
-            action = self.agents_list[agent_id].policy(
-                self.env.available_actions)
-        else:
-            action = self.agents_list[agent_id].policy(
-                self.env.get_state(), self.agents_list[agent_id].position)
-        return action
-
 
 class CentralizedValueFunction(ValueFunction):
     """Centralized implementation of a value function."""
@@ -65,11 +46,8 @@ class CentralizedValueFunction(ValueFunction):
         """Initialize the value function algorithm."""
         super().__init__(config, f"Centralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.alpha}>-discount-<{config.train_config.discount}>-hidden_dimensions-<{config.train_config.hidden_dimensions}>-dimensions-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-epsilon-<{config.train_config.epsilon}>")
 
-    def update_actor(self, r_ratio=None) -> None:
-        pass
-
     def update_critic(self) -> None:
-        self.agents_list[0].policy_value.train()
+        return self.agents_list[0].policy_value.train()
 
     def _format_env_step_return(self, state: dict, new_state: dict,
                                 reward: float, agent_id: int,
@@ -80,7 +58,7 @@ class CentralizedValueFunction(ValueFunction):
     def init_agents_for_eval(self) -> List[SimpleAgent]:
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = SimpleAgent(policy="value_function")
+            trained_agent = SimpleAgent("value_function", ii)
             trained_agent.policy_value = self.network_for_eval[0]
             a_list.append(trained_agent)
         return a_list
@@ -99,11 +77,10 @@ class CentralizedValueFunction(ValueFunction):
         """Collect observations with vectorized operations where possible."""
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r, agent_id, old_pos = self.env_step(step, tick)
+                s, new_s, r, agent_id, old_pos = self.env_step(tick)
                 processed_state = self.view_controller.process_state(s, old_pos)
                 processed_new_state = self.view_controller.process_state(new_s, self.agents_list[0].position)
                 self.agents_list[0].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], r)
-
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise
@@ -125,8 +102,8 @@ class CentralizedValueFunction(ValueFunction):
 
             if self.train_config.skip:
                 network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, self.name) + "/" + self.name + "_cen_" + ".pt"))
-            for _ in range(self.train_config.num_agents):
-                agent = SimpleAgent(policy="value_function")
+            for num in range(self.train_config.num_agents):
+                agent = SimpleAgent("value_function", num)
                 agent.policy_value = network
                 self.agents_list.append(agent)
             self.network_for_eval = [network]
@@ -151,13 +128,10 @@ class DecentralizedValueFunction(ValueFunction):
                                 old_pos: np.ndarray) -> Tuple[dict, dict, float, np.ndarray, int]:
         return state, new_state, reward, old_pos, agent_id
 
-    def update_actor(self, t_ratio: Optional[float] = None) -> None:
-        return
-
     def init_agents_for_eval(self) -> List[CommAgent]:
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = CommAgent(policy="value_function")
+            trained_agent = CommAgent("value_function", ii)
             trained_agent.policy_value = self.network_list[ii]
             a_list.append(trained_agent)
         return a_list
@@ -169,8 +143,10 @@ class DecentralizedValueFunction(ValueFunction):
                            nummer) + ".pt")
 
     def update_critic(self):
+        losses = []
         for agent in self.agents_list:
-            agent.policy_value.train()
+            losses.append(agent.policy_value.train())
+        return losses[-1]
 
     def _update_network_lr(self, lr: float) -> None:
         """Update learning rate for all networks."""
@@ -182,7 +158,7 @@ class DecentralizedValueFunction(ValueFunction):
         """Collect observations for decentralized training."""
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r, old_pos, agent = self.env_step(step, tick)
+                s, new_s, r, old_pos, agent = self.env_step(tick)
 
                 for each_agent in range(len(self.agents_list)):
                     curr_pos = self.agents_list[each_agent].position
@@ -194,7 +170,6 @@ class DecentralizedValueFunction(ValueFunction):
 
                     self.agents_list[each_agent].add_experience(
                         processed_state, processed_new_state, reward)
-
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise
@@ -207,7 +182,7 @@ class DecentralizedValueFunction(ValueFunction):
 
             # Initialize networks and agents
             for nummer in range(self.train_config.num_agents):
-                agent = CommAgent(policy="value_function")
+                agent = CommAgent("value_function", nummer)
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
                         network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
