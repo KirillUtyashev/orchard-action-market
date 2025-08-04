@@ -42,6 +42,10 @@ class ValueFunction(Algorithm, ABC):
 
 class CentralizedValueFunction(ValueFunction):
     """Centralized implementation of a value function."""
+
+    def update_actor(self):
+        pass
+
     def __init__(self, config: ExperimentConfig):
         """Initialize the value function algorithm."""
         super().__init__(config, f"Centralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.alpha}>-discount-<{config.train_config.discount}>-hidden_dimensions-<{config.train_config.hidden_dimensions}>-dimensions-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-epsilon-<{config.train_config.epsilon}>")
@@ -116,9 +120,13 @@ class CentralizedValueFunction(ValueFunction):
 
 class DecentralizedValueFunction(ValueFunction):
     """Decentralized implementation of a value function."""
+
+    def update_actor(self):
+        pass
+
     def __init__(self, config: ExperimentConfig):
         """Initialize the value function algorithm."""
-        super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
+        super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{self.train_config.batch_size}>")
 
         self.network_list = []
 
@@ -224,7 +232,7 @@ def evaluate_policy(env_config,
     agents = [agent_factory(i) for i in range(num_agents)]
 
     # run the environment
-    total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec = \
+    total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
         run_environment_1d(
             num_agents,
             env_config.length,
@@ -252,7 +260,7 @@ def evaluate_policy(env_config,
 def make_baseline_factory(policy_name):
     """Returns an agent_factory for SimpleAgent(policy=policy_name)."""
     def factory(i):
-        return SimpleAgent(policy=policy_name)
+        return SimpleAgent(policy_name, i)
     return factory
 
 
