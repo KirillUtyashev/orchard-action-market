@@ -3,6 +3,8 @@ import sys
 import numpy as np
 import random
 import torch
+
+from actor_critic_kirill import ActorCritic
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
 from value_function_learning.train_value_function import (
     CentralizedValueFunction, DecentralizedValueFunction
@@ -53,7 +55,8 @@ def main(args):
         alt_input=True if args.alt_vision == 0 else False,
         vision=args.vision,
         skip=True if args.skip == 0 else False,
-        epsilon=args.epsilon
+        epsilon=args.epsilon,
+        seed=args.seed
     )
 
     exp_config = ExperimentConfig(
@@ -64,11 +67,13 @@ def main(args):
 
     if args.algorithm == "Centralized":
         algo = CentralizedValueFunction(exp_config)
-    else:
+    elif args.algorithm == "Decentralized":
         algo = DecentralizedValueFunction(exp_config)
-    np.random.seed(args.seed)
-    torch.manual_seed(1234)
-    random.seed(args.seed)
+    else:
+        algo = ActorCritic(exp_config)
+    np.random.seed(train_config.seed)
+    torch.manual_seed(train_config.seed)
+    random.seed(train_config.seed)
 
     algo.run()
 

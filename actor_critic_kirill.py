@@ -1,174 +1,139 @@
-import time
-
+from abc import ABC
 import torch
 from matplotlib import pyplot as plt
 from agents.actor_critic_agent import ACAgent, ACAgentBeta, ACAgentRates
 from algorithm import Algorithm
 from config import get_config
+from configs.config import ExperimentConfig
 from models.actor_dc_1d import ActorNetwork, ActorNetworkCounterfactual, \
     ActorNetworkWithBeta, ActorNetworkWithRates
 from models.value_function import VNetwork
 import numpy as np
-import random
-from helpers import env_step, get_discounted_value
+from helpers import get_discounted_value
 from alloc.allocation import find_allocs, rate_allocate
-from value_function_learning.train_value_function import DecentralizedValueFunction
+from value_function_learning.controllers import AgentControllerActorCritic, \
+    ViewController
 
 
-class ActorCritic(Algorithm):
-    def __init__(self, batch_size, alpha):
-        super().__init__(batch_size, alpha, "AC-VALUE")
+class ActorCritic(Algorithm, ABC):
+    def __init__(self, config: ExperimentConfig):
+        super().__init__(config, f"ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
         self.p_network_list = []
         self.v_network_list = []
-        self.actor_loss_history = []
-        self.critic_loss_history = []
-        self.adv_loss_history = []
 
-    def update_actor(self, t_ratio=None):
-        res_2 = []
-        res_3 = []
+        self.prob_sample_action_0 = []
+        self.prob_sample_action_1 = []
+        self.prob_sample_action_2 = []
+
+    def _format_env_step_return(self, state, new_state, reward, agent_id, positions, action, old_pos):
+        return state, new_state, reward, agent_id, positions, action
+
+    def init_agents_for_eval(self):
+        a_list = []
+        for ii in range(len(self.agents_list)):
+            trained_agent = ACAgent("learned_policy", ii)
+            trained_agent.policy_network = self.p_network_list[ii]
+            a_list.append(trained_agent)
+        return a_list
+
+    def save_networks(self, path):
+        for nummer, netwk in enumerate(self.p_network_list):
+            torch.save(netwk.function.state_dict(),
+                       path + "/" + self.name + "_actor_network_AC_" + str(
+                           nummer) + ".pt")
+        for nummer, netwk in enumerate(self.v_network_list):
+            torch.save(netwk.function.state_dict(),
+                       path + "/" + self.name + "_critic_network_AC_" + str(
+                           nummer) + ".pt")
+
+    def update_actor(self):
         for agent in self.agents_list:
-            res = agent.policy_network.train()
-            if res is not None:
-                loss, adv_value = res
-                res_2.append(loss)
-                res_3.append(adv_value)
-        if len(res_2) > 0 and len(res_3) > 0:
-            self.actor_loss_history.append(res_2[0])
-            self.adv_loss_history.append(res_3[0])
+            agent.policy_network.train()
+
+        # res_2 = []
+        # res_3 = []
+        # for agent in self.agents_list:
+        #     res = agent.policy_network.train()
+        #     if res is not None:
+        #         loss, adv_value = res
+        #         res_2.append(loss)
+        #         res_3.append(adv_value)
+        # if len(res_2) > 0 and len(res_3) > 0:
+        #     self.actor_loss_history.append(res_2[0])
+        #     self.adv_loss_history.append(res_3[0])
 
     def update_critic(self):
-        res = []
+        losses = []
         for agent in self.agents_list:
-            res.append(agent.policy_value.train())
-        self.critic_loss_history.append(res[0])
+            losses.append(agent.policy_value.train())
+        return losses[-1]
 
-    def plot(self):
-        plt.figure()
-        plt.plot(self.actor_loss_history)
-        plt.xlabel("Training Step")
-        plt.ylabel("Actor Loss")
-        plt.title("Training Loss over Time")
-        plt.show()
-        plt.figure()
-        plt.plot(self.critic_loss_history)
-        plt.xlabel("Training Step")
-        plt.ylabel("Critic Loss")
-        plt.title("Training Loss over Time")
-        plt.show()
-        plt.figure()
-        plt.plot(self.adv_loss_history)
-        plt.xlabel("Training Step")
-        plt.ylabel("Advantage Loss")
-        plt.title("Training Loss over Time")
-        plt.show()
+    def collect_observation(self, step):
+        try:
+            for tick in range(self.train_config.num_agents):
+                s, new_s, r, agent, positions, action = self.env_step(tick)
+                if action is not None:
+                    for each_agent in range(len(self.agents_list)):
+                        curr_pos = self.agents_list[each_agent].position
+                        reward = r if each_agent == agent else 0
+                        processed_state = self.view_controller.process_state(s, positions[each_agent])
+                        processed_new_state = self.view_controller.process_state(new_s, curr_pos)
+                        self.agents_list[each_agent].add_experience(
+                            processed_state, processed_new_state, reward)
+                        if each_agent == agent:
+                            new_positions = []
+                            for j in range(len(self.agents_list)):
+                                new_positions.append(self.agents_list[j].position)
+                            advantage = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions) - self.agent_controller.collective_value_from_state(s, positions)
+                            self.agents_list[each_agent].add_experience(s, new_s, r, action, advantage)
 
-    def collect_observation(self, step, timesteps):
-        s, new_s, r, agent, positions, action = env_step(self.agents_list, self.env, step, timesteps, "AC")
-        if action is not None:
-            for each_agent in range(len(self.agents_list)):
-                if each_agent == agent:
-                    self.agents_list[each_agent].policy_value.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r)
-                    new_positions = []
-                    for j in range(len(self.agents_list)):
-                        new_positions.append(self.agents_list[j].position)
-                    self.agents_list[each_agent].policy_network.add_experience(s, positions[each_agent], new_s, self.agents_list[each_agent].position, r, action, positions, new_positions, agent)
-                else:
-                    self.agents_list[each_agent].policy_value.add_experience(s, self.agents_list[each_agent].position, new_s, self.agents_list[each_agent].position, 0)
-        return new_s, agent, r, action
+        except Exception as e:
+            self.logger.error(f"Error collecting observations: {e}")
+            raise
 
-    def update_lr(self, i, timesteps):
-        if i == 50000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.001
-        if i == 100000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0005
-        # was: 500000
-        if i == 200000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
-        # was: 700000
-        if i == 300000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
-        if i == 740000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
-        if i == 860000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00002
-        if i == 1000000:
-            for network in self.p_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
-        """
-        Critic LR
-        """
-        if i == 50000:
-            for network in self.v_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
-        if i == 150000:
-            for network in self.v_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
-        if i == 250000:
-            for network in self.v_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
-        if i == 400000:
-            for network in self.v_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.000005
-        if i == 600000:
-            for network in self.v_network_list:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.000002
+    def update_lr(self, i):
+        pass
 
     def log_progress(self, sample_state, sample_state5, sample_state6):
         super(ActorCritic, self).log_progress(sample_state, sample_state5, sample_state6)
-        prob_value1 = self.agents_list[0].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["poses"][0])
-        prob_value2 = self.agents_list[1].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["poses"][0])
-        print(prob_value1)
-        print(prob_value2)
 
-    def train_batch(self, t_ratio=None):
-        self.update_actor(t_ratio)
+        observation = self.view_controller.process_state(sample_state, sample_state["poses"][0])
+        res = self.agents_list[0].policy_network.get_function_output(observation)
+
+        self.prob_sample_action_0.append(res[0].item())
+        self.prob_sample_action_1.append(res[1].item())
+        self.prob_sample_action_2.append(res[2].item())
+
+        print(res[0].item())
+        print(res[1].item())
+
+    def train_batch(self):
+        self.update_actor()
         self.update_critic()
 
-    def evaluate_checkpoint(self, step, timesteps, maxi):
-        super().evaluate_checkpoint(step, timesteps, maxi)
-        self.plot()
-
-    def run(self, timesteps):
-        for i in range(get_config()["num_agents"]):
-            agent = ACAgent("learned_policy")
-            agent.policy_network = ActorNetwork(get_config()["orchard_length"] + 1, self.agents_list, self.alpha, get_config()["discount"])
-            agent.policy_value = VNetwork(get_config()["orchard_length"] + 1, 0.0005, get_config()["discount"])
-            self.agents_list.append(agent)
-            self.v_network_list.append(agent.policy_value)
-            self.p_network_list.append(agent.policy_network)
-        self.network_for_eval = self.p_network_list
-        self.train(timesteps)
-        plt.figure()
-        plt.plot(self.actor_loss_history)
-        plt.xlabel("Training Step")
-        plt.ylabel("Actor Loss")
-        plt.title("Training Loss over Time")
-        plt.show()
-        plt.figure()
-        plt.plot(self.critic_loss_history)
-        plt.xlabel("Training Step")
-        plt.ylabel("Critic Loss")
-        plt.title("Training Loss over Time")
-        plt.show()
+    def run(self):
+        try:
+            self.view_controller = ViewController(self.train_config.vision)
+            self.agent_controller = AgentControllerActorCritic(self.agents_list, self.view_controller)
+            for nummer in range(self.train_config.num_agents):
+                agent = ACAgent("learned_policy", nummer)
+                if self.train_config.alt_input:
+                    if self.env_config.width != 1:
+                        input_dim = self.train_config.vision ** 2 + 1
+                    else:
+                        input_dim = self.train_config.vision + 1
+                else:
+                    input_dim = self.env_config.length * self.env_config.width + 1
+                agent.policy_network = ActorNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                self.agents_list.append(agent)
+                self.v_network_list.append(agent.policy_value)
+                self.p_network_list.append(agent.policy_network)
+            self.network_for_eval = self.p_network_list
+            self.train()
+        except Exception as e:
+            self.logger.error(f"Failed to run decentralized training: {e}")
+            raise
 
 
 class ActorCriticBeta(ActorCritic):

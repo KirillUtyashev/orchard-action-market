@@ -6,15 +6,6 @@ from helpers import convert_position, ten, unwrap_state
 from config import DEVICE
 torch.set_default_dtype(torch.float64)
 
-action_vectors = [
-    np.array([-1, 0]),
-    np.array([1, 0]),
-    np.array([0, 1]),
-    np.array([0, -1]),
-    np.array([0, 0])
-]
-
-
 class VNetwork:
     def __init__(self, input_dim, alpha, discount, hidden_dim=128, num_layers=4):
         self.function = MainNet(input_dim, 1, hidden_dim, num_layers).to(DEVICE)
@@ -39,48 +30,9 @@ class VNetwork:
     def get_input_dim(self):
         return self._input_dim
 
-    def get_value_function_v(self, As, Bs, poses):
-        poses = poses[:, 0]
-        with torch.no_grad():
-            val = self.function(ten(As, DEVICE), ten(Bs, DEVICE), ten(poses, DEVICE)).cpu().numpy()
-        return val
-
-    def get_value_function2(self, state):
-        a, b = state[0], state[1]
-        return self.function(ten(a, DEVICE), ten(b, DEVICE), None).detach().cpu().numpy()
-
-    def get_trainable_adv(self, state, new_state, old_pos, new_pos, reward):
-        a, b = unwrap_state(state)
-        new_a, new_b = unwrap_state(new_state)
-        q = reward + self.discount * self.function(ten(new_a, DEVICE), ten(new_b, DEVICE),
-                                                   ten(new_pos, DEVICE))
-        v = self.function(ten(a, DEVICE), ten(b, DEVICE), ten(old_pos, DEVICE))
-
-        return q - v
-
-    def get_adv_and_train(self, state, new_state, old_pos, new_pos, reward):
-        a, b = unwrap_state(state)
-        new_a, new_b = unwrap_state(new_state)
-
-        approx = self.function(ten(a, DEVICE), ten(b, DEVICE),
-                               ten(old_pos, DEVICE))
-        with torch.no_grad():
-            target = reward + self.discount * self.function(ten(new_a, DEVICE),
-                                                            ten(new_b, DEVICE),
-                                                            ten(new_pos,
-                                                                DEVICE))
-        criterion = torch.nn.MSELoss()
-        self.optimizer.zero_grad()
-
-        loss = criterion(approx, target)
-        loss.backward()
-        self.optimizer.step()
-
-        return target.detach(), approx.detach()
-
     def train(self):
         if len(self.batch_states) == 0:  # Meaning that agent didn't act / collect any observations in this batch
-            return
+            return None
 
         states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
@@ -100,6 +52,7 @@ class VNetwork:
         loss.backward()
         self.optimizer.step()
 
+        # self.optimizer.zero_grad()
         self.batch_states = []
         self.batch_new_states = []
         self.batch_rewards = []

@@ -145,7 +145,7 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector)
     """
     global graph
     graph += 1
-    graph_folder = Path("graphs")
+    graph_folder = Path(f"graphs/{name}")
     graph_folder.mkdir(parents=True, exist_ok=True)
     fig_id = f"{experiment}_{name}_{str(graph)}"
     plt.figure(fig_id, figsize=(6, 5))
@@ -176,4 +176,4 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector)
     filename = graph_folder / f"graph_{name}_distances_{str(graph)}_{vector}.png"
     plt.tight_layout()
     plt.savefig(filename, dpi=150)
-    plt.close()
+    plt.close("all")

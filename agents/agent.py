@@ -4,15 +4,6 @@ from policies.random_policy import random_policy
 from config import get_config
 
 
-action_vectors = [
-    np.array([-1, 0]),
-    np.array([1, 0]),
-    np.array([0, 1]),
-    np.array([0, -1]),
-    np.array([0, 0])
-]
-
-
 def calculate_ir(a, b, pos, action):
     new_pos = np.clip(pos + action, [0, 0], a.shape-np.array([1, 1]))
     agents = a.copy()
@@ -27,22 +18,12 @@ def calculate_ir(a, b, pos, action):
 
 
 class Agent:
-    def __init__(self, policy=random_policy):
+    def __init__(self, policy, id_):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
+        self.id = id_
 
     @abstractmethod
     def get_value_function(self, state):
-        raise NotImplementedError
-
-    @abstractmethod
-    def add_experience(self, old_state, new_state, reward, action=None):
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_value_for_agent(self, agents, apples, agents_list=None, hypothetical_pos=None):
-        """
-        Use this function when evaluating actions
-        """
         raise NotImplementedError

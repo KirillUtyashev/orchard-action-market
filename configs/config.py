@@ -25,6 +25,7 @@ class TrainingConfig:
     epsilon: float = 0.1
     test: bool = False
     skip: bool = False
+    seed: int = 42069
 
 
 @dataclass

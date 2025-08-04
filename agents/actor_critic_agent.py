@@ -6,41 +6,12 @@ from agents.communicating_agent import CommAgent
 
 
 class ACAgent(CommAgent):
-    def __init__(self, policy):
-        super().__init__(policy)
+    def __init__(self, policy, id_):
+        super().__init__(policy, id_)
         self.policy_network = None
 
-    # def get_value_function_bin(self, a, b, pos=None):
-    #     assert self.avg_alpha is not None
-    #     if pos is None:
-    #         pos = self.position
-    #     v = self.policy_value.get_sum_value(a, b, pos)[0]
-    #     val = (v - self.avg_alpha) / self.avg_alpha
-    #     bound = 0.885
-    #     val = ((val + 1) / 2) / bound
-    #     if val > 1:
-    #         val = 1
-    #     elif val < 0:
-    #         val = 0
-    #     return np.array([val])
-
-    def get_learned_action(self, state, tau=1):
-        a = state["agents"]
-        b = state["apples"]
-
-        actions = [0, 1, 4]
-        output = self.policy_network.get_function_output(a, b, self.position, tau)
-        try:
-            action = random.choices(actions, weights=output)[0]
-        except Exception as e:
-            print(1)
-        return action
-
-    def get_action(self, state, agents_list=None):
-        if self.policy == "learned_policy":
-            return self.get_learned_action(state)
-        else:
-            return super().get_action(state, agents_list)
+    def add_experience_actor_network(self, state, new_state, reward, action, old_positions, new_positions):
+        self.policy_network.add_experience(state, new_state, reward, action, old_positions, new_positions, self.id)
 
 
 class ACAgentBeta(ACAgent):
@@ -70,3 +41,17 @@ class ACAgentRates(ACAgentBeta):
         self.agent_rates[id_] = 0
         # self.acting_rate = (1 / num_agents) * self.budget
 
+
+    # def get_value_function_bin(self, a, b, pos=None):
+    #     assert self.avg_alpha is not None
+    #     if pos is None:
+    #         pos = self.position
+    #     v = self.policy_value.get_sum_value(a, b, pos)[0]
+    #     val = (v - self.avg_alpha) / self.avg_alpha
+    #     bound = 0.885
+    #     val = ((val + 1) / 2) / bound
+    #     if val > 1:
+    #         val = 1
+    #     elif val < 0:
+    #         val = 0
+    #     return np.array([val])

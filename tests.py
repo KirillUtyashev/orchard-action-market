@@ -7,6 +7,13 @@ from orchard.algorithms import spawn_apple, despawn_apple
 from policies.random_policy import random_policy
 import numpy as np
 from plots import graph_plots
+from configs.config import EnvironmentConfig
+from configs.config import TrainingConfig
+from configs.config import ExperimentConfig
+
+from value_function_learning.train_value_function import \
+    DecentralizedValueFunction
+
 
 class TestOrchard:
     def setup_orchard(self, width):
@@ -138,6 +145,39 @@ class TestGraphPlots:
         eval_y = [0, 100, 200, 300, 310]
 
         graph_plots("Test", plot1, plot2, plot3, eval_x, eval_y)
+
+
+class TestVLearning:
+    def test_epsilon(self):
+        env_config = EnvironmentConfig(
+            length=6,
+            width=6,
+            apple_mean_lifetime=5,
+            s_target=0.16,
+        )
+        train_config = TrainingConfig(
+            num_agents=2,
+            hidden_dimensions=16,
+            num_layers=4,
+            batch_size=256,
+            alpha=0.0005,
+            vision=0,
+            alt_input=False,
+            timesteps=10000,
+            eval_interval=1,
+            test=True
+        )
+
+        experiment_config = ExperimentConfig(
+            env_config=env_config,
+            train_config=train_config
+        )
+
+        test_algo = DecentralizedValueFunction(experiment_config)
+        test_algo.run()
+
+        assert (test_algo.count_random_actions / (10000 * 2)) <= 0.11
+        assert 0.9 <= (test_algo.count_random_actions / (10000 * 2))
 
 
 if __name__ == '__main__':

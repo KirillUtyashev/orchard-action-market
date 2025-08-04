@@ -64,6 +64,20 @@ class AgentControllerCentralized(AgentController):
         return self.agents_list[0].get_value_function(states[agent_id])
 
 
+class AgentControllerActorCritic(AgentControllerDecentralized):
+    def __init__(self, agents, view_controller):
+        super().__init__(agents, view_controller)
+
+    def get_best_action(self, state, agent_id, available_actions):
+        probs = self.agents_list[agent_id].get_function_output(self.view_controller.process_state(state, self.agents_list[agent_id].position))
+        action = np.random.choice(len(probs), p=probs)
+        return action
+
+    def collective_value_from_state(self, state, positions):
+        observations = self.get_all_agent_obs(state, positions)
+        return self.get_collective_value(observations, None)
+
+
 class ViewController:
     def __init__(self, vision=None):
         if vision == 0:
