@@ -205,6 +205,10 @@ class Algorithm:
         print("=====Completed Evaluation=====")
         return result
 
+    @abstractmethod
+    def update_actor(self):
+        raise NotImplementedError
+
     def eval_network(self, seed: int) -> EvalResult:
         """Run network evaluation"""
 
@@ -306,7 +310,12 @@ class Algorithm:
 
                 # Train if enough samples collected
                 if len(self.agents_list[0].policy_value.batch_states) >= self.train_config.batch_size:
-                    self.train_batch()
+                    self.update_critic()
+
+                if hasattr(self.agents_list[0], "policy_network"):
+                    for i in range(self.train_config.num_agents):
+                        if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
+                            self.agents_list[i].policy_network.train()
 
                 # Log progress and update a learning rate
                 if step % (0.02 * self.train_config.timesteps) == 0:
