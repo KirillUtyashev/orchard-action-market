@@ -69,7 +69,7 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         super().__init__(agents, view_controller)
 
     def get_best_action(self, state, agent_id, available_actions):
-        probs = self.agents_list[agent_id].get_function_output(self.view_controller.process_state(state, self.agents_list[agent_id].position))
+        probs = self.agents_list[agent_id].policy_network.get_function_output(self.view_controller.process_state(state, self.agents_list[agent_id].position))
         action = np.random.choice(len(probs), p=probs)
         return action
 
