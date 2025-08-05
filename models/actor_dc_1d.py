@@ -34,7 +34,10 @@ class ActorNetworkBase:
         self._input_dim = input_dim * 2
 
     def get_function_output(self, observation, tau=1):
-        res = self.function(observation) / tau
+        res = ten(observation, DEVICE)
+        res = res.view(1, -1)
+        with torch.no_grad():
+            res = self.function(res) / tau
         res = F.softmax(res, dim=1)
         return res.detach().cpu().numpy().squeeze(0).tolist()
 
@@ -50,17 +53,15 @@ class ActorNetworkBase:
     def train(self):
         if len(self.batch_states) == 0:
             return None
-        states = ten(np.stack(self.batch_states, axis=0), DEVICE)
+        states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
 
         action_probs = self.function(states)
-
-        actions = [2 if x == 4 else x for x in self.batch_actions]
         probs = F.softmax(action_probs, dim=1)
 
         dist = torch.distributions.Categorical(probs)
         # (c) turn your Python list into a LongTensor on DEVICE
-        actions_tensor = ten(np.array(actions), DEVICE)
+        actions_tensor = ten(np.array(self.batch_actions), DEVICE)
 
         # (d) get a tensor of log-probs, one per batch element
         log_probs = dist.log_prob(actions_tensor)      # shape [B]
