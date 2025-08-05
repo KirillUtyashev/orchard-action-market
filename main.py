@@ -12,7 +12,8 @@ from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
 from metrics.metrics import append_metrics, append_positional_metrics, \
     append_y_coordinates, plot_agent_specific_metrics
-from value_function_learning.controllers import AgentControllerCentralized, \
+from value_function_learning.controllers import AgentControllerActorCritic, \
+    AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 
 
@@ -24,6 +25,8 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon):
             action = random_policy(environment.available_actions)
         else:
             action = agent_controller.get_best_action(state, agent, environment.available_actions)
+    elif agents_list[agent].policy == "learned_policy":
+        action = agent_controller.get_best_action(state, agent, environment.available_actions)
     elif agents_list[agent].policy is random_policy:
         action = agents_list[agent].policy(environment.available_actions)
     else:
@@ -72,8 +75,10 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
 
     if type(agents_list[0]) is CommAgent:
         agent_controller = AgentControllerDecentralized(agents_list, ViewController(vision))
-    else:
+    elif type(agents_list[0]) is SimpleAgent:
         agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
+    else:
+        agent_controller = AgentControllerActorCritic(agents_list, ViewController(vision))
     for i in range(timesteps):
         num_of_apples_per_second.append(env.apples.sum())
         before = env.total_apples

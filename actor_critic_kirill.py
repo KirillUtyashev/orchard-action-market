@@ -17,7 +17,7 @@ from value_function_learning.controllers import AgentControllerActorCritic, \
 
 class ActorCritic(Algorithm, ABC):
     def __init__(self, config: ExperimentConfig):
-        super().__init__(config, f"ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>")
+        super().__init__(config, f"ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>")
         self.p_network_list = []
         self.v_network_list = []
 
@@ -85,7 +85,7 @@ class ActorCritic(Algorithm, ABC):
                             for j in range(len(self.agents_list)):
                                 new_positions.append(self.agents_list[j].position)
                             advantage = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions) - self.agent_controller.collective_value_from_state(s, positions)
-                            self.agents_list[each_agent].add_experience(s, new_s, r, action, advantage)
+                            self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage)
 
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
@@ -100,16 +100,23 @@ class ActorCritic(Algorithm, ABC):
         observation = self.view_controller.process_state(sample_state, sample_state["poses"][0])
         res = self.agents_list[0].policy_network.get_function_output(observation)
 
-        self.prob_sample_action_0.append(res[0].item())
-        self.prob_sample_action_1.append(res[1].item())
-        self.prob_sample_action_2.append(res[2].item())
+        self.prob_sample_action_0.append(res[0])
+        self.prob_sample_action_1.append(res[1])
+        self.prob_sample_action_2.append(res[2])
 
-        print(res[0].item())
-        print(res[1].item())
+        print(res[0])
+        print(res[1])
 
     def train_batch(self):
         self.update_actor()
         self.update_critic()
+
+    def agent_get_action(self, agent_id: int) -> int:
+        with torch.no_grad():
+            action = self.agent_controller.get_best_action(self.env.get_state(),
+                                                           agent_id,
+                                                           self.env.available_actions)
+        return action
 
     def run(self):
         try:
@@ -124,7 +131,7 @@ class ActorCritic(Algorithm, ABC):
                         input_dim = self.train_config.vision + 1
                 else:
                     input_dim = self.env_config.length * self.env_config.width + 1
-                agent.policy_network = ActorNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                agent.policy_network = ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, 0.00005, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
