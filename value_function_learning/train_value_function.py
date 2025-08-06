@@ -97,7 +97,7 @@ class CentralizedValueFunction(ValueFunction):
 
             # Initialize network and agents
             if not self.train_config.alt_input:
-                network = VNetwork(self.env_config.width * self.env_config.length, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                network = VNetwork(self.env_config.width * self.env_config.length + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
             else:
                 if self.env_config.width != 1:
                     network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
