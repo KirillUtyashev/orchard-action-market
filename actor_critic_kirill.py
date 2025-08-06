@@ -132,7 +132,7 @@ class ActorCritic(Algorithm, ABC):
                 else:
                     input_dim = self.env_config.length * self.env_config.width + 1
                 agent.policy_network = ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, 0.00005, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
-                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, 16, self.train_config.num_layers)
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
                 self.p_network_list.append(agent.policy_network)
