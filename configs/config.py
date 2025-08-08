@@ -8,7 +8,8 @@ from orchard.algorithms import despawn_apple, spawn_apple
 class TrainingConfig:
     """Configuration for training parameters."""
     batch_size: int = 128
-    alpha: float = 0.0025
+    alpha: float = 0.000275
+    actor_alpha: float = 0.00005
     lr_schedule: dict = field(
         default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075}
     )
@@ -21,7 +22,9 @@ class TrainingConfig:
     alt_input: bool = False
     vision: Optional[int] = None
     hidden_dimensions: Optional[int] = 128
+    hidden_dimensions_actor: Optional[int] = 128
     num_layers: int = 4
+    num_layers_actor: int = 4
     epsilon: float = 0.1
     test: bool = False
     skip: bool = False

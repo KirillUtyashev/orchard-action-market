@@ -17,7 +17,7 @@ from value_function_learning.controllers import AgentControllerActorCritic, \
 
 class ActorCritic(Algorithm, ABC):
     def __init__(self, config: ExperimentConfig):
-        super().__init__(config, f"ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>")
+        super().__init__(config, f"""ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>""")
         self.p_network_list = []
         self.v_network_list = []
 
@@ -131,8 +131,8 @@ class ActorCritic(Algorithm, ABC):
                         input_dim = self.train_config.vision + 1
                 else:
                     input_dim = self.env_config.length * self.env_config.width + 1
-                agent.policy_network = ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, 0.00005, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
-                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, 16, self.train_config.num_layers)
+                agent.policy_network = ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor)
+                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
                 self.p_network_list.append(agent.policy_network)
