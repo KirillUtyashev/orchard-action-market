@@ -23,9 +23,12 @@ def parse_args(args):
     parser.add_argument("--apple_life", type=float, default=3, help="Apple mean lifetime.")
     parser.add_argument("--s_target", type=float, default=0.1, help="Expected number of apples spawned per agent per second.")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size for training.")
-    parser.add_argument("--alpha", type=float, default=0.00125, help="Learning rate.")
-    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer size.")
-    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
+    parser.add_argument("--alpha", type=float, default=0.000275, help="Learning rate for critic.")
+    parser.add_argument("--actor_alpha", type=float, default=0.00005, help="Learning rate.")
+    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer size of critic network.")
+    parser.add_argument("--hidden_dim_actor", type=int, default=64, help="Hidden layer size of actor network.")
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for critic network.")
+    parser.add_argument("--num_layers_actor", type=int, default=4, help="Number of layers for actor network.")
     parser.add_argument("--debug", type=bool, default=True, help="Debug.")
     parser.add_argument("--alt_vision", type=int, default=1, help="Alternative Vision.")
     parser.add_argument("--vision", type=int, default=None, help="Vision.")
@@ -48,10 +51,13 @@ def main(args):
     train_config = TrainingConfig(
         batch_size=args.batch_size,
         alpha=args.alpha,
+        actor_alpha=args.actor_alpha,
         timesteps=args.timesteps,
         num_agents=args.num_agents,
         hidden_dimensions=args.hidden_dim,
+        hidden_dimensions_actor=args.hidden_dim_actor,
         num_layers=args.num_layers,
+        num_layers_actor=args.num_layers_actor,
         alt_input=True if args.alt_vision == 0 else False,
         vision=args.vision,
         skip=True if args.skip == 0 else False,
