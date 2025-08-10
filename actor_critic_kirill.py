@@ -36,15 +36,15 @@ class ActorCritic(Algorithm, ABC):
             a_list.append(trained_agent)
         return a_list
 
-    def save_networks(self, path):
-        for nummer, netwk in enumerate(self.p_network_list):
-            torch.save(netwk.function.state_dict(),
-                       path + "/" + self.name + "_actor_network_AC_" + str(
-                           nummer) + ".pt")
-        for nummer, netwk in enumerate(self.v_network_list):
-            torch.save(netwk.function.state_dict(),
-                       path + "/" + self.name + "_critic_network_AC_" + str(
-                           nummer) + ".pt")
+    # def save_networks(self, path):
+    #     for nummer, netwk in enumerate(self.p_network_list):
+    #         torch.save(netwk.function.state_dict(),
+    #                    path + "/" + self.name + "_actor_network_AC_" + str(
+    #                        nummer) + ".pt")
+    #     for nummer, netwk in enumerate(self.v_network_list):
+    #         torch.save(netwk.function.state_dict(),
+    #                    path + "/" + self.name + "_critic_network_AC_" + str(
+    #                        nummer) + ".pt")
 
     def update_critic(self):
         losses = []
@@ -92,8 +92,7 @@ class ActorCritic(Algorithm, ABC):
         print(res[1])
 
     def train_batch(self):
-        self.update_actor()
-        self.update_critic()
+        pass
 
     def agent_get_action(self, agent_id: int) -> int:
         with torch.no_grad():
@@ -116,12 +115,12 @@ class ActorCritic(Algorithm, ABC):
                 else:
                     input_dim = self.env_config.length * self.env_config.width + 1
                 agent.policy_network = ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor)
-                agent.policy_value = VNetwork(input_dim, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                agent.policy_value = VNetwork(input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
                 self.p_network_list.append(agent.policy_network)
             self.network_for_eval = self.p_network_list
-            self.train()
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise
