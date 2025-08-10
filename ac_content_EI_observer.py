@@ -1,9 +1,5 @@
 import random
 import numpy as np
-# random.seed(35279038)
-random.seed(35279038)
-# np.random.seed(389043)
-np.random.seed(389045)
 import time
 import torch.nn.functional as F
 from orchard.environment import *
@@ -952,8 +948,6 @@ def experiment(name, base_a=0.01, alpha_decay=(0.7 / 10000), kappa_decay=5, thre
     Note that e^(-0.7) ~= 0.5
     For 10,000 steps -> e^(0.7), we have alpha = 0.7 / 10,000
     """
-    random.seed(35279038)
-    np.random.seed(389045)
     num_agents = 100
     side_length = num_agents * 2
     discount = 0.99

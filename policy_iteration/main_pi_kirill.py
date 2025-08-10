@@ -141,11 +141,6 @@ if __name__ == "__main__":
     Call the policy iteration function (from main_pi.py).
     Commences training.
     """
-    import random
-    import numpy as np
-    random.seed(10)
-    np.random.seed(10)
-
     policy_iteration("value", 0.00005)
 
     # sweep_learning_rates_and_plot()

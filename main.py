@@ -1,4 +1,7 @@
+import os
+
 from matplotlib import pyplot as plt
+from matplotlib.colors import to_rgba
 
 from agents.communicating_agent import CommAgent
 from agents.simple_agent import SimpleAgent
@@ -7,11 +10,11 @@ import numpy as np
 import random
 
 from policies.nearest import nearest_policy
-from policies.nearest_uniform import replace_agents_1d
 from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
-from metrics.metrics import append_metrics, append_positional_metrics, \
-    append_y_coordinates, plot_agent_specific_metrics
+from metrics.metrics import PositionRecorder, append_metrics, \
+    append_positional_metrics, \
+    append_y_coordinates, plot_agent_specific_metrics, plot_agents_heatmap_alpha
 from value_function_learning.controllers import AgentControllerActorCritic, \
     AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
@@ -79,42 +82,46 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
         agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
     else:
         agent_controller = AgentControllerActorCritic(agents_list, ViewController(vision))
-    for i in range(timesteps):
-        num_of_apples_per_second.append(env.apples.sum())
-        before = env.total_apples
-        after = env.total_apples
-        apples_dropped.append(after - before)
-        apples_per_second = 0
-        for tick in range(num_agents):
-            agent, i_reward, same_action, idle = step(agents_list, env, agent_controller, epsilon)
-            nearest_apple_actions += same_action
-            idle_actions += idle
-            reward += i_reward
-            apples_per_second += i_reward
-            if tick == num_agents - 1:
-                env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
-                env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
-            if name != "test" and experiment != "test":
-                agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
-                agent_y_coordinates = append_y_coordinates(agent_y_coordinates, agents_list)
-                to_add_x = []
-                to_add_y = []
-                for k in range(env.apples.shape[0]):
-                    for j in range(env.apples.shape[1]):
-                        if env.apples[k, j] != 0:
-                            to_add_x.append(j)
-                            to_add_y.append(k)
-                apple_x_coordinates.append(to_add_x)
-                apple_y_coordinates.append(to_add_y)
-            apples_picked.append(apples_per_second)
-        # Calculate mean nearest neighbor distance for this timestep
-        timestep_distances = []
-        for agent_idx in range(len(agents_list)):
-            nearest_dist = get_nearest_neighbor_distance(agent_idx, agents_list)
-            timestep_distances.append(nearest_dist)
-        nearest_neighbour_mean_distance.append(np.mean(timestep_distances))
-        if i % 1000 == 0:
-            print(i)
+    os.makedirs("positions", exist_ok=True)
+    with PositionRecorder(num_agents, timesteps * num_agents + 1, f"positions/{name}_pos.npy") as rec:
+        rec.log(agents_list)
+        for i in range(timesteps):
+            num_of_apples_per_second.append(env.apples.sum())
+            before = env.total_apples
+            after = env.total_apples
+            apples_dropped.append(after - before)
+            apples_per_second = 0
+            for tick in range(num_agents):
+                agent, i_reward, same_action, idle = step(agents_list, env, agent_controller, epsilon)
+                nearest_apple_actions += same_action
+                idle_actions += idle
+                reward += i_reward
+                apples_per_second += i_reward
+                if tick == num_agents - 1:
+                    env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
+                    env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
+                rec.log(agents_list)
+                if name != "test" and experiment != "test":
+                    agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
+                    agent_y_coordinates = append_y_coordinates(agent_y_coordinates, agents_list)
+                    to_add_x = []
+                    to_add_y = []
+                    for k in range(env.apples.shape[0]):
+                        for j in range(env.apples.shape[1]):
+                            if env.apples[k, j] != 0:
+                                to_add_x.append(j)
+                                to_add_y.append(k)
+                    apple_x_coordinates.append(to_add_x)
+                    apple_y_coordinates.append(to_add_y)
+                apples_picked.append(apples_per_second)
+            # Calculate mean nearest neighbor distance for this timestep
+            timestep_distances = []
+            for agent_idx in range(len(agents_list)):
+                nearest_dist = get_nearest_neighbor_distance(agent_idx, agents_list)
+                timestep_distances.append(nearest_dist)
+            nearest_neighbour_mean_distance.append(np.mean(timestep_distances))
+            if i % 1000 == 0:
+                print(i)
     print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
     print("Average distance:", np.mean(nearest_neighbour_mean_distance))
     print("Number of nearest actions: ", nearest_apple_actions)
@@ -128,5 +135,17 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
     plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, experiment, name, "x")
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, experiment, name, "y")
+
+    # positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
+    # fig, ax = plt.subplots(figsize=(6, 5))
+    # plot_agents_heatmap_alpha(
+    #     positions,
+    #     agent_ids=[0, 1, 2, 3],                      # pick any subset
+    #     colors=["royalblue", "crimson", "gold", "purple"],  # one hue per agent
+    #     ax=ax
+    # )
+    # plt.show()
+    # plot_agents_trajectories(positions, agent_ids=[0], colors=["royalblue"])
+    # plt.show()
 
     return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second), nearest_apple_actions, idle_actions

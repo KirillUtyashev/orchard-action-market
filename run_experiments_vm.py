@@ -11,7 +11,7 @@ def download_logs(sftp, local_log_dir, remote_log_dir, working_dir):
 
     for filename in remote_files:
         if filename.endswith(".log") or filename.endswith(".txt"):
-            remote_path = f"{working_dir + "/" + remote_log_dir}/{filename}"
+            remote_path = f"{working_dir}/{remote_log_dir}/{filename}"
             local_path = os.path.join(local_log_dir, filename)
 
             if os.path.exists(local_path):
@@ -152,7 +152,7 @@ def run_experiment_and_fetch_logs_with_key(vm_ip, username, private_key_path, wo
     # 2. Fetch logs via SFTP
     sftp = ssh.open_sftp()
 
-    download_logs(sftp, local_log_dir, remote_log_dir, working_dir)
+    download_most_recent_log(sftp, local_log_dir, remote_log_dir, working_dir)
     download_most_recent_folder(sftp, local_graph_dir, remote_graph_dir, working_dir)
     download_most_recent_folder(sftp, local_weights_dir, remote_weights_dir, working_dir)
 
@@ -179,11 +179,11 @@ def main(args):
         env_script='venv/bin/activate',
         args=remaining_args,
         remote_log_dir="logs",
-        local_log_dir="logs",
+        local_log_dir="../logs",
         remote_graph_dir="graphs",
-        local_graph_dir="graphs",
+        local_graph_dir="../graphs",
         remote_weights_dir="policyitchk",
-        local_weights_dir="policyitchk"
+        local_weights_dir="../policyitchk"
     )
 
 

@@ -1,8 +1,198 @@
 from pathlib import Path
+from contextlib import AbstractContextManager
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
+
 graph = 0
+
+
+class PositionRecorder(AbstractContextManager):
+    """
+    Logs (x, y) grid positions for N agents at every tick and
+    saves the result as a .npy file when you're done.
+
+    Usage
+    -----
+    with PositionRecorder(num_agents=N, total_steps=T,
+                          outfile="run1_pos.npy") as rec:
+        for _ in range(T):
+            env.step() # advance your sim
+            rec.log(agents) # where `agents[i].position -> (x, y)`
+    # file is saved automatically on exit
+    """
+
+    def __init__(self, num_agents: int, total_steps: int, outfile: str):
+        self.num_agents = num_agents
+        self.total_steps = total_steps
+        self.outfile = Path(outfile)
+        self._pos = np.empty((total_steps, num_agents, 2), dtype=np.int16)
+        self._t = 0
+
+    # -------- public API ----------------------------------------------------
+    def log(self, agents):
+        """
+        Record positions of *all* agents for the current timestep.
+        `agents` must be an iterable whose i-th element has `.position`
+        returning (x, y) grid indices.
+        """
+        if self._t >= self.total_steps:
+            raise IndexError("All timesteps already logged!")
+        for i, agent in enumerate(agents):
+            self._pos[self._t, i] = agent.position
+        self._t += 1
+
+    def save(self):
+        """Write the tensor to disk immediately (optional)."""
+        np.save(self.outfile, self._pos[:self._t])
+        print(f"[PositionRecorder]   saved → {self.outfile} "
+              f"shape={self._pos[:self._t].shape}")
+
+    # -------- context-manager plumbing -------------------------------------
+    def __exit__(self, exc_type, exc, tb):
+        # Always save on exit, even if an exception occurred
+        try:
+            self.save()
+        finally:
+            return False            # propagate any exception
+
+
+def plot_agents_heatmap_alpha(positions: np.ndarray,
+                              agent_ids: list[int] | None = None,
+                              colors: list[str] | None = None,
+                              ax: plt.Axes | None = None,
+                              grid_color: str = "white") -> plt.Axes:
+    """
+    Overlay single-colour α-heat-maps for several agents on one axes.
+
+    Parameters
+    ----------
+    positions : (T, N, 2) ndarray
+        Logged grid coordinates for all agents.
+    agent_ids : list[int] | None
+        Which agents to plot; default = *all*.
+    colors     : list[str] | None
+        One Matplotlib colour per agent (cycled if shorter).
+        Default palette = tab10.
+    ax        : matplotlib Axes | None
+        Plot on this axes; create new fig/ax if None.
+    grid_color : str
+        Colour of grid lines.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+        The axes the heat-maps were drawn on.
+    """
+    if agent_ids is None:
+        agent_ids = list(range(positions.shape[1]))
+
+    if colors is None:
+        # repeat a default palette if fewer colours than agents
+        base = plt.cm.get_cmap("tab10").colors
+        colors = [base[i % len(base)] for i in range(len(agent_ids))]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 4.5))
+
+    # assume square grid; infer side length
+    L = int(positions[..., :2].max()) + 1
+
+    # draw one RGBA layer per agent
+    for agent_idx, colour in zip(agent_ids, colors):
+        xy = positions[:, agent_idx]                 # (T, 2)
+        counts = np.zeros((L, L), dtype=np.int32)
+        xs, ys = xy[:, 0], xy[:, 1]
+        np.add.at(counts, (ys, xs), 1)
+
+        alpha = counts / counts.max() if counts.max() else counts
+        r, g, b, _ = to_rgba(colour)
+        rgba = np.zeros((L, L, 4), dtype=float)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = r, g, b
+        rgba[..., 3] = alpha
+
+        ax.imshow(rgba, origin="upper", extent=[0, L, 0, L])
+
+    # cosmetics (done once)
+    ax.set_xticks(range(L + 1))
+    ax.set_yticks(range(L + 1))
+    ax.grid(which="both", color=grid_color, lw=0.5)
+    ax.set_aspect("equal")
+    ax.set_title("Occupancy (α ∝ visits)")
+    plt.tight_layout()
+    return ax
+
+
+def plot_agents_trajectories(positions: np.ndarray,
+                             agent_ids: list[int] | None = None,
+                             colors: list[str] | None = None,
+                             ax: plt.Axes | None = None,
+                             linewidth: float = 2,
+                             alpha: float = 0.9,
+                             show_markers: bool = True) -> plt.Axes:
+    """
+    Overlay plain trajectories (no time-colour) for one or more agents.
+
+    Parameters
+    ----------
+    positions : ndarray, shape (T, N, 2)
+        Logged (x, y) integer grid positions for all agents.
+    agent_ids : list[int] | None
+        Agents to plot; default = all.
+    colors : list[str] | None
+        Base colours cycled if shorter than agent_ids; default = tab10.
+    ax : matplotlib Axes | None
+        Pass an existing Axes to draw on; if None, a new fig/ax is created.
+    linewidth : float
+        Width of the trajectory lines.
+    alpha : float
+        Global opacity for all trajectories.
+    show_markers : bool
+        If True, draw start (○) and end (✕) markers.
+
+    Returns
+    -------
+    ax : matplotlib Axes
+        The axes on which the trajectories were drawn.
+    """
+    if agent_ids is None:
+        agent_ids = list(range(positions.shape[1]))        # all agents
+
+    if colors is None:
+        palette = plt.cm.get_cmap("tab10").colors
+        colors  = [palette[i % len(palette)] for i in range(len(agent_ids))]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 5))
+
+    # infer square grid size from max coordinate
+    L = int(positions[..., :2].max()) + 1
+
+    for aid, colour in zip(agent_ids, colors):
+        xy = positions[:, aid] + 0.5           # cell centres
+        xs, ys = xy[:, 0], xy[:, 1]
+
+        ax.plot(xs, ys, color=colour,
+                lw=linewidth, alpha=alpha,
+                label=f"agent {aid}")
+
+        if show_markers:
+            ax.scatter(xs[0],  ys[0],  s=60, c=colour,
+                       marker="o", edgecolors="k", linewidths=.5)
+            ax.scatter(xs[-1], ys[-1], s=80, c=colour,
+                       marker="X", edgecolors="k", linewidths=.5)
+
+    # cosmetics
+    ax.set_xlim(0, L); ax.set_ylim(0, L)
+    ax.set_xticks(range(L + 1)); ax.set_yticks(range(L + 1))
+    ax.grid(which="both", color="gray", lw=.4, alpha=.3)
+    ax.set_aspect("equal")
+    ax.set_title("Agent trajectories (start ○  end ✕)")
+    ax.legend(loc="upper right", fontsize=8, frameon=False)
+    plt.tight_layout()
+    return ax
+
 
 def avg_apples_picked(state, total_reward, timestep):
     return total_reward / timestep

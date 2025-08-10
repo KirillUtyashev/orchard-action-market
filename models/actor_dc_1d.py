@@ -1,37 +1,17 @@
 import numpy as np
 import torch
-from models.main_net import MainNet
 import torch.nn.functional as F
-import torch.optim as optim
-from helpers import convert_position, ten
+from helpers import ten
 from config import DEVICE
-from abc import abstractmethod
+from models.network import Network
 torch.set_default_dtype(torch.float64)
 
 
-action_vectors = [
-            np.array([-1, 0]),
-            np.array([1, 0]),
-            np.array([0, 1]),
-            np.array([0, -1]),
-            np.array([0, 0])
-        ]
-
-
-class ActorNetworkBase:
-    def __init__(self, input_dim, outpud_dim, alpha, discount, hidden_dim=128, num_layers=4):
-        self.function = MainNet(input_dim, outpud_dim, hidden_dim, num_layers)
-        self.function.to(DEVICE)
-        self.optimizer = optim.AdamW(self.function.parameters(), lr=alpha, amsgrad=True)
-        self.alpha = alpha
-        self.discount = discount
-
-        self.batch_states = []
-        self.batch_new_states = []
+class ActorNetworkBase(Network):
+    def __init__(self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4):
+        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
         self.batch_actions = []
         self.batch_adv_values = []
-
-        self._input_dim = input_dim * 2
 
     def get_function_output(self, observation, tau=1):
         res = ten(observation, DEVICE)
@@ -129,7 +109,8 @@ class ActorNetworkCounterfactual(ActorNetworkBase):
         counterfactual = 0
         for num, action in enumerate([0, 1, 4]):
             r = 0
-            new_pos = np.clip(positions[agent] + action_vectors[action], [0, 0], state["agents"].shape-np.array([1, 1]))
+            # new_pos = np.clip(positions[agent] + action_vectors[action], [0, 0], state["agents"].shape-np.array([1, 1]))
+            new_pos = None
             agents = state["agents"].copy()
             apples = state["apples"].copy()
             agents[new_pos[0], new_pos[1]] += 1

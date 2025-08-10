@@ -1,7 +1,5 @@
 import random
 import numpy as np
-random.seed(35279038)
-np.random.seed(389043)
 from actor_critic import eval_network
 from main import run_environment_1d_acting_rate
 from orchard.environment import *
