@@ -67,7 +67,7 @@ def plot_apple_picking(widths, num_agents, series_dict, title, label_x, label_y)
 
     for label, ratios in series_dict.items():
         if len(series_dict[label]) > 0:
-            if type(series_dict[label][0]) is float:
+            if type(series_dict[label][1]) is float:
                 # y_interp = interpolate_nans(scale_x[label], ratios)
                 # if "Decentralized" in label:
                 #     y_interp = interpolate_nans(widths[:len(widths) - 1], ratios)
@@ -108,29 +108,24 @@ def plot_apple_picking(widths, num_agents, series_dict, title, label_x, label_y)
 
 def plot_series(changing_param, series_dict, title, label_x, label_y):
 
-    x_c_and_d = [0, 200000, 400000, 600000, 800000, 1000000]
     x_local = [0 + 100000 * i for i in range(11)]
-
     for label, series in series_dict.items():
         if label != "Random":
-            if label == "Centralized" or label == "Decentralized":
-                x = x_c_and_d
-            else:
-                x = x_local
+            x = x_local
             plt.figure()
             for i in range(len(series)):
                 if series[i]:
                     y_interp = interpolate_nans(x, series[i])
                     plt.plot(x, y_interp, marker='o', label=label + f" ({changing_param[i]} hidden dim.)")
-            y_interp = interpolate_nans([0, 200000, 400000, 600000, 800000, 1000000], series_dict["Random"][0])
-            plt.plot([0, 200000, 400000, 600000, 800000, 1000000], y_interp, marker='o', label="Random", color="red")
-            plt.xlabel(label_x)
-            plt.ylabel(label_y)
-            plt.title(title)
-            plt.legend()
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
+        y_interp = interpolate_nans([0, 200000, 400000, 600000, 800000, 1000000], series_dict["Random"][0])
+        plt.plot([0, 200000, 400000, 600000, 800000, 1000000], y_interp, marker='o', label="Random", color="red")
+        plt.xlabel(label_x)
+        plt.ylabel(label_y)
+        plt.title(title)
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
 
 
 def parse_log_metrics(architecture: str, num_agents: int, length: int, width: int, hidden_dimensions: int, dimensions: int) -> tuple | None:
@@ -150,29 +145,35 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
         tuple: (last_ratio_picked, mean_distance, total_apples) or None if not found
     """
 
-    log_dir = Path(f"train_scripts/logs/{length}_by_{width}")
+    log_dir = Path(f"logs/{length}_by_{width}")
 
     if architecture == "Centralized":
         pattern = (
             f"Centralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
             f"-apple_mean_lifetime-<.*?>-<.*?>"
-            f"-discount-<.*?>-hidden_dimensions-<{hidden_dimensions}>-dimensions-<{dimensions}>-vision-<0>.log"
+            f"-discount-<.*?>-hidden_dimensions-<{hidden_dimensions}>-dimensions-<{dimensions}>-vision-<0>-epsilon-<.*?>-batch_size-<.*?>.log"
         )
     elif architecture == "Decentralized":
         pattern = (
             f"Decentralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>-alpha-<.*?>"
-            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<0>.log"
+            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<0>-batch_size-<.*?>.log"
         )
     elif architecture == "Decentralized (local view = 5)":
         pattern = (
             f"Decentralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>-alpha-<.*?>"
-            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<5>.log"
+            f"-apple_mean_lifetime-<.*?>-<{hidden_dimensions}>-<{dimensions}>-vision-<5>-batch_size-<.*?>.log"
         )
-    else:
+    elif architecture == "Centralized (local view = 5)":
         pattern = (
             f"Centralized-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>"
             f"-apple_mean_lifetime-<.*?>-<.*?>"
-            f"-discount-<.*?>-hidden_dimensions-<{hidden_dimensions}>-dimensions-<{dimensions}>-vision-<5>.log"
+            f"-discount-<.*?>-hidden_dimensions-<{hidden_dimensions}>-dimensions-<{dimensions}>-vision-<5>-batch_size-<.*?>.log"
+        )
+    else:
+        pattern = (
+            f"ActorCritic-<{num_agents}>_agents-_length-<{length}>_width-<{width}>_s_target-<.*?>-alpha-<.*?>"
+            f"-apple_mean_lifetime-<.*?>-<128>-<.*?>-vision-<0>-batch_size-<.*?>-actor_alpha-<.*?>-actor_hidden-"
+            f"<{hidden_dimensions}>-actor_layers-<{dimensions}>.log"
         )
 
     for log_file in log_dir.glob("*.log"):
@@ -202,22 +203,11 @@ def parse_log_metrics(architecture: str, num_agents: int, length: int, width: in
                     elif "Picked per agents" in line:
                         match = re.search(r"Picked per agents: ([0-9.eE+-]+)", line)
                         if match:
-                            if "<5>" in pattern:
-                                length = 10
-                            else:
-                                length = 5
-                            if len(picked_per_agents) == length:
-                                last_picked = float(match.group(1))
-                            else:
-                                picked_per_agents.append(float(match.group(1)))
+                            picked_per_agents.append(float(match.group(1)))
                     elif "Total picked" in line:
                         match = re.search(r"Total picked: ([0-9.eE+-]+)", line)
                         if match:
                             total_picked = float(match.group(1))
-            if not picked_per_agents:
-                picked_per_agents = 15971.333333333334 * last_ratio / num_agents
-            if last_picked:
-                picked_per_agents.append(last_picked)
             return last_ratio, mean_distance, total_apples, picked_per_agents, total_picked
 
     return None  # if no file matched
@@ -245,7 +235,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
         }
     """
     results = {
-        "centralized": {
+        "Centralized": {
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
@@ -254,7 +244,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "picked_per_agent": [],
             "picked_over_time": []
         },
-        "decentralized": {
+        "Decentralized": {
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
@@ -263,7 +253,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "picked_per_agent": [],
             "picked_over_time": []
         },
-        "decentralized local": {
+        "Decentralized (local view = 5)": {
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
@@ -272,7 +262,16 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "picked_per_agent": [],
             "picked_over_time": []
         },
-        "centralized local": {
+        "Centralized (local view = 5)": {
+            "sweep_values": [],
+            "mean_distances": [],
+            "total_apples": [],
+            "last_ratios": [],
+            "total_picked": [],
+            "picked_per_agent": [],
+            "picked_over_time": []
+        },
+        "Actor Critic": {
             "sweep_values": [],
             "mean_distances": [],
             "total_apples": [],
@@ -291,7 +290,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
     for val in sweep_values:
         config = {**base_config, sweep_key: val}
 
-        for arch in ["Centralized", "Decentralized", "Decentralized (local view = 5)", "Centralized (local view = 5)"]:
+        for arch in ["Centralized", "Decentralized", "Decentralized (local view = 5)", "Centralized (local view = 5)", "Actor Critic"]:
             result = parse_log_metrics(
                 architecture=arch,
                 num_agents=config["num_agents"],
@@ -301,14 +300,13 @@ def sweep_logs(base_config: dict, sweep_params: dict):
                 dimensions=config["dimensions"]
             )
 
-            arch_key = "centralized" if arch == "Centralized" else "decentralized" if arch == "Decentralized" else "decentralized local" if arch == "Decentralized (local view = 5)" else "centralized local"
-            results[arch_key]["sweep_values"].append(val)
-            results[arch_key]["last_ratios"].append(result[0] if result else None)
-            results[arch_key]["mean_distances"].append(result[1] if result else None)
-            results[arch_key]["total_apples"].append(result[2] if result else None)
-            results[arch_key]["picked_per_agent"].append(result[3][-1] if result else None)
-            results[arch_key]["total_picked"].append(result[4] if result else None)
-            results[arch_key]["picked_over_time"].append(result[3] if result else None)
+            results[arch]["sweep_values"].append(val)
+            results[arch]["last_ratios"].append(result[0] if result else None)
+            results[arch]["mean_distances"].append(result[1] if result else None)
+            results[arch]["total_apples"].append(result[2] if result else None)
+            results[arch]["picked_per_agent"].append(result[3][-1] if result else None)
+            results[arch]["total_picked"].append(result[4] if result else None)
+            results[arch]["picked_over_time"].append(result[3] if result else None)
 
     return results
 
@@ -319,7 +317,8 @@ def init_dicts():
         "Centralized": [],
         "Decentralized (local view = 5)": [],
         "Centralized (local view = 5)": [],
-        "Random": []
+        "Random": [],
+        "Actor Critic": []
     }
 
 
@@ -352,29 +351,15 @@ def run(base_config: dict, sweep_params: dict):
             random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
             add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res, picked_series)
     result = sweep_logs(base_config, sweep_params)
-    ratios["Centralized"].extend(result["centralized"]["last_ratios"])
-    ratios["Decentralized"].extend(result["decentralized"]["last_ratios"])
-    ratios["Decentralized (local view = 5)"].extend(result["decentralized local"]["last_ratios"])
-    mean_distances["Centralized"].extend(result["centralized"]["mean_distances"])
-    mean_distances["Decentralized"].extend(result["decentralized"]["mean_distances"])
-    mean_distances["Decentralized (local view = 5)"].extend(result["decentralized local"]["mean_distances"])
-    mean_distances["Centralized (local view = 5)"].extend(result["centralized local"]["mean_distances"])
-    total_apples["Centralized"].extend(result["centralized"]["total_apples"])
-    total_apples["Decentralized"].extend(result["decentralized"]["total_apples"])
-    total_apples["Decentralized (local view = 5)"].extend(result["decentralized local"]["total_apples"])
-    total_picked["Centralized"].extend(result["centralized"]["total_picked"])
-    total_picked["Decentralized"].extend(result["decentralized"]["total_picked"])
-    total_picked["Decentralized (local view = 5)"].extend(result["decentralized local"]["total_picked"])
-    picked_per_agents["Centralized"].extend(result["centralized"]["picked_per_agent"])
-    picked_per_agents["Decentralized"].extend(result["decentralized"]["picked_per_agent"])
-    picked_per_agents["Decentralized (local view = 5)"].extend(result["decentralized local"]["picked_per_agent"])
-    picked_series["Centralized"].extend(result["centralized"]["picked_over_time"])
-    picked_series["Decentralized"].extend(result["decentralized"]["picked_over_time"])
-    picked_series["Decentralized (local view = 5)"].extend(result["decentralized local"]["picked_over_time"])
-    total_apples["Centralized (local view = 5)"].extend(result["centralized local"]["total_apples"])
-    total_picked["Centralized (local view = 5)"].extend(result["centralized local"]["total_picked"])
-    picked_per_agents["Centralized (local view = 5)"].extend(result["centralized local"]["picked_per_agent"])
-    picked_series["Centralized (local view = 5)"].extend(result["centralized local"]["picked_over_time"])
+
+    for arch_name in init_dicts().keys():
+        if arch_name != "Random":
+            ratios[arch_name].extend(result[arch_name]["last_ratios"])
+            total_apples[arch_name].extend(result[arch_name]["total_apples"])
+            mean_distances[arch_name].extend(result[arch_name]["mean_distances"])
+            picked_per_agents[arch_name].extend(result[arch_name]["picked_per_agent"])
+            total_picked[arch_name].extend(result[arch_name]["total_picked"])
+            picked_series[arch_name].extend(result[arch_name]["picked_over_time"])
 
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], ratios,
                        'Ratio of Apples Picked Per Agent',
@@ -387,20 +372,61 @@ def run(base_config: dict, sweep_params: dict):
                        "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
     plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], picked_per_agents, 'Total Apples Picked Per Agent',
                        "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
+    plot_series(sweep_params[list(sweep_params.keys())[0]], picked_series, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
 
-    # plot_series(sweep_params[list(sweep_params.keys())[0]], picked_series, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
+
+def percent_gains(res):
+    centralized = res["Centralized"]
+    decentralized = res["Decentralized"]
+    return [((d - c) / c) * 100 for c, d in zip(centralized, decentralized)]
+
+
+def difference(res):
+    centralized = res["Centralized"]
+    decentralized = res["Decentralized"]
+    return [(d - c) for c, d in zip(centralized, decentralized)]
 
 
 if __name__ == '__main__':
     base = {
-        "length": 12,
-        "num_agents": 7,
-        "width": 12,
+        "length": 15,
+        "num_agents": 10,
+        "width": 15,
         "dimensions": 4
     }
 
     sweep = {
-        "hidden_dimensions": [16, 128, 512]
+        "hidden_dimensions": [4, 16, 32, 64, 128, 256, 512, 1024]
     }
 
+    # Example usage
+    # res = {
+    #     "Centralized": [1174.0, 907.6666666666666, 610.0, 418.2857142857143, 313.9],
+    #     "Decentralized": [1184.0, 975.5, 871.0, 835.6190476190476, 760.3666666666667]
+    # }
+    #
+    #
+    # plot_apple_picking([1, 2, 4, 7, 10], 0, res, "Apples Picked Per Agent For Different Agent Counts",  "Number of Agents", "Apples Picked Per Agent")
+    #
+    # gains = percent_gains(res)
+    #
+    # agents = [1, 2, 4, 7, 10]
+    # # Plot
+    # plt.figure(figsize=(6, 4))
+    # plt.plot(agents, gains, marker='o', linestyle='-', linewidth=2)
+    # plt.xlabel("Number of Agents")
+    # plt.ylabel("Decentralized Gain over Centralized (%)")
+    # plt.title("Decentralized vs Centralized Performance Gains")
+    # plt.grid(True, linestyle='--', alpha=0.6)
+    # plt.tight_layout()
+    # plt.show()
+    #
+    # plt.figure(figsize=(6, 4))
+    # plt.plot(agents, difference(res), marker='o', linestyle='-', linewidth=2)
+    # plt.xlabel("Number of Agents")
+    # plt.ylabel("Apples Picked per Agent")
+    # plt.title("Decentralized vs Centralized Performance Difference")
+    # plt.grid(True, linestyle='--', alpha=0.6)
+    # plt.tight_layout()
+    # plt.show()
     run(base, sweep)

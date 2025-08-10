@@ -3,8 +3,6 @@ import numpy as np
 
 from helpers import convert_position
 
-random.seed(35279038)
-np.random.seed(389043)
 import time
 from actor_critic import eval_network
 from main import run_environment_1d

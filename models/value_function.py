@@ -4,21 +4,14 @@ from models.main_net import MainNet
 import torch.optim as optim
 from helpers import convert_position, ten, unwrap_state
 from config import DEVICE
+from models.network import Network
 torch.set_default_dtype(torch.float64)
 
-class VNetwork:
-    def __init__(self, input_dim, alpha, discount, hidden_dim=128, num_layers=4):
-        self.function = MainNet(input_dim, 1, hidden_dim, num_layers).to(DEVICE)
-        self.optimizer = optim.AdamW(self.function.parameters(), lr=alpha,
-                                     amsgrad=True)
-        self.alpha = alpha
-        self.discount = discount
 
-        self.batch_states = []
-        self.batch_new_states = []
+class VNetwork(Network):
+    def __init__(self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4):
+        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
         self.batch_rewards = []
-
-        self._input_dim = input_dim * 2
 
     def get_value_function(self, x):
         res = ten(x, DEVICE)
@@ -31,9 +24,6 @@ class VNetwork:
         return self._input_dim
 
     def train(self):
-        if len(self.batch_states) == 0:  # Meaning that agent didn't act / collect any observations in this batch
-            return None
-
         states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
         approx = self.function(states)               # shape [B]

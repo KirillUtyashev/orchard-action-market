@@ -1,10 +1,11 @@
 import logging
+import random
 from abc import abstractmethod
 from pathlib import Path
 from typing import Optional
 import torch
 from numpy import floating
-from config import CHECKPOINT_DIR
+from config import CHECKPOINT_DIR, DEVICE
 from main import run_environment_1d
 from plots import add_to_plots, graph_plots
 from orchard.environment import *
@@ -93,7 +94,7 @@ def memory_snapshot(label="mem", show_children=False, top_n=5):
         child_stats.sort(reverse=True)  # largest first
         print("  Top child processes (RSS MB):", flush=True)
         for rss_bytes, pid, cmd in child_stats[:top_n]:
-            print(f"    PID {pid}: {rss_bytes/1e6:.1f}MB  {cmd}", flush=True)
+            print(f"PID {pid}: {rss_bytes/1e6:.1f}MB  {cmd}", flush=True)
 
 
 class Algorithm:
@@ -138,9 +139,9 @@ class Algorithm:
         if self.train_config.test:
             self.count_random_actions = 0
 
-    def create_env(self):
+    def create_env(self, agent_pos, apples):
         self.env = Orchard(self.env_config.length, self.env_config.width, self.train_config.num_agents, self.agents_list, spawn_algo=self.env_config.spawn_algo, despawn_algo=self.env_config.despawn_algo, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
-        self.env.initialize(self.agents_list)
+        self.env.initialize(self.agents_list, agent_pos=agent_pos, apples=apples)
 
     @abstractmethod
     def update_critic(self):
@@ -205,14 +206,13 @@ class Algorithm:
         print("=====Completed Evaluation=====")
         return result
 
-    @abstractmethod
-    def update_actor(self):
-        raise NotImplementedError
-
     def eval_network(self, seed: int) -> EvalResult:
         """Run network evaluation"""
 
+        check = random.getstate()[1][0]
+
         self.save_rng_state()
+        print("Before eval: ", random.getstate()[1][0])
 
         random.seed(seed)
         np.random.seed(seed)
@@ -240,11 +240,13 @@ class Algorithm:
 
         # Create EvalResult from returned tuple
         eval_result = EvalResult(*results)
+        print("After eval: ", random.getstate()[1][0])
+
+        self.restore_rng_state()
+        print("Back to initial: ", random.getstate()[1][0])
 
         # Save networks
         self._save_best_networks()
-
-        self.restore_rng_state()
 
         return eval_result
 
@@ -267,7 +269,83 @@ class Algorithm:
         if not os.path.isdir(path):
             print("new_path")
             os.makedirs(path)
-        self.save_networks(path)
+        self.save_networks(str(path))
+        self._save_agent_positions()
+        self._save_apples()
+
+    def _save_agent_positions(self, when: str = "final") -> None:
+        """
+        Save current agents' positions to CHECKPOINT_DIR/<algo-name>.
+        Writes both a .npy (fast to load) and a .csv (human-readable).
+        """
+        if not self.agents_list:
+            self.logger.error("No agents to save positions for.")
+            return
+
+        positions = np.asarray([a.position for a in self.agents_list], dtype=np.int32)  # shape: [num_agents, 2] (or whatever your position shape is)
+        out_dir = Path(CHECKPOINT_DIR) / self.name
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        np.save(out_dir / f"agent_positions_{when}.npy", positions)
+        np.savetxt(out_dir / f"agent_positions_{when}.csv", positions, fmt="%d", delimiter=",")
+
+    def _save_apples(self, when: str = "final") -> None:
+        """
+        Save current environment state (agents and apples) to CHECKPOINT_DIR/<algo-name>.
+        Each is saved as both .npy (fast to load) and .csv (human-readable).
+        """
+        if not self.env:
+            self.logger.error("No environment to save state for.")
+            return
+
+        state = self.env.get_state()
+
+        if "agents" not in state or "apples" not in state:
+            self.logger.error("Environment state missing 'agents' or 'apples' keys.")
+            return
+
+        out_dir = Path(CHECKPOINT_DIR) / self.name
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Apples
+        apples_arr = np.asarray(state["apples"], dtype=np.int32)
+        np.save(out_dir / f"apples_{when}.npy", apples_arr)
+        np.savetxt(out_dir / f"apples_{when}.csv", apples_arr, fmt="%d", delimiter=",")
+
+        self.logger.info(f"Saved env state (agents + apples) to {out_dir}")
+
+    def _load_env_state(self, when: str = "final"):
+        """
+        Load saved environment state (agents + apples) from CHECKPOINT_DIR/<algo-name>.
+        Returns (agents_array, apples_array) as np.int32 arrays.
+        """
+        out_dir = Path(CHECKPOINT_DIR) / self.name
+        agents_path = out_dir / f"agent_positions_{when}.npy"
+        apples_path = out_dir / f"apples_{when}.npy"
+
+        if not agents_path.exists() or not apples_path.exists():
+            self.logger.error(f"Missing agents/apples state files in {out_dir}")
+            return None, None
+
+        agents_arr = np.load(agents_path)
+        apples_arr = np.load(apples_path)
+
+        self.logger.info(f"Loaded env state from {out_dir} ({when})")
+        return agents_arr.astype(np.int32), apples_arr.astype(np.int32)
+
+    def _collect_unique_critics(self):
+        """Return (layout, critics_list) where layout is 'centralized' or 'decentralized'.
+        critics_list is a list of (name, critic_obj) with duplicates removed."""
+        seen = {}
+        critics = []
+        for i, a in enumerate(self.agents_list):
+            if hasattr(a, "policy_value") and a.policy_value is not None:
+                key = id(a.policy_value)
+                if key not in seen:
+                    seen[key] = f"critic_shared" if not critics else f"critic_{i}"
+                    critics.append((seen[key], a.policy_value))
+        layout = "centralized" if len(critics) == 1 else "decentralized"
+        return layout, critics
 
     def env_step(self, tick):
         agent_id = random.randint(0, self.train_config.num_agents - 1)
@@ -292,14 +370,87 @@ class Algorithm:
     def init_agents_for_eval(self):
         raise NotImplementedError
 
-    @abstractmethod
-    def save_networks(self, path):
-        raise NotImplementedError
+    # @abstractmethod
+    # def save_networks(self, path):
+    #     raise NotImplementedError
 
-    def train(self) -> Tuple[floating, ...] | None:
+    def save_networks(self, path: str, global_step: int | None = None) -> None:
+        os.makedirs(path, exist_ok=True)
+        layout, critics = self._collect_unique_critics()
+
+        self.save_rng_state()
+
+        print("Saving networks: ", random.getstate()[1][0])
+
+        payload = {
+            "step": global_step,
+            "layout": layout,                    # 'centralized' or 'decentralized'
+            "rng_state": self.rng_state,         # <<--- new
+            "critics": [],                       # list of {name, blob}
+            "actors": [],                        # list aligned to agents_list (None if missing)
+        }
+
+        # critics (unique, deduped)
+        for name, crit in critics:
+            payload["critics"].append({"name": name, "blob": crit.export_net_state()})
+
+        # actors (one per agent, keep alignment)
+        for a in self.agents_list:
+            if hasattr(a, "policy_network") and a.policy_network is not None:
+                pn = a.policy_network
+                payload["actors"].append(pn.export_net_state())
+            else:
+                payload["actors"].append(None)
+
+        dst = os.path.join(path, f"{self.name}_ckpt.pt")
+        torch.save(payload, dst)
+
+    def load_networks(self, path: str) -> int:
+        ckpt = torch.load(os.path.join(path, f"{self.name}_ckpt.pt"), map_location="cpu")
+
+        # map critics back
+        layout_saved = ckpt.get("layout", "centralized")
+        crit_blobs = ckpt.get("critics", [])
+
+        # Build current critics view (dedup like on save)
+        layout_now, critics_now = self._collect_unique_critics()
+
+        if layout_saved == "centralized":
+            # Expect exactly 1 critic blob; load into the (single) current critic object
+            if crit_blobs and critics_now:
+                blob = crit_blobs[0]["blob"]
+                name, obj = critics_now[0]
+                obj.import_net_state(blob)
+        else:
+            # decentralized: expect N unique critics; load in the same unique order
+            for (name_now, obj_now), saved in zip(critics_now, crit_blobs):
+                blob = saved["blob"]
+                obj_now.import_net_state(blob)
+
+        # actors (aligned with agents_list)
+        act_blobs = ckpt.get("actors", [])
+        for agent, blob in zip(self.agents_list, act_blobs):
+            if blob and hasattr(agent, "policy_network") and agent.policy_network is not None:
+                pn = agent.policy_network
+                pn.import_net_state(blob, device=DEVICE)
+
+        # restore RNG if present
+        rng = ckpt.get("rng_state")
+        if rng is not None:
+            self.rng_state = rng
+            self.restore_rng_state()
+        print("Restoring networks: ", random.getstate()[1][0])
+        return ckpt.get("step", 0)
+
+    def restore_all(self):
+        self.load_networks(str(os.path.join(CHECKPOINT_DIR, self.name)))
+        agent_pos, apples = self._load_env_state()
+        return agent_pos, apples
+
+    def train(self, agent_pos=None, apples=None) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            self.create_env()
+            self.create_env(agent_pos, apples)
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
                 self.env.length, self.env.width, self.train_config.num_agents)
@@ -322,6 +473,7 @@ class Algorithm:
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     if self.debug:
                         memory_snapshot(label=f"step={step}", show_children=True)
+                    self._save_best_networks()
                 self.update_lr(step)
 
                 # Periodic evaluation
@@ -360,15 +512,3 @@ class Algorithm:
     @abstractmethod
     def run(self):
         raise NotImplementedError
-
-
-#         elif "AC" in name:
-#         for nummer, netwk in enumerate(network_list):
-#             torch.save(netwk.function.state_dict(),
-#                        path + "/" + name + "_" + str(nummer) + "_it_" + str(
-#                            iteration) + ".pt")
-#     else:
-#     torch.save(network_list[0].function.state_dict(),
-#                path + "/" + name + "_cen_it_" + str(iteration) + ".pt")
-# maxi = max(maxi, val)
-# return maxi, ratio

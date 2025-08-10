@@ -46,22 +46,6 @@ class ActorCritic(Algorithm, ABC):
                        path + "/" + self.name + "_critic_network_AC_" + str(
                            nummer) + ".pt")
 
-    def update_actor(self):
-        for agent in self.agents_list:
-            agent.policy_network.train()
-
-        # res_2 = []
-        # res_3 = []
-        # for agent in self.agents_list:
-        #     res = agent.policy_network.train()
-        #     if res is not None:
-        #         loss, adv_value = res
-        #         res_2.append(loss)
-        #         res_3.append(adv_value)
-        # if len(res_2) > 0 and len(res_3) > 0:
-        #     self.actor_loss_history.append(res_2[0])
-        #     self.adv_loss_history.append(res_3[0])
-
     def update_critic(self):
         losses = []
         for agent in self.agents_list:

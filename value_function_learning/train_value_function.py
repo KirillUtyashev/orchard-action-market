@@ -67,10 +67,10 @@ class CentralizedValueFunction(ValueFunction):
             a_list.append(trained_agent)
         return a_list
 
-    def save_networks(self, path: str) -> None:
-        torch.save(self.network_for_eval[0].function.state_dict(),
-                   path + "/" + self.name + "_cen_" + ".pt")
-        print("saved_network", time.time())
+    # def save_networks(self, path: str) -> None:
+    #     torch.save(self.network_for_eval[0].function.state_dict(),
+    #                path + "/" + self.name + "_cen_" + ".pt")
+    #     print("saved_network", time.time())
 
     def _update_network_lr(self, lr: float) -> None:
         """Update learning rate for centralized network."""
@@ -97,21 +97,19 @@ class CentralizedValueFunction(ValueFunction):
 
             # Initialize network and agents
             if not self.train_config.alt_input:
-                network = VNetwork(self.env_config.width * self.env_config.length, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                network = VNetwork(self.env_config.width * self.env_config.length, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
             else:
                 if self.env_config.width != 1:
-                    network = VNetwork(self.train_config.vision ** 2, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                    network = VNetwork(self.train_config.vision ** 2, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 else:
-                    network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                    network = VNetwork(self.train_config.vision + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
 
-            if self.train_config.skip:
-                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, self.name) + "/" + self.name + "_cen_" + ".pt"))
             for num in range(self.train_config.num_agents):
                 agent = SimpleAgent("value_function", num)
                 agent.policy_value = network
                 self.agents_list.append(agent)
             self.network_for_eval = [network]
-            return self.train()
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
 
         except Exception as e:
             self.logger.error(f"Failed to run centralized training: {e}")
@@ -144,11 +142,11 @@ class DecentralizedValueFunction(ValueFunction):
             a_list.append(trained_agent)
         return a_list
 
-    def save_networks(self, path: str) -> None:
-        for nummer, netwk in enumerate(self.network_list):
-            torch.save(netwk.function.state_dict(),
-                       path + "/" + self.name + "_decen_" + str(
-                           nummer) + ".pt")
+    # def save_networks(self, path: str) -> None:
+    #     for nummer, netwk in enumerate(self.network_list):
+    #         torch.save(netwk.function.state_dict(),
+    #                    path + "/" + self.name + "_decen_" + str(
+    #                        nummer) + ".pt")
 
     def update_critic(self):
         losses = []
@@ -193,19 +191,17 @@ class DecentralizedValueFunction(ValueFunction):
                 agent = CommAgent("value_function", nummer)
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
-                        network = VNetwork(self.train_config.vision ** 2 + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                        network = VNetwork(self.train_config.vision ** 2 + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                     else:
-                        network = VNetwork(self.train_config.vision + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                        network = VNetwork(self.train_config.vision + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 else:
-                    network = VNetwork(self.env_config.length * self.env_config.width + 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
-                if self.train_config.skip:
-                    network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, self.name) + "/" + self.name + "_decen_" + str(nummer) + ".pt"))
+                    network = VNetwork(self.env_config.length * self.env_config.width + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
                 agent.policy_value = network
                 self.network_list.append(network)
                 self.agents_list.append(agent)
 
             self.network_for_eval = self.network_list
-            return self.train()
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
 
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
@@ -216,7 +212,7 @@ def evaluate_policy(env_config,
                     num_agents,
                     agent_factory,
                     timesteps=10000,
-                    seed=42):
+                    seed=42069):
     """
     Runs `run_environment_1d` with agents created by `agent_factory` and
     returns a dict of metrics.

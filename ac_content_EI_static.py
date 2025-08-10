@@ -1,7 +1,5 @@
 import random
 import numpy as np
-random.seed(35279038)
-np.random.seed(389043)
 import time
 from orchard.environment import *
 import matplotlib.pyplot as plt
