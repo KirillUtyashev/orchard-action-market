@@ -109,6 +109,14 @@ class Algorithm:
         log_folder = Path("logs")
         log_folder.mkdir(parents=True, exist_ok=True)
 
+        graph_folder = Path("graphs")
+        graph_folder.mkdir(parents=True, exist_ok=True)
+
+        name_folder = graph_folder / self.name
+        name_folder.mkdir(parents=True, exist_ok=True)
+
+        self.graphs_out_path = name_folder
+
         filename = log_folder / f"{name}.log"
 
         logging.basicConfig(
@@ -447,29 +455,39 @@ class Algorithm:
         agent_pos, apples = self._load_env_state()
         return agent_pos, apples
 
+    def training_step(self, step):
+        # Collect and process observations
+        self.collect_observation(step)
+
+        # Train if enough samples collected
+        if len(self.agents_list[0].policy_value.batch_states) >= self.train_config.batch_size:
+            self.update_critic()
+
+        if hasattr(self.agents_list[0], "policy_network"):
+            for i in range(self.train_config.num_agents):
+                if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
+                    self.agents_list[i].policy_network.train()
+
     def train(self, agent_pos=None, apples=None) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
+            # if self.train_config.timesteps < 1000000:
+            #     log_constant = 0.02 * 1000000
+            #     eval_constant = 0.1 * 1000000
+            # else:
+            log_constant = 0.02 * self.train_config.timesteps
+            eval_constant = 0.1 * self.train_config.timesteps
+
             self.create_env(agent_pos, apples)
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
                 self.env.length, self.env.width, self.train_config.num_agents)
 
             for step in range(self.train_config.timesteps):
-                # Collect and process observations
-                self.collect_observation(step)
-
-                # Train if enough samples collected
-                if len(self.agents_list[0].policy_value.batch_states) >= self.train_config.batch_size:
-                    self.update_critic()
-
-                if hasattr(self.agents_list[0], "policy_network"):
-                    for i in range(self.train_config.num_agents):
-                        if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
-                            self.agents_list[i].policy_network.train()
+                self.training_step(step)
 
                 # Log progress and update a learning rate
-                if step % (0.02 * self.train_config.timesteps) == 0:
+                if step % log_constant == 0:
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     if self.debug:
                         memory_snapshot(label=f"step={step}", show_children=True)
@@ -477,7 +495,7 @@ class Algorithm:
                 self.update_lr(step)
 
                 # Periodic evaluation
-                if (step % (self.train_config.timesteps * 0.1) == 0) and (step != self.train_config.timesteps - 1):
+                if (step % eval_constant == 0) and (step != self.train_config.timesteps - 1):
                     self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
                     graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6)
             # Final evaluation

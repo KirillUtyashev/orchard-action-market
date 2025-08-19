@@ -123,33 +123,42 @@ def find_allocs(alphas, it=0, budget=4):
 
     sum_constraint = lambda x: -np.sum(x) + budget
     cons = [{'type': 'eq', 'fun': sum_constraint}, {'type': 'ineq', 'fun': lambda x: x}]
-    ret = np.array([budget / len(x0)] * len(x0))
+    # ret = np.array([budget / len(x0)] * len(x0))
     res = minimize(alloc, x0, args=alphas, method="SLSQP", constraints=cons)
     if res.success == False:
-        if it == 40:
-            ret = find_allocs(alphas, it=it + 1, budget=budget)
-        else:
-            print("Not Success", alphas)
-            return ret
+        print("Not Success")
+        return
+        # if it == 40:
+        #     ret = find_allocs(alphas, it=it + 1, budget=budget)
+        # else:
+        #     print("Not Success", alphas)
+        #     return ret
     else:
         ret = res.x
-    return ret
+        return ret
 
 
 max_thing = 0
 
 
 def rate_allocate(alphas1, alphas2, it=0, b0=0.0, budget=4):
-    budget = np.clip(np.array([budget]), 2,1000)[0]
+    budget = np.clip(np.array([budget]), 2, 1000)[0]
     alphas = np.concatenate((alphas1.flatten(), np.array(alphas2.flatten()) * 2, np.array([b0])))
-    global max_thing
 
+
+    # Regularization
+    const_1 = 0.0001
+
+    global max_thing
     if (np.sum(alphas) - b0 > max_thing):
         max_thing = np.sum(alphas) - b0
-    alphas -= max_thing * 0.01 * 0.01
+    alphas -= max_thing * const_1
     alphas = np.clip(alphas, 1e-8, 1000)
 
-    alphas = np.power(alphas, 1.1)
+    # Encouraging putting more weight into strong candidates
+    const_2 = 1.1
+
+    alphas = np.power(alphas, const_2)
 
     alphas = np.where(alphas < 0, 0, alphas)
     new_alphas = find_allocs(alphas, it, budget)

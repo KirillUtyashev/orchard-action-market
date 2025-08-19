@@ -342,10 +342,10 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector)
 
     # --- agents: keep as connected lines ------------------------------
     for i, series in enumerate(agent_metrics):
-        series1 = series[1:2000]        # or whatever window you like
+        series1 = series[8000:10000]        # or whatever window you like
         plt.plot(series1, label=f"agent {i}")
 
-    check = apples[1:2000]
+    check = apples[8000:10000]
 
     xs, ys = [], []
 
