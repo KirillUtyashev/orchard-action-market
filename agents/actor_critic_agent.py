@@ -10,21 +10,21 @@ class ACAgent(CommAgent):
         super().__init__(policy, id_)
         self.policy_network = None
 
-
     def add_experience_actor_network(self, state, new_state, reward, action, old_positions, new_positions):
         self.policy_network.add_experience(state, new_state, reward, action, old_positions, new_positions, self.id)
 
 
 class ACAgentBeta(ACAgent):
-    def __init__(self, policy, id_):
+    def __init__(self, policy, beta_rate, id_):
         super().__init__(policy,  id_)
         self.beta_temp_batch = []
         self.beta = 0.0
+        self.rate = beta_rate
 
     def update_beta(self):
         if len(self.beta_temp_batch) != 0:
             avg_beta_for_this_sec = np.mean(self.beta_temp_batch)
-            new_beta = get_discounted_value(self.beta, avg_beta_for_this_sec)
+            new_beta = get_discounted_value(self.beta, avg_beta_for_this_sec, self.rate)
             self.beta = new_beta
             self.beta_temp_batch = []
 

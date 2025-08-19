@@ -29,7 +29,7 @@ class TrainingConfig:
     test: bool = False
     skip: bool = False
     seed: int = 42069
-    beta_rate: float = 0.99
+    beta_rate: float = 0.01
 
 
 @dataclass
