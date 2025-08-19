@@ -137,7 +137,7 @@ class DecentralizedValueFunction(ValueFunction):
     def init_agents_for_eval(self) -> List[CommAgent]:
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = CommAgent("value_function", ii)
+            trained_agent = CommAgent("value_function", self.train_config.num_agents, ii)
             trained_agent.policy_value = self.network_list[ii]
             a_list.append(trained_agent)
         return a_list
@@ -188,7 +188,7 @@ class DecentralizedValueFunction(ValueFunction):
 
             # Initialize networks and agents
             for nummer in range(self.train_config.num_agents):
-                agent = CommAgent("value_function", nummer)
+                agent = CommAgent("value_function", self.train_config.num_agents, nummer)
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
                         network = VNetwork(self.train_config.vision ** 2 + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)

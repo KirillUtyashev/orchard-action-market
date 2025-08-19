@@ -3,6 +3,7 @@ import os
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_rgba
 
+from agents.actor_critic_agent import ACAgent, ACAgentBeta
 from agents.communicating_agent import CommAgent
 from agents.simple_agent import SimpleAgent
 from orchard.environment import *
@@ -16,7 +17,7 @@ from metrics.metrics import PositionRecorder, append_metrics, \
     append_positional_metrics, \
     append_y_coordinates, plot_agent_specific_metrics, plot_agents_heatmap_alpha
 from value_function_learning.controllers import AgentControllerActorCritic, \
-    AgentControllerCentralized, \
+    AgentControllerActorCriticRates, AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 
 
@@ -36,14 +37,85 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon):
         action = agents_list[agent].policy(state, agents_list[agent].position)
     reward, new_position = environment.main_step(agents_list[agent].position.copy(), action)
     agents_list[agent].position = new_position
+    # positions = []
+    # for agent_ in agents_list:
+    #     positions.append(agent_.position)
+    # agent_controller.collective_value_from_state(environment.get_state(), positions, agent)
     # print(new_position)
     return agent, reward, 1 if action == nearest_policy(state, agents_list[agent].position) else 0, 1 if action == 2 else 0
+
+
+def add_distances(agent_i, agents_list):
+    stack = []
+    for id_, agent in enumerate(agents_list):
+        distance = np.linalg.norm(agent.position - agents_list[agent_i].position)
+        stack.append(distance)
+    return stack
+
+
+def plot_smoothed(series_list, labels=None, title="", xlabel="Step", ylabel="Value", num_points=40):
+    """
+    Plot one or more time series averaged into ~num_points bins.
+
+    series_list : list of 1D np.arrays (all of length T, or will be truncated to min length)
+    labels      : list of labels for each series
+    """
+    if labels is None:
+        labels = [f"Series {i}" for i in range(len(series_list))]
+
+    # Truncate to same length
+    T = min(len(s) for s in series_list)
+    win = max(1, T // num_points)
+    nwin = T // win
+    x = (np.arange(nwin) * win + win/2)
+
+    plt.figure(figsize=(10, 4))
+    for s, lab in zip(series_list, labels):
+        s = np.asarray(s)[:nwin*win]
+        s_avg = s.reshape(nwin, win).mean(axis=1)
+        plt.plot(x, s_avg, label=lab)
+
+    plt.legend()
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
+    """
+    Plot one or more raw time series without smoothing.
+
+    series_list : list of 1D np.arrays (all of length T, or will be truncated to min length)
+    labels      : list of labels for each series
+    """
+    if labels is None:
+        labels = [f"Series {i}" for i in range(len(series_list))]
+
+    # Truncate to same length
+    T = min(len(s) for s in series_list)
+    x = np.arange(T)
+
+    plt.figure(figsize=(10, 4))
+    for s, lab in zip(series_list, labels):
+        s = np.asarray(s)[:T]
+        plt.plot(x, s, label=lab)
+
+    plt.legend()
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.tight_layout()
+    plt.show()
 
 
 def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
     metrics = []
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
+    agent_distance_hist = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
+    alpha_ema = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
     apple_x_coordinates = []
     apple_y_coordinates = []
 
@@ -80,8 +152,10 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
         agent_controller = AgentControllerDecentralized(agents_list, ViewController(vision))
     elif type(agents_list[0]) is SimpleAgent:
         agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
-    else:
+    elif type(agents_list[0]) is ACAgent or type(agents_list[0]) is ACAgentBeta:
         agent_controller = AgentControllerActorCritic(agents_list, ViewController(vision))
+    else:
+        agent_controller = AgentControllerActorCriticRates(agents_list, ViewController(vision))
     os.makedirs("positions", exist_ok=True)
     with PositionRecorder(num_agents, timesteps * num_agents + 1, f"positions/{name}_pos.npy") as rec:
         rec.log(agents_list)
@@ -114,7 +188,16 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
                     apple_x_coordinates.append(to_add_x)
                     apple_y_coordinates.append(to_add_y)
                 apples_picked.append(apples_per_second)
+                # for num, agent in enumerate(agents_list):
+                #     stack = add_distances(num, agents_list)
+                #     agent_distance_hist[num] = np.vstack([agent_distance_hist[num], stack])
+                #     stack = np.asarray(agents_list[num].agent_alphas, dtype=float).reshape(1, -1)
+                #     alpha_ema[num] = np.vstack([alpha_ema[num], stack])
+
             # Calculate mean nearest neighbor distance for this timestep
+            # for num, agent in enumerate(agents_list):
+            #     # Update betas
+            #     algo._record_rates(num, agent.agent_alphas)
             timestep_distances = []
             for agent_idx in range(len(agents_list)):
                 nearest_dist = get_nearest_neighbor_distance(agent_idx, agents_list)
@@ -135,6 +218,18 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
     plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, experiment, name, "x")
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, experiment, name, "y")
+
+    # for agent_id in range(num_agents):
+    #     arr = agent_distance_hist[agent_id]  # shape [T, num_agents]
+    #     series_list = [arr[:, j] for j in range(num_agents)]
+    #     labels = [f"Distance to {j}" for j in range(num_agents)]
+    #     plot_smoothed(series_list, labels, title=f"Distance to Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
+    # for agent_id in range(num_agents):
+    #     arr = alpha_ema[agent_id]  # shape [T, num_agents]
+    #     series_list = [arr[:, j] for j in range(num_agents)]
+    #     labels = [f"Alpha EMA to {j}" for j in range(num_agents)]
+    #     plot_raw(series_list, labels, title="Alpha EMA over time", xlabel="Training Step", ylabel="Alpha EMA")
+
 
     # positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
     # fig, ax = plt.subplots(figsize=(6, 5))

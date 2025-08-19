@@ -20,8 +20,8 @@ class TrainingConfig:
     log_dir: str = "logs"
     discount: float = 0.99
     alt_input: bool = False
-    vision: Optional[int] = None
-    hidden_dimensions: Optional[int] = 128
+    vision: Optional[int] = 0
+    hidden_dimensions: Optional[int] = 64
     hidden_dimensions_actor: Optional[int] = 128
     num_layers: int = 4
     num_layers_actor: int = 4
@@ -29,6 +29,7 @@ class TrainingConfig:
     test: bool = False
     skip: bool = False
     seed: int = 42069
+    beta_rate: float = 0.99
 
 
 @dataclass

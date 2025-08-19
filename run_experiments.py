@@ -4,7 +4,9 @@ import numpy as np
 import random
 import torch
 
-from actor_critic_kirill import ActorCritic
+from actor_critic_beta import ActorCriticBeta
+from actor_critic_following_rates import ActorCriticRates
+from actor_critic_perfect_info import ActorCriticPerfect
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
 from value_function_learning.train_value_function import (
     CentralizedValueFunction, DecentralizedValueFunction
@@ -34,6 +36,7 @@ def parse_args(args):
     parser.add_argument("--vision", type=int, default=None, help="Vision.")
     parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
+    parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
 
     return parser.parse_args(args)
 
@@ -62,7 +65,8 @@ def main(args):
         vision=args.vision,
         skip=True if args.skip == 0 else False,
         epsilon=args.epsilon,
-        seed=args.seed
+        seed=args.seed,
+        beta_rate=args.beta_rate
     )
 
     exp_config = ExperimentConfig(
@@ -75,8 +79,12 @@ def main(args):
         algo = CentralizedValueFunction(exp_config)
     elif args.algorithm == "Decentralized":
         algo = DecentralizedValueFunction(exp_config)
+    elif args.algorithm == "ActorCritic":
+        algo = ActorCriticPerfect(exp_config)
+    elif args.algorithm == "ActorCriticRates":
+        algo = ActorCriticRates(exp_config)
     else:
-        algo = ActorCritic(exp_config)
+        algo = ActorCriticBeta(exp_config)
     np.random.seed(train_config.seed)
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
