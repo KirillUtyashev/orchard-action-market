@@ -14,7 +14,7 @@ class ActorCriticBeta(ActorCritic):
     def init_agents_for_eval(self):
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = ACAgentBeta("learned_policy", ii)
+            trained_agent = ACAgentBeta("learned_policy", self.train_config.beta_rate, ii)
             trained_agent.policy_network = self.p_network_list[ii]
             a_list.append(trained_agent)
         return a_list
@@ -54,7 +54,7 @@ class ActorCriticBeta(ActorCritic):
             self.view_controller = ViewController(self.train_config.vision)
             self.agent_controller = AgentControllerActorCritic(self.agents_list, self.view_controller)
             for nummer in range(self.train_config.num_agents):
-                agent = ACAgentBeta("learned_policy", nummer)
+                agent = ACAgentBeta("learned_policy", self.train_config.beta_rate, nummer)
                 agent.policy_network, agent.policy_value = self.init_networks()
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
