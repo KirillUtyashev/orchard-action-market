@@ -34,6 +34,7 @@ class ACAgentRates(ACAgentBeta):
         super().__init__(policy, beta_rate, id_)
         self.num_agents = num_agents
         self.budget = float(budget)
+        print(self.budget)
 
         # neighbors: global IDs excluding self
         self.neigh_ids = [j for j in range(num_agents) if j != id_]
