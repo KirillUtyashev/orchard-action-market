@@ -80,7 +80,7 @@ def plot_smoothed(series_list, labels=None, title="", xlabel="Step", ylabel="Val
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.tight_layout()
-    plt.show()
+    return plt
 
 
 def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
