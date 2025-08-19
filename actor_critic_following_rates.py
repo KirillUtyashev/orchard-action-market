@@ -8,6 +8,9 @@ from configs.config import ExperimentConfig
 import numpy as np
 from helpers import get_discounted_value
 from value_function_learning.controllers import AgentControllerActorCriticRates, ViewController
+from main import plot_smoothed
+
+linestyles = ["-", "--", "-.", ":"]
 
 
 def load_follow_rates(filepath: str):
@@ -31,7 +34,7 @@ def load_follow_rates(filepath: str):
 
 class ActorCriticRates(ActorCritic):
     def __init__(self, config: ExperimentConfig):
-        super().__init__(config, f"""ActorCriticRates-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>""")
+        super().__init__(config, f"""ActorCriticRates-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>-beta-<{config.train_config.beta_rate}>-budget-<{config.train_config.budget}>""")
 
         # The following rate history of each agent for plotting
         self.foll_rate_hist = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
@@ -140,8 +143,7 @@ class ActorCriticRates(ActorCritic):
         super().update_critic()
         for num, agent in enumerate(self.agents_list):
             # Update betas
-
-
+            agent.update_beta()
 
             # Record rates for plotting
             self._record_rates(num, agent.agent_rates, agent.agent_alphas)
@@ -172,8 +174,8 @@ class ActorCriticRates(ActorCritic):
                                 new_positions.append(self.agents_list[j].position)
                             total_feedback = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions, agent)
                             self.agents_list[each_agent].beta_temp_batch.append(total_feedback)
-                            # advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
-                            advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent)
+                            advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
+                            # advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent)
                             self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage_for_actor)
 
         except Exception as e:
@@ -183,7 +185,7 @@ class ActorCriticRates(ActorCritic):
     def init_agents_for_eval(self):
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = ACAgentRates("learned_policy", len(self.agents_list), ii)
+            trained_agent = ACAgentRates("learned_policy", len(self.agents_list), self.train_config.beta_rate, ii)
             trained_agent.policy_network = self.p_network_list[ii]
             a_list.append(trained_agent)
         return a_list
@@ -198,25 +200,18 @@ class ActorCriticRates(ActorCritic):
             for other_agent in range(self.train_config.num_agents):
                 series = arr[:, other_agent]  # <-- column j, not row j
                 if series.size > 0:
-                    plt.plot(series, label=f"Q-value from agent {other_agent}")
+                    plt.plot(series, label=f"Q-value from Agent {other_agent}", linestyle=linestyles[other_agent % len(linestyles)])
             plt.legend()
             plt.title(f"Observed Q-values for Agent {agent_id}")
             plt.xlabel("Training Step")
             plt.ylabel("Q-value")
             plt.savefig(self.graphs_out_path / f"Q_values_agent_{agent_id}.png")
 
-            plt.figure(figsize=(10, 4))
-            arr = self.agent_distance_hist[agent_id]
-            for other_agent in range(self.train_config.num_agents):
-                series = arr[:, other_agent]  # <-- column j, not row j
-                if series.size > 0:
-                    plt.plot(series, label=f"Distance to {other_agent}")
-            plt.legend()
-            plt.title(f"Distance to Agent {agent_id}")
-            plt.xlabel("Training Step")
-            plt.ylabel("Distance")
-            plt.savefig(self.graphs_out_path / f"Distance_agent_{agent_id}.png")
-            plt.close("all")
+            arr = self.agent_distance_hist[agent_id]  # shape [T, num_agents]
+            series_list = [arr[:, j] for j in range(self.train_config.num_agents)]
+            labels = [f"Distance to {j}" for j in range(self.train_config.num_agents)]
+            plot = plot_smoothed(series_list, labels, title=f"Distance to Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
+            plot.savefig(self.graphs_out_path / f"Distance_agent_{agent_id}.png")
 
         self._save_follow_rates_arrays()
         self._save_all_betas()
@@ -227,7 +222,7 @@ class ActorCriticRates(ActorCritic):
             self.view_controller = ViewController(self.train_config.vision)
             self.agent_controller = AgentControllerActorCriticRates(self.agents_list, self.view_controller)
             for nummer in range(self.train_config.num_agents):
-                agent = ACAgentRates("learned_policy", self.train_config.num_agents, nummer)
+                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer)
                 agent.policy_network, agent.policy_value = self.init_networks()
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)
