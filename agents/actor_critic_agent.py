@@ -30,8 +30,8 @@ class ACAgentBeta(ACAgent):
 
 
 class ACAgentRates(ACAgentBeta):
-    def __init__(self, policy, num_agents, id_, budget=4):
-        super().__init__(policy, id_)
+    def __init__(self, policy, num_agents, beta_rate, id_, budget=4):
+        super().__init__(policy, beta_rate, id_)
         self.num_agents = num_agents
         self.budget = float(budget)
 

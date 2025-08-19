@@ -37,6 +37,7 @@ def parse_args(args):
     parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
     parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
+    parser.add_argument("--budget", type=int, default=4, help="Budget")
 
     return parser.parse_args(args)
 
@@ -66,7 +67,8 @@ def main(args):
         skip=True if args.skip == 0 else False,
         epsilon=args.epsilon,
         seed=args.seed,
-        beta_rate=args.beta_rate
+        beta_rate=args.beta_rate,
+        budget=args.budget
     )
 
     exp_config = ExperimentConfig(
