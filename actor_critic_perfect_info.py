@@ -13,7 +13,6 @@ import numpy as np
 class ActorCriticPerfect(ActorCritic):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config, f"""ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>""")
-        self.alpha_ema = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
 
     def init_agents_for_eval(self):
         a_list = []
@@ -32,25 +31,6 @@ class ActorCriticPerfect(ActorCritic):
     #         torch.save(netwk.function.state_dict(),
     #                    path + "/" + self.name + "_critic_network_AC_" + str(
     #                        nummer) + ".pt")
-
-    def update_critic(self):
-        super().update_critic()
-        for num, agent in enumerate(self.agents_list):
-            # Update betas
-            self._record_rates(num, agent.agent_alphas)
-
-    def _record_rates(self, agent_i: int, alphas):
-        """
-        Append a snapshot of agent_i's follow rates to all agents.
-        rates_global_vec: iterable length n_agents, in GLOBAL index order.
-        """
-        # for j in range(self.train_config.num_agents):
-        #     new_list = np.append(self.foll_rate_hist[agent_i][j], float(agent_rates[j]))
-        #     self.foll_rate_hist[agent_i][j] = new_list
-        # make sure we have a 1 x n_agents row
-        row_2 = np.asarray(alphas, dtype=float).reshape(1, -1)
-        # append the new row to the (K, n_agents) history for this agent
-        self.alpha_ema[agent_i] = np.vstack([self.alpha_ema[agent_i], row_2])
 
     def collect_observation(self, step):
         try:
@@ -74,22 +54,6 @@ class ActorCriticPerfect(ActorCritic):
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise
-
-    def log_progress(self, sample_state, sample_state5, sample_state6):
-        super().log_progress(sample_state, sample_state5, sample_state6)
-        for agent_id in range(self.train_config.num_agents):
-            plt.figure(figsize=(10, 4))
-            arr = self.alpha_ema[agent_id]
-            for other_agent in range(self.train_config.num_agents):
-                series = arr[:, other_agent]  # <-- column j, not row j
-                if series.size > 0:
-                    plt.plot(series, label=f"Q-value from agent {other_agent}")
-                plt.plot(self.agents_list[agent_id].agent_alphas[other_agent])
-            plt.legend()
-            plt.title(f"Observed Q-values for Agent {agent_id}")
-            plt.xlabel("Training Step")
-            plt.ylabel("Q-value")
-            plt.show()
 
     def run(self):
         try:
