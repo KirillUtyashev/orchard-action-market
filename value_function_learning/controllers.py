@@ -82,11 +82,11 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         action = np.random.choice(len(probs), p=probs)
         return action
 
-    def collective_value_from_state(self, state, positions, agent_id=None):
+    def collective_value_from_state(self, state, positions, agent_id=None, count_for_alpha=False):
         observations = self.get_all_agent_obs(state, positions)
         return self.get_collective_value(observations, agent_id)
 
-    def get_collective_value(self, states, agent_id):
+    def get_collective_value(self, states, agent_id, count_for_alpha=False):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
