@@ -221,5 +221,5 @@ def env_step(agents_list, env, step, timesteps, type_):
         return state, env.get_state(), reward, agent_idx, positions, action
 
 
-def get_discounted_value(old, new, discount_factor=0.01):
+def get_discounted_value(old, new, discount_factor=0.05):
     return old * (1 - discount_factor) + new * discount_factor
