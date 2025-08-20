@@ -217,8 +217,6 @@ class Algorithm:
     def eval_network(self, seed: int) -> EvalResult:
         """Run network evaluation"""
 
-        check = random.getstate()[1][0]
-
         self.save_rng_state()
         print("Before eval: ", random.getstate()[1][0])
 
