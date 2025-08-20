@@ -13,6 +13,25 @@ from main import plot_smoothed
 linestyles = ["-", "--", "-.", ":"]
 
 
+def load_alphas(filepath: str):
+    """
+    Load a .npz file saved with save_follow_rates_arrays() and
+    reconstruct the same dict-of-arrays structure.
+
+    Returns:
+        foll_rate_hist : dict[int, np.ndarray]
+            Mapping agent_id -> (timesteps, n_agents) array
+    """
+    data = np.load(filepath, allow_pickle=False)
+    alpha_hist = {}
+
+    for key in data.files:  # e.g. "agent_0", "agent_1", ...
+        agent_id = int(key.split("_")[1])
+        alpha_hist[agent_id] = data[key]
+
+    return alpha_hist
+
+
 def load_follow_rates(filepath: str):
     """
     Load a .npz file saved with save_follow_rates_arrays() and
@@ -30,6 +49,15 @@ def load_follow_rates(filepath: str):
         foll_rate_hist[agent_id] = data[key]
 
     return foll_rate_hist
+
+
+def load_beta_arrays(filepath: str):
+    data = np.load(filepath, allow_pickle=False)
+    beta_hist = {}
+    for key in data.files:  # "agent_0", "agent_1", ...
+        agent_id = int(key.split("_")[1])
+        beta_hist[agent_id] = data[key]
+    return beta_hist
 
 
 class ActorCriticRates(ActorCritic):
@@ -74,14 +102,18 @@ class ActorCriticRates(ActorCritic):
         """Append one scalar beta for agent_i (dynamic, from empty)."""
         self.beta_hist[agent_i] = np.append(self.beta_hist[agent_i], float(beta_value))
 
-    def _save_beta_arrays(self, filename: str = "betas.npz"):
+    def _save_beta_arrays(self):
         """
         Save all agents' beta histories into a single .npz file.
         Keys: agent_0, agent_1, ..., each a 1-D array of length = #records.
         """
-        out_path = self.graphs_out_path / filename
+        path = os.path.join(CHECKPOINT_DIR, self.name)
+        if not os.path.isdir(path):
+            print("new_path")
+            os.makedirs(path)
+        path = os.path.join(str(path), "betas.npz")
         payload = {f"agent_{i}": self.beta_hist[i] for i in range(self.train_config.num_agents)}
-        np.savez(out_path, **payload)
+        np.savez(path, **payload)
 
     def _save_beta_for_agent(self, agent_i: int):
         """Save a PNG line plot of beta history for a single agent."""
@@ -139,6 +171,18 @@ class ActorCriticRates(ActorCritic):
         path = os.path.join(str(path), "follow_rates.npz")
         np.savez(path, **{f"agent_{i}": self.foll_rate_hist[i] for i in range(self.train_config.num_agents)})
 
+    def _save_alpha_arrays(self):
+        """
+        Save all agents' follow-rate histories into a single .npz file.
+        Each agent_i's history is an array of shape (timesteps, n_agents).
+        """
+        path = os.path.join(CHECKPOINT_DIR, self.name)
+        if not os.path.isdir(path):
+            print("new_path")
+            os.makedirs(path)
+        path = os.path.join(str(path), "alphas.npz")
+        np.savez(path, **{f"agent_{i}": self.alpha_ema[i] for i in range(self.train_config.num_agents)})
+
     def update_critic(self):
         super().update_critic()
         for num, agent in enumerate(self.agents_list):
@@ -147,6 +191,7 @@ class ActorCriticRates(ActorCritic):
 
             # Record rates for plotting
             self._record_rates(num, agent.agent_rates, agent.agent_alphas)
+            self._record_beta(num, agent.beta)
             self._save_agent_distances(num)
 
     def training_step(self, step):
@@ -206,6 +251,7 @@ class ActorCriticRates(ActorCritic):
             plt.xlabel("Training Step")
             plt.ylabel("Q-value")
             plt.savefig(self.graphs_out_path / f"Q_values_agent_{agent_id}.png")
+            plt.close()
 
             arr = self.agent_distance_hist[agent_id]  # shape [T, num_agents]
             series_list = [arr[:, j] for j in range(self.train_config.num_agents)]
@@ -216,6 +262,18 @@ class ActorCriticRates(ActorCritic):
         self._save_follow_rates_arrays()
         self._save_all_betas()
         self._save_beta_arrays()
+        self._save_alpha_arrays()
+
+    def restore_all(self):
+        self.foll_rate_hist = load_follow_rates(str(os.path.join(CHECKPOINT_DIR, self.name, "follow_rates.npz")))
+        self.beta_hist = load_beta_arrays(str(os.path.join(CHECKPOINT_DIR, self.name, "betas.npz")))
+        self.alpha_ema = load_alphas(str(os.path.join(CHECKPOINT_DIR, self.name, "alphas.npz")))
+
+        for num, agent in enumerate(self.agents_list):
+            agent.agent_rates = np.asarray(self.foll_rate_hist[num][-1], dtype=float).copy()
+            agent.agent_alphas = np.asarray(self.alpha_ema[num][-1], dtype=float).copy()
+            agent.beta = self.beta_hist[num][-1]
+        return super().restore_all()
 
     def run(self):
         try:
