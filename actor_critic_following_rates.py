@@ -13,6 +13,52 @@ from main import plot_smoothed
 linestyles = ["-", "--", "-.", ":"]
 
 
+def plot_agent_rewards(collected_rewards_over_time,
+                       title="Collected rewards over time",
+                       xlabel="Step",
+                       ylabel="Reward",
+                       out_path=None,  # e.g. "graphs/rewards_over_time.png"
+                       show=True):
+    """
+    Plot all agent reward series from a (T, N) array where:
+      T = number of time steps (rows)
+      N = number of agents (columns).
+    """
+    arr = np.asarray(collected_rewards_over_time)
+    if arr.size == 0 or arr.shape[0] == 0:
+        print("Nothing to plot: array is empty (no time steps).")
+        return
+
+    T, N = arr.shape
+    x = np.arange(T)
+
+    plt.figure(figsize=(10, 5))
+    for j in range(N):
+        y = arr[:, j]
+        # Handle NaNs gracefully so a single NaN doesn't break the plot
+        if np.isnan(y).all():
+            continue
+        plt.plot(x, y, label=f"Agent {j}", linestyle=linestyles[j % len(linestyles)])
+
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.legend(ncol=2, fontsize=9)
+    plt.tight_layout()
+
+    if out_path:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(out_path, dpi=150)
+        print(f"Saved plot to {out_path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+
 def load_alphas(filepath: str):
     """
     Load a .npz file saved with save_follow_rates_arrays() and
@@ -69,6 +115,7 @@ class ActorCriticRates(ActorCritic):
         self.agent_distance_hist = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
         self.alpha_ema = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
         self.beta_hist = {i: np.zeros((0,), dtype=float) for i in range(self.train_config.num_agents)}
+        self.collected_rewards_over_time = np.zeros((0, self.train_config.num_agents), dtype=float)
 
     def _record_rates(self, agent_i: int, agent_rates, alphas):
         """
@@ -101,6 +148,12 @@ class ActorCriticRates(ActorCritic):
     def _record_beta(self, agent_i: int, beta_value: float):
         """Append one scalar beta for agent_i (dynamic, from empty)."""
         self.beta_hist[agent_i] = np.append(self.beta_hist[agent_i], float(beta_value))
+
+    def _record_collected_rewards(self):
+        array = np.empty(self.train_config.num_agents)
+        for i in range(self.train_config.num_agents):
+            array[i] = self.agents_list[i].collected_apples
+        self.collected_rewards_over_time = np.vstack([self.collected_rewards_over_time, array])
 
     def _save_beta_arrays(self):
         """
@@ -187,12 +240,18 @@ class ActorCriticRates(ActorCritic):
         super().update_critic()
         for num, agent in enumerate(self.agents_list):
             # Update betas
-            agent.update_beta()
+            update_betas = False
+            if agent.is_beta_agent:
+                agent.update_beta()
+                update_betas = True
 
             # Record rates for plotting
             self._record_rates(num, agent.agent_rates, agent.agent_alphas)
-            self._record_beta(num, agent.beta)
             self._save_agent_distances(num)
+            if update_betas:
+                self._record_beta(num, agent.beta)
+
+            self._record_collected_rewards()
 
     def training_step(self, step):
         super().training_step(step)
@@ -218,9 +277,11 @@ class ActorCriticRates(ActorCritic):
                             for j in range(len(self.agents_list)):
                                 new_positions.append(self.agents_list[j].position)
                             total_feedback = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions, agent)
-                            self.agents_list[each_agent].beta_temp_batch.append(total_feedback)
-                            advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
-                            # advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent)
+                            if self.agents_list[each_agent].is_beta_agent:
+                                self.agents_list[each_agent].beta_temp_batch.append(total_feedback)
+                                advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
+                            else:
+                                advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent, False)
                             self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage_for_actor)
 
         except Exception as e:
@@ -260,27 +321,37 @@ class ActorCriticRates(ActorCritic):
             plot.savefig(self.graphs_out_path / f"Distance_agent_{agent_id}.png")
 
         self._save_follow_rates_arrays()
-        self._save_all_betas()
-        self._save_beta_arrays()
+        if self.train_config.beta_rate > 0:
+            self._save_all_betas()
+            self._save_beta_arrays()
         self._save_alpha_arrays()
+
+        plot_agent_rewards(self.collected_rewards_over_time,
+                           title="Agent rewards",
+                           out_path=self.graphs_out_path / "agent_rewards.png",
+                           show=False)
 
     def restore_all(self):
         self.foll_rate_hist = load_follow_rates(str(os.path.join(CHECKPOINT_DIR, self.name, "follow_rates.npz")))
-        self.beta_hist = load_beta_arrays(str(os.path.join(CHECKPOINT_DIR, self.name, "betas.npz")))
+        if self.train_config.beta_rate > 0:
+            self.beta_hist = load_beta_arrays(str(os.path.join(CHECKPOINT_DIR, self.name, "betas.npz")))
         self.alpha_ema = load_alphas(str(os.path.join(CHECKPOINT_DIR, self.name, "alphas.npz")))
 
         for num, agent in enumerate(self.agents_list):
             agent.agent_rates = np.asarray(self.foll_rate_hist[num][-1], dtype=float).copy()
             agent.agent_alphas = np.asarray(self.alpha_ema[num][-1], dtype=float).copy()
-            agent.beta = self.beta_hist[num][-1]
+            if self.train_config.beta_rate > 0:
+                agent.beta = self.beta_hist[num][-1]
         return super().restore_all()
 
     def run(self):
         try:
             self.view_controller = ViewController(self.train_config.vision)
             self.agent_controller = AgentControllerActorCriticRates(self.agents_list, self.view_controller)
+
+            are_beta_agents = True if self.train_config.beta_rate > 0 else False
             for nummer in range(self.train_config.num_agents):
-                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget)
+                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget, are_beta_agents)
                 agent.policy_network, agent.policy_value = self.init_networks()
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)

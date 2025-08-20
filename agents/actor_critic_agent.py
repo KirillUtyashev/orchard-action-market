@@ -30,12 +30,13 @@ class ACAgentBeta(ACAgent):
 
 
 class ACAgentRates(ACAgentBeta):
-    def __init__(self, policy, num_agents, beta_rate, id_, budget=4):
+    def __init__(self, policy, num_agents, beta_rate, id_, budget=4, is_beta_agent=True):
         super().__init__(policy, beta_rate, id_)
         self.num_agents = num_agents
         self.budget = float(budget)
         print(self.budget)
 
+        self.is_beta_agent = is_beta_agent
         # neighbors: global IDs excluding self
         self.neigh_ids = [j for j in range(num_agents) if j != id_]
         self.n_neigh = len(self.neigh_ids)

@@ -186,15 +186,15 @@ class Algorithm:
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state, sample_state["poses"][i]))
-        v_value = self.agent_controller.get_collective_value(agent_obs, 0)
+        v_value = self.agent_controller.get_collective_value(agent_obs, 0, False)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state5, sample_state5["poses"][i]))
-        v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
+        v_value5 = self.agent_controller.get_collective_value(agent_obs, 0, False)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state6, sample_state6["poses"][i]))
-        v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
+        v_value6 = self.agent_controller.get_collective_value(agent_obs, 0, False)
 
         add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
 
@@ -366,6 +366,7 @@ class Algorithm:
         if tick == self.train_config.num_agents - 1:
             self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
             self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
+        self.agents_list[agent_id].collected_apples += reward
         return self._format_env_step_return(state, self.env.get_state(), reward, agent_id, positions, action, old_pos)
 
     @abstractmethod
