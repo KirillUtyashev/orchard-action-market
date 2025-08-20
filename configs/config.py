@@ -30,7 +30,7 @@ class TrainingConfig:
     skip: bool = False
     seed: int = 42069
     beta_rate: float = 0.05
-    budget: int = 4
+    budget: float = 4
 
 
 @dataclass

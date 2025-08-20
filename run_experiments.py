@@ -37,7 +37,7 @@ def parse_args(args):
     parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
     parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
-    parser.add_argument("--budget", type=int, default=4, help="Budget")
+    parser.add_argument("--budget", type=float, default=4.0, help="Budget")
 
     return parser.parse_args(args)
 
