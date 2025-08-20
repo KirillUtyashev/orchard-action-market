@@ -98,12 +98,17 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)
 
-    def get_collective_value(self, states, agent_id):
+    def collective_value_from_state(self, state, positions, agent_id=None, count_for_alpha=True):
+        observations = self.get_all_agent_obs(state, positions)
+        return self.get_collective_value(observations, agent_id, count_for_alpha)
+
+    def get_collective_value(self, states, agent_id, count_for_alpha=True):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
                 value = agent.get_value_function(states[num]) * agent.agent_observing_probabilities[agent_id]
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item())
+                if count_for_alpha:
+                    agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)
                 sum_ += value
             else:
                 sum_ += agent.get_value_function(states[num])

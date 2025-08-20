@@ -23,6 +23,7 @@ class Agent:
         self.policy = policy
         self.policy_value = None
         self.id = id_
+        self.collected_apples = 0
 
     @abstractmethod
     def get_value_function(self, state):
