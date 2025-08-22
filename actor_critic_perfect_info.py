@@ -2,12 +2,13 @@ import os
 
 from matplotlib import pyplot as plt
 
-from agents.actor_critic_agent import ACAgent
+from agents.actor_critic_agent import ACAgent, ACAgentBeta, ACAgentRates
 from actor_critic import ActorCritic
 from config import CHECKPOINT_DIR
 from configs.config import ExperimentConfig
 from models.actor_dc_1d import ActorNetwork
 from models.value_function import VNetwork
+from plots import add_to_plots
 from value_function_learning.controllers import AgentControllerActorCritic, \
     ViewController
 import numpy as np
@@ -125,6 +126,10 @@ class ActorCriticPerfectNoAdvantage(ActorCritic):
         self.load_networks(name)
         agent_pos, apples = self._load_env_state()
         return agent_pos, apples
+
+    def log_progress(self, sample_state, sample_state5, sample_state6):
+        super().log_progress(sample_state, sample_state5, sample_state6)
+        add_to_plots(self.v_network_list[0].function.state_dict(), self.v_weights)
 
     def run(self):
         try:

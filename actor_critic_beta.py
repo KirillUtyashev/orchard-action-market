@@ -49,6 +49,12 @@ class ActorCriticBeta(ActorCritic):
             self.logger.error(f"Error collecting observations: {e}")
             raise
 
+    def restore_all(self):
+        name = f"""ActorCritic-<{self.train_config.num_agents}>_agents-_length-<{self.env_config.length}>_width-<{self.env_config.width}>_s_target-<{self.env_config.s_target}>-alpha-<{self.train_config.alpha}>-apple_mean_lifetime-<{self.env_config.apple_mean_lifetime}>-<{self.train_config.hidden_dimensions}>-<{self.train_config.num_layers}>-vision-<{self.train_config.vision}>-batch_size-<{self.train_config.batch_size}>-actor_alpha-<{self.train_config.actor_alpha}>-actor_hidden-<{self.train_config.hidden_dimensions_actor}>-actor_layers-<{self.train_config.num_layers_actor}>"""
+        self.load_networks(name)
+        agent_pos, apples = self._load_env_state()
+        return agent_pos, apples
+
     def run(self):
         try:
             self.view_controller = ViewController(self.train_config.vision)
