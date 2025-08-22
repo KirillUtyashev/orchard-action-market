@@ -50,6 +50,8 @@ class ACAgentRates(ACAgentBeta):
         self.agent_rates = np.full(num_agents, self.budget / (num_agents - 1))
         self.agent_rates[self.id] = 0
         self.agent_observing_probabilities = 1 - np.exp(-self.agent_rates)
+        print(f"Agent {id_} 1", self.agent_observing_probabilities[0])
+        print(f"Agent {id_} 2", self.agent_observing_probabilities[1])
         self.agent_observing_probabilities[self.id] = 0
 
         self.agent_alphas = np.zeros(num_agents)
