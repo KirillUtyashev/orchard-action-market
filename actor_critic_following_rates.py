@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
-from actor_critic_kirill import ActorCritic
+from actor_critic import ActorCritic
 from agents.actor_critic_agent import ACAgentRates
 from configs.config import ExperimentConfig
 import numpy as np

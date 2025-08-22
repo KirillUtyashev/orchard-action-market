@@ -1,4 +1,4 @@
-from actor_critic_kirill import ActorCritic
+from actor_critic import ActorCritic
 from agents.actor_critic_agent import ACAgent, ACAgentBeta
 from configs.config import ExperimentConfig
 from value_function_learning.controllers import AgentControllerActorCritic, \

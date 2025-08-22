@@ -6,6 +6,9 @@ from agents.rate_updater import RateUpdater
 
 
 class ACAgent(CommAgent):
+    # def __init__(self, policy, id_, num_agents=None):
+    #     super().__init__(policy, id_, num_agents)
+    #     self.policy_network = None
     def __init__(self, policy, id_):
         super().__init__(policy, id_)
         self.policy_network = None
