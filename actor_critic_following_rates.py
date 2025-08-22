@@ -369,11 +369,6 @@ class ActorCriticRatesFixed(ActorCriticRates):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config, f"""ActorCriticFixedRates-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>-beta-<{config.train_config.beta_rate}>-budget-<{config.train_config.budget}>""")
 
-    def restore_all(self):
-        name = f"""ActorCritic-<{self.train_config.num_agents}>_agents-_length-<{self.env_config.length}>_width-<{self.env_config.width}>_s_target-<{self.env_config.s_target}>-alpha-<{self.train_config.alpha}>-apple_mean_lifetime-<{self.env_config.apple_mean_lifetime}>-<{self.train_config.hidden_dimensions}>-<{self.train_config.num_layers}>-vision-<{self.train_config.vision}>-batch_size-<{self.train_config.batch_size}>-actor_alpha-<{self.train_config.actor_alpha}>-actor_hidden-<{self.train_config.hidden_dimensions_actor}>-actor_layers-<{self.train_config.num_layers_actor}>"""
-        self.load_networks(name)
-        agent_pos, apples = self._load_env_state()
-        return agent_pos, apples
 
     def training_step(self, step):
         super().training_step(step)
