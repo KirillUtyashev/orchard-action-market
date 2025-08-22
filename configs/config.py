@@ -7,7 +7,7 @@ from orchard.algorithms import despawn_apple, spawn_apple
 @dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
-    batch_size: int = 128
+    batch_size: int = 4
     alpha: float = 0.000275
     actor_alpha: float = 0.00005
     lr_schedule: dict = field(

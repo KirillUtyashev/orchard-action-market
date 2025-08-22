@@ -106,6 +106,7 @@ class Algorithm:
         self.debug = config.debug
         self.rng_state = None
 
+
         log_folder = Path("logs")
         log_folder.mkdir(parents=True, exist_ok=True)
 
@@ -141,6 +142,7 @@ class Algorithm:
 
         # Network(s) used for eval_network at the middle and end of training
         self.network_for_eval = []
+        self.v_weights = {}
         self.view_controller = None
         self.agent_controller = None
 
@@ -451,7 +453,7 @@ class Algorithm:
         return ckpt.get("step", 0)
 
     def restore_all(self):
-        self.load_networks(str(os.path.join(CHECKPOINT_DIR, self.name)))
+        self.load_networks(self.name)
         agent_pos, apples = self._load_env_state()
         return agent_pos, apples
 
@@ -497,7 +499,7 @@ class Algorithm:
                 # Periodic evaluation
                 if (step % eval_constant == 0) and (step != self.train_config.timesteps - 1):
                     self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
-                    graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6)
+                    graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
             # Final evaluation
             graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6)
             return self._evaluate_final()

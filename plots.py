@@ -39,7 +39,7 @@ colours = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
 graph = 0
 
 
-def graph_plots(name, plot, critic_loss, loss_plot, loss_plot1, loss_plot2):
+def graph_plots(name, plot, critic_loss, loss_plot, loss_plot1, loss_plot2, v_weights_plot=None):
     global graph
     graph += 1
     graph_folder = Path("graphs")
@@ -102,4 +102,36 @@ def graph_plots(name, plot, critic_loss, loss_plot, loss_plot1, loss_plot2):
     plt.grid(True)
     plt.savefig(name_folder / f"Training_Loss_{name}_{graph}.png")
     plt.close()
+
+    if len(v_weights_plot) > 0:
+        plt.figure(f"plots_{graph}_{name}", figsize=(10, 5))
+
+        # Get unique layer names (without the index suffix)
+        layers = set()
+        for key in plot.keys():
+            # Extract base name without the numeric suffix
+            base_name = ''.join(c for c in key)
+            layers.add(base_name[:len(base_name) - 1])
+
+        # Plot each layer's sampled weights with consistent colors
+        for idx, layer_name in enumerate(sorted(layers)):
+            if idx >= 10:  # Limit to 10 layers for readability
+                break
+
+            # Get all samples for this layer
+            samples = [plot[f"{layer_name}{i}"] for i in range(5)]
+
+            # Plot each sample trajectory
+            for sample_idx, sample_data in enumerate(samples):
+                if sample_idx == 0:
+                    plt.plot(sample_data, color=colours[idx], label=f"Layer {idx+1}")
+                else:
+                    plt.plot(sample_data, color=colours[idx], alpha=0.5)
+
+        plt.legend()
+        plt.title(f"Model Parameters during Training, Critic, iteration {graph}")
+        plt.xlabel("Training Step")
+        plt.ylabel("Parameter Value")
+        plt.savefig(name_folder / f"Value_{name}_{graph}.png")
+        plt.close()
 
