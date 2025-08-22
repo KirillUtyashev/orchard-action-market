@@ -412,8 +412,9 @@ class Algorithm:
         dst = os.path.join(path, f"{self.name}_ckpt.pt")
         torch.save(payload, dst)
 
-    def load_networks(self, path: str) -> int:
-        ckpt = torch.load(os.path.join(path, f"{self.name}_ckpt.pt"), map_location="cpu")
+    def load_networks(self, name: str) -> int:
+        path = str(os.path.join(CHECKPOINT_DIR, name))
+        ckpt = torch.load(os.path.join(path, f"{name}_ckpt.pt"), map_location="cpu")
 
         # map critics back
         layout_saved = ckpt.get("layout", "centralized")
@@ -470,12 +471,12 @@ class Algorithm:
     def train(self, agent_pos=None, apples=None) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            if self.train_config.timesteps < 2000000:
-                log_constant = 0.02 * 2000000
-                eval_constant = 0.1 * 2000000
-            else:
-                log_constant = 0.02 * self.train_config.timesteps
-                eval_constant = 0.1 * self.train_config.timesteps
+            # if self.train_config.timesteps < 2000000:
+            #     log_constant = 0.02 * 2000000
+            #     eval_constant = 0.1 * 2000000
+            # else:
+            log_constant = 0.02 * self.train_config.timesteps
+            eval_constant = 0.1 * self.train_config.timesteps
 
             self.create_env(agent_pos, apples)
 

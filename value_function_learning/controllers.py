@@ -54,8 +54,7 @@ class AgentControllerDecentralized(AgentController):
     def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
-            value = agent.get_value_function(states[num]) * agent.agent_observing_probabilities[agent_id]
-            # value = agent.get_value_function(states[num])
+            value = agent.get_value_function(states[num])
             sum_ += value
             if num != agent_id:
                 agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item())
@@ -90,6 +89,8 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
+            # if num != agent_id:
+            #     agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item())
             sum_ += value
         return sum_
 
@@ -106,10 +107,10 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
-                value = agent.get_value_function(states[num]) * agent.agent_observing_probabilities[agent_id]
+                value = agent.get_value_function(states[num])
                 if count_for_alpha:
                     agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)
-                sum_ += value
+                sum_ += value * agent.agent_observing_probabilities[agent_id]
             else:
                 sum_ += agent.get_value_function(states[num])
         return sum_
