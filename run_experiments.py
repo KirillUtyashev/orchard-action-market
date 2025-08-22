@@ -5,7 +5,7 @@ import random
 import torch
 
 from actor_critic_beta import ActorCriticBeta
-from actor_critic_following_rates import ActorCriticRates
+from actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed
 from actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
@@ -88,6 +88,8 @@ def main(args):
         algo = ActorCriticRates(exp_config)
     elif args.algorithm == "ActorCriticNoAdvantage":
         algo = ActorCriticPerfectNoAdvantage(exp_config)
+    elif args.algorithm == "ActorCriticRatesFixed":
+        algo = ActorCriticRatesFixed(exp_config)
     else:
         algo = ActorCriticBeta(exp_config)
     np.random.seed(train_config.seed)

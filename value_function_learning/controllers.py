@@ -107,6 +107,7 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
+                pass
                 value = agent.get_value_function(states[num])
                 if count_for_alpha:
                     agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)

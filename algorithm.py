@@ -501,7 +501,7 @@ class Algorithm:
                     self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
                     graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
             # Final evaluation
-            graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6)
+            graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
             return self._evaluate_final()
         except Exception as e:
             self.logger.error(f"Failed during training: {e}")
