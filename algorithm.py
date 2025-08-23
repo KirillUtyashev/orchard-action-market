@@ -496,7 +496,7 @@ class Algorithm:
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     if self.debug:
                         memory_snapshot(label=f"step={step}", show_children=True)
-                    self._save_best_networks()
+                    # self._save_best_networks()
                 self.update_lr(step)
 
                 # Periodic evaluation
