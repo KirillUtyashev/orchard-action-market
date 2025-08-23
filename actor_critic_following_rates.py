@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+
+from algorithm import Algorithm
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
 from actor_critic import ActorCritic
@@ -369,6 +371,5 @@ class ActorCriticRatesFixed(ActorCriticRates):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config, f"""ActorCriticFixedRates-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>-beta-<{config.train_config.beta_rate}>-budget-<{config.train_config.budget}>""")
 
-
     def training_step(self, step):
-        super().training_step(step)
+        Algorithm.training_step(self, step)
