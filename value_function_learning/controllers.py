@@ -52,10 +52,10 @@ class AgentControllerDecentralized(AgentController):
         super().__init__(agents, view_controller)
 
     def get_collective_value(self, states, agent_id):
-        sum_ = 0
-        for num, agent in enumerate(self.agents_list):
-            value = agent.get_value_function(states[num])
-            sum_ += value
+        sum_ = self.agents_list[agent_id].get_value_function(states[agent_id])
+        # for num, agent in enumerate(self.agents_list):
+        #     value = agent.get_value_function(states[num])
+        #     sum_ += value
         return sum_
 
 
