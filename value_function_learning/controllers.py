@@ -52,10 +52,11 @@ class AgentControllerDecentralized(AgentController):
         super().__init__(agents, view_controller)
 
     def get_collective_value(self, states, agent_id):
-        sum_ = self.agents_list[agent_id].get_value_function(states[agent_id])
-        # for num, agent in enumerate(self.agents_list):
-        #     value = agent.get_value_function(states[num])
-        #     sum_ += value
+        # sum_ = self.agents_list[agent_id].get_value_function(states[agent_id])
+        sum_ = 0
+        for num, agent in enumerate(self.agents_list):
+            value = agent.get_value_function(states[num])
+            sum_ += value
         return sum_
 
 
@@ -106,11 +107,25 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)
 
-    def collective_value_from_state(self, state, positions, agent_id=None):
-        observations = self.get_all_agent_obs(state, positions)
-        return self.get_collective_value(observations, agent_id)
+    def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
+        new_observations = self.get_all_agent_obs(new_state, new_positions)
+        old_observations = self.get_all_agent_obs(state, positions)
+        sum_ = 0
+        for num, agent in enumerate(self.agents_list):
+            if num != agent_id:
+                q_value = get_config()["discount"] * agent.get_value_function(new_observations[num])
+                v_value = agent.get_value_function(old_observations[num])
+                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value - v_value, agent.rate)
+                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[agent_id]
+            else:
+                sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
+        return sum_
 
-    def get_collective_value(self, states, agent_id):
+    def collective_value_from_state(self, state, positions, agent_id=None, discount=None):
+        observations = self.get_all_agent_obs(state, positions)
+        return self.get_collective_value(observations, agent_id, discount)
+
+    def get_collective_value(self, states, agent_id, discount=None):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:

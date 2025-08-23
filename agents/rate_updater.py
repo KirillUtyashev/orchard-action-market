@@ -25,12 +25,12 @@ class RateUpdater:
         alphas = np.clip(list(r_sum_by_local.values()), 1e-8, 1000)
 
         # Encouraging putting more weight into strong candidates
-        const_2 = 2
-
-        alphas = np.power(alphas, const_2)
+        # const_2 = 2
+        #
+        # alphas = np.power(alphas, const_2)
 
         alphas = np.where(alphas < 0, 0, alphas)
-        new_alphas = find_allocs_slsqp(alphas, self.M)
+        new_alphas = find_allocs_closed_form(alphas, self.M)
 
         new_alphas = np.where(alphas <= 0, 0, new_alphas)
 
@@ -118,3 +118,60 @@ def find_allocs_slsqp(alphas, budget=4.0, scale=1.0):
         return
     # fallback: feasible uniform
     # return np.full(n, budget / n)
+
+
+def find_allocs_closed_form(alphas, budget=4.0):
+    """
+    Closed-form solution to:
+        max_{λ_j >= 0}  sum_j (1 - e^{-λ_j}) * α_j
+        s.t.            sum_j λ_j = M
+
+    Using: e^{-λ_j} α_j = μ  =>  λ_j = ln(α_j) - ln(μ),
+    and sum_j λ_j = M  =>  ln(μ) = (sum_j ln(α_j) - M) / m   over active j.
+
+    Handles α_j <= 0 by excluding them (λ_j = 0) and re-solving on the reduced set.
+    """
+    alphas = np.asarray(alphas, dtype=float)
+    n = alphas.size
+    if n == 0:
+        return np.array([], dtype=float)
+
+    lambdas = np.zeros(n, dtype=float)
+
+    # Start with strictly positive α_j only; non-positive get λ_j = 0.
+    active = alphas > 0.0
+    if not np.any(active):
+        return lambdas  # all zeros
+
+    # Active-set loop: drop entries that become negative and re-solve.
+    while True:
+        idx = np.where(active)[0]
+        m = idx.size
+        if m == 0:
+            break
+
+        # ln(μ) = (Σ ln α_j - M) / m   over active j
+        sum_log_alpha = np.sum(np.log(alphas[idx]))
+        ln_mu = (sum_log_alpha - budget) / m
+
+        # λ_j = ln(α_j) - ln(μ)
+        lam = np.log(alphas[idx]) - ln_mu
+
+        # Identify negatives; those must be set to 0 and removed from active set
+        neg_mask = lam < 0.0
+        if np.any(neg_mask):
+            # deactivate those and continue the loop
+            active[idx[neg_mask]] = False
+            # (Do not fix others yet; recompute cleanly next iteration)
+            continue
+
+        # All non-negative => we're done; write them out
+        lambdas[idx] = lam
+        break
+
+    # Numerical guard: ensure exact feasibility within tolerance by simple rescale (rarely needed)
+    s = lambdas.sum()
+    if s > 0:
+        lambdas *= (budget / s)
+
+    return lambdas

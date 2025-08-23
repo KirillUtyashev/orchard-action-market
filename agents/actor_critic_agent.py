@@ -32,29 +32,13 @@ class ACAgentRatesFixed(ACAgent):
         assert self.agent_observing_probabilities[self.id] == 0.0
 
 
-class ACAgentBeta(ACAgent):
-    def __init__(self, policy, beta_rate, id_):
-        super().__init__(policy,  id_)
-        self.beta_temp_batch = []
-        self.beta = 0.0
-        self.rate = beta_rate
-
-    def update_beta(self):
-        if len(self.beta_temp_batch) != 0:
-            avg_beta_for_this_sec = np.mean(self.beta_temp_batch)
-            new_beta = get_discounted_value(self.beta, avg_beta_for_this_sec, self.rate)
-            self.beta = new_beta
-            self.beta_temp_batch = []
-
-
-class ACAgentRates(ACAgentBeta):
+class ACAgentRates(ACAgent):
     def __init__(self, policy, num_agents, beta_rate, id_, budget=4, is_beta_agent=True):
-        super().__init__(policy, beta_rate, id_)
+        super().__init__(policy, id_)
         self.num_agents = num_agents
         self.budget = float(budget)
         print(self.budget)
 
-        self.is_beta_agent = is_beta_agent
         # neighbors: global IDs excluding self
         self.neigh_ids = [j for j in range(num_agents) if j != id_]
         self.n_neigh = len(self.neigh_ids)

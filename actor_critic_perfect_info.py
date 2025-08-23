@@ -2,7 +2,7 @@ import os
 
 from matplotlib import pyplot as plt
 
-from agents.actor_critic_agent import ACAgent, ACAgentBeta, ACAgentRates
+from agents.actor_critic_agent import ACAgent, ACAgentRates
 from actor_critic import ActorCritic
 from config import CHECKPOINT_DIR
 from configs.config import ExperimentConfig
