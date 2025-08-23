@@ -17,6 +17,7 @@ import psutil
 from dataclasses import dataclass
 from typing import Tuple
 
+times = 0
 
 @dataclass
 class EvalResult:
@@ -411,7 +412,9 @@ class Algorithm:
             else:
                 payload["actors"].append(None)
 
-        dst = os.path.join(path, f"{self.name}_ckpt.pt")
+        global times
+        dst = os.path.join(path, f"{self.name}_ckpt_{times}.pt")
+        times += 1
         torch.save(payload, dst)
 
     def load_networks(self, name: str) -> int:
