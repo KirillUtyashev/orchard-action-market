@@ -88,6 +88,20 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         return sum_
 
 
+class AgentControllerActorCriticRatesFixed(AgentControllerActorCritic):
+    def __init__(self, agents, view_controller):
+        super().__init__(agents, view_controller)
+
+    def get_collective_value(self, states, agent_id):
+        sum_ = 0
+        for num, agent in enumerate(self.agents_list):
+            if num != agent_id:
+                sum_ += agent.get_value_function(states[num]) * agent.agent_observing_probabilities[agent_id]
+            else:
+                sum_ += agent.get_value_function(states[num])
+        return sum_
+
+
 class AgentControllerActorCriticRates(AgentControllerActorCritic):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)

@@ -1,5 +1,7 @@
+import glob
 import logging
 import random
+import re
 from abc import abstractmethod
 from pathlib import Path
 from typing import Optional
@@ -418,24 +420,44 @@ class Algorithm:
         torch.save(payload, dst)
 
     def load_networks(self, name: str) -> int:
-        path = str(os.path.join(CHECKPOINT_DIR, name))
-        ckpt = torch.load(os.path.join(path, f"{name}_ckpt.pt"), map_location="cpu")
+        path = os.path.join(CHECKPOINT_DIR, name)
+
+        # 1) Find the newest ckpt_{number}.pt by numeric suffix
+        candidates = glob.glob(os.path.join(path, "*_ckpt_*.pt"))
+
+        latest_step = None
+        latest_path = None
+
+        for f in candidates:
+            m = re.search(r"ckpt_(\d+)\.pt$", os.path.basename(f))
+            if m:
+                step = int(m.group(1))
+                if latest_step is None or step > latest_step:
+                    latest_step, latest_path = step, f
+
+        # Fallback to legacy file if no step-tagged snapshot is present
+        if latest_path is None:
+            latest_path = os.path.join(path, f"{name}_ckpt.pt")
+
+        ckpt = torch.load(latest_path, map_location="cpu")
+
+        # 2) Set global 'times' to the detected step (or ckpt['step'] if present)
+        step_in_ckpt = ckpt.get("step")
+        final_step = step_in_ckpt if isinstance(step_in_ckpt, int) else (latest_step or 0)
+        global times
+        times = final_step
 
         # map critics back
         layout_saved = ckpt.get("layout", "centralized")
         crit_blobs = ckpt.get("critics", [])
-
-        # Build current critics view (dedup like on save)
         layout_now, critics_now = self._collect_unique_critics()
 
         if layout_saved == "centralized":
-            # Expect exactly 1 critic blob; load into the (single) current critic object
             if crit_blobs and critics_now:
                 blob = crit_blobs[0]["blob"]
-                name, obj = critics_now[0]
+                _, obj = critics_now[0]
                 obj.import_net_state(blob)
         else:
-            # decentralized: expect N unique critics; load in the same unique order
             for (name_now, obj_now), saved in zip(critics_now, crit_blobs):
                 blob = saved["blob"]
                 obj_now.import_net_state(blob)
@@ -452,8 +474,10 @@ class Algorithm:
         if rng is not None:
             self.rng_state = rng
             self.restore_rng_state()
+
+        print(f"Restoring from: {latest_path}")
         print("Restoring networks: ", random.getstate()[1][0])
-        return ckpt.get("step", 0)
+        return final_step
 
     def restore_all(self):
         self.load_networks(self.name)

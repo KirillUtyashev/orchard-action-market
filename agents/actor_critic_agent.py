@@ -17,6 +17,21 @@ class ACAgent(CommAgent):
         self.policy_network.add_experience(state, new_state, reward, action, old_positions, new_positions, self.id)
 
 
+class ACAgentRatesFixed(ACAgent):
+    def __init__(self, policy, num_agents, id_, budget=4):
+        super().__init__(policy,  id_)
+        self.num_agents = num_agents
+        self.budget = float(budget)
+        print(self.budget)
+        self.agent_rates = np.full(num_agents, self.budget / (num_agents - 1))
+        self.agent_rates[self.id] = 0
+        self.agent_observing_probabilities = 1 - np.exp(-self.agent_rates)
+        print(f"Agent {id_} 1", self.agent_observing_probabilities[0])
+        print(f"Agent {id_} 2", self.agent_observing_probabilities[1])
+        assert self.agent_rates[self.id] == 0.0
+        assert self.agent_observing_probabilities[self.id] == 0.0
+
+
 class ACAgentBeta(ACAgent):
     def __init__(self, policy, beta_rate, id_):
         super().__init__(policy,  id_)
