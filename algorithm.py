@@ -489,8 +489,10 @@ class Algorithm:
         self.collect_observation(step)
 
         # Train if enough samples collected
-        if len(self.agents_list[0].policy_value.batch_states) >= self.train_config.batch_size:
-            self.update_critic()
+        if hasattr(self.agents_list[0], "policy_value"):
+            for i in range(self.train_config.num_agents):
+                if len(self.agents_list[i].policy_value.batch_states) >= self.train_config.batch_size:
+                    self.agents_list[i].policy_value.train()
 
         if hasattr(self.agents_list[0], "policy_network"):
             for i in range(self.train_config.num_agents):

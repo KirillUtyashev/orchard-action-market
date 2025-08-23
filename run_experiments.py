@@ -4,7 +4,6 @@ import numpy as np
 import random
 import torch
 
-from actor_critic_beta import ActorCriticBeta
 from actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed
 from actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
@@ -91,7 +90,7 @@ def main(args):
     elif args.algorithm == "ActorCriticRatesFixed":
         algo = ActorCriticRatesFixed(exp_config)
     else:
-        algo = ActorCriticBeta(exp_config)
+        exit(1)
     np.random.seed(train_config.seed)
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)

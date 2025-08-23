@@ -61,7 +61,6 @@ def plot_agent_rewards(collected_rewards_over_time,
         plt.close()
 
 
-
 def load_alphas(filepath: str):
     """
     Load a .npz file saved with save_follow_rates_arrays() and
@@ -100,15 +99,6 @@ def load_follow_rates(filepath: str):
     return foll_rate_hist
 
 
-def load_beta_arrays(filepath: str):
-    data = np.load(filepath, allow_pickle=False)
-    beta_hist = {}
-    for key in data.files:  # "agent_0", "agent_1", ...
-        agent_id = int(key.split("_")[1])
-        beta_hist[agent_id] = data[key]
-    return beta_hist
-
-
 class ActorCriticRates(ActorCritic):
     def __init__(self, config: ExperimentConfig, name=None):
         if name is None:
@@ -119,7 +109,6 @@ class ActorCriticRates(ActorCritic):
         self.foll_rate_hist = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
         self.agent_distance_hist = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
         self.alpha_ema = {i: np.zeros((0, self.train_config.num_agents), dtype=float) for i in range(self.train_config.num_agents)}
-        self.beta_hist = {i: np.zeros((0,), dtype=float) for i in range(self.train_config.num_agents)}
         self.collected_rewards_over_time = np.zeros((0, self.train_config.num_agents), dtype=float)
 
     def _record_rates(self, agent_i: int, agent_rates, alphas):
@@ -150,48 +139,11 @@ class ActorCriticRates(ActorCritic):
             stack.append(distance)
         self.agent_distance_hist[agent_i] = np.vstack([self.agent_distance_hist[agent_i], stack])
 
-    def _record_beta(self, agent_i: int, beta_value: float):
-        """Append one scalar beta for agent_i (dynamic, from empty)."""
-        self.beta_hist[agent_i] = np.append(self.beta_hist[agent_i], float(beta_value))
-
     def _record_collected_rewards(self):
         array = np.empty(self.train_config.num_agents)
         for i in range(self.train_config.num_agents):
             array[i] = self.agents_list[i].collected_apples
         self.collected_rewards_over_time = np.vstack([self.collected_rewards_over_time, array])
-
-    def _save_beta_arrays(self):
-        """
-        Save all agents' beta histories into a single .npz file.
-        Keys: agent_0, agent_1, ..., each a 1-D array of length = #records.
-        """
-        path = os.path.join(CHECKPOINT_DIR, self.name)
-        if not os.path.isdir(path):
-            print("new_path")
-            os.makedirs(path)
-        path = os.path.join(str(path), "betas.npz")
-        payload = {f"agent_{i}": self.beta_hist[i] for i in range(self.train_config.num_agents)}
-        np.savez(path, **payload)
-
-    def _save_beta_for_agent(self, agent_i: int):
-        """Save a PNG line plot of beta history for a single agent."""
-        series = self.beta_hist[agent_i]  # 1-D array, length = #records
-        if series.size == 0:
-            return  # nothing to plot yet
-
-        plt.figure(figsize=(10, 3))
-        plt.plot(series)
-        plt.title(f"Beta of Agent {agent_i}")
-        plt.xlabel("Training Step")
-        plt.ylabel("β")
-        out_path = self.graphs_out_path / f"Beta_agent_{agent_i}.png"
-        plt.savefig(out_path)
-        plt.close()
-
-    def _save_all_betas(self):
-        """Save one PNG per agent for all beta histories."""
-        for i in range(self.train_config.num_agents):
-            self._save_beta_for_agent(i)
 
     def _save_follow_rates_for_agent(self, agent_i: int):
         """
@@ -244,18 +196,9 @@ class ActorCriticRates(ActorCritic):
     def update_critic(self):
         super().update_critic()
         for num, agent in enumerate(self.agents_list):
-            # Update betas
-            update_betas = False
-            if agent.is_beta_agent:
-                agent.update_beta()
-                update_betas = True
-
             # Record rates for plotting
             self._record_rates(num, agent.agent_rates, agent.agent_alphas)
             self._save_agent_distances(num)
-            if update_betas:
-                self._record_beta(num, agent.beta)
-
             self._record_collected_rewards()
 
     def training_step(self, step):
@@ -281,13 +224,8 @@ class ActorCriticRates(ActorCritic):
                             new_positions = []
                             for j in range(len(self.agents_list)):
                                 new_positions.append(self.agents_list[j].position)
-                            total_feedback = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions, agent)
-                            if self.agents_list[each_agent].is_beta_agent:
-                                self.agents_list[each_agent].beta_temp_batch.append(total_feedback)
-                                advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
-                            else:
-                                advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent)
-                            self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage_for_actor)
+                            advantage = reward + self.agent_controller.get_collective_advantage(processed_state, positions, processed_new_state, new_positions, agent)
+                            self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage)
 
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
