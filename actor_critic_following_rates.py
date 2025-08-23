@@ -5,11 +5,12 @@ from algorithm import Algorithm
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
 from actor_critic import ActorCritic
-from agents.actor_critic_agent import ACAgentRates
+from agents.actor_critic_agent import ACAgentRates, ACAgentRatesFixed
 from configs.config import ExperimentConfig
 import numpy as np
 from helpers import get_discounted_value
-from value_function_learning.controllers import AgentControllerActorCriticRates, ViewController
+from value_function_learning.controllers import AgentControllerActorCriticRates, \
+    AgentControllerActorCriticRatesFixed, ViewController
 from main import plot_smoothed
 
 linestyles = ["-", "--", "-.", ":"]
@@ -323,6 +324,7 @@ class ActorCriticRates(ActorCritic):
             labels = [f"Distance to {j}" for j in range(self.train_config.num_agents)]
             plot = plot_smoothed(series_list, labels, title=f"Distance to Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
             plot.savefig(self.graphs_out_path / f"Distance_agent_{agent_id}.png")
+            plot.close()
 
         self._save_follow_rates_arrays()
         if self.train_config.beta_rate > 0:
@@ -367,9 +369,52 @@ class ActorCriticRates(ActorCritic):
             raise
 
 
-class ActorCriticRatesFixed(ActorCriticRates):
+class ActorCriticRatesFixed(ActorCritic):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config, f"""ActorCriticFixedRates-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>-beta-<{config.train_config.beta_rate}>-budget-<{config.train_config.budget}>""")
 
-    def training_step(self, step):
-        Algorithm.training_step(self, step)
+    def init_agents_for_eval(self):
+        a_list = []
+        for ii in range(len(self.agents_list)):
+            trained_agent = ACAgentRatesFixed("learned_policy", self.train_config.num_agents, ii, self.train_config.budget)
+            trained_agent.policy_network = self.p_network_list[ii]
+            a_list.append(trained_agent)
+        return a_list
+
+    def collect_observation(self, step):
+        try:
+            for tick in range(self.train_config.num_agents):
+                s, new_s, r, agent, positions, action = self.env_step(tick)
+                if action is not None:
+                    for each_agent in range(len(self.agents_list)):
+                        curr_pos = self.agents_list[each_agent].position
+                        reward = r if each_agent == agent else 0
+                        processed_state = self.view_controller.process_state(s, positions[each_agent])
+                        processed_new_state = self.view_controller.process_state(new_s, curr_pos)
+                        self.agents_list[each_agent].add_experience(
+                            processed_state, processed_new_state, reward)
+                        if each_agent == agent:
+                            new_positions = []
+                            for j in range(len(self.agents_list)):
+                                new_positions.append(self.agents_list[j].position)
+                            advantage = reward + self.train_config.discount * self.agent_controller.collective_value_from_state(new_s, new_positions, agent) - self.agent_controller.collective_value_from_state(s, positions, agent)
+                            self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage)
+        except Exception as e:
+            self.logger.error(f"Error collecting observations: {e}")
+            raise
+
+    def run(self):
+        try:
+            self.view_controller = ViewController(self.train_config.vision)
+            self.agent_controller = AgentControllerActorCriticRatesFixed(self.agents_list, self.view_controller)
+            for nummer in range(self.train_config.num_agents):
+                agent = ACAgentRatesFixed("learned_policy", self.train_config.num_agents, nummer, self.train_config.budget)
+                agent.policy_network, agent.policy_value = self.init_networks()
+                self.agents_list.append(agent)
+                self.v_network_list.append(agent.policy_value)
+                self.p_network_list.append(agent.policy_network)
+            self.network_for_eval = self.p_network_list
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
+        except Exception as e:
+            self.logger.error(f"Failed to run decentralized training: {e}")
+            raise
