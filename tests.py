@@ -17,7 +17,7 @@ from value_function_learning.train_value_function import \
 
 class TestOrchard:
     def setup_orchard(self, width):
-        self.agents_list = [SimpleAgent(policy=random_policy) for _ in range(2)]
+        self.agents_list = [SimpleAgent(random_policy, i) for i in range(2)]
         self.orchard = Orchard(10, width, 2, self.agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
 
     def test_spawn(self):
@@ -99,25 +99,25 @@ class TestOrchard:
 
 class TestViewController:
     def test_perfect_info_simple(self):
-        agents_list = [SimpleAgent(policy=random_policy) for _ in range(2)]
+        agents_list = [SimpleAgent(random_policy, i) for i in range(2)]
         orchard = Orchard(10, 1, 2, agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
         orchard.initialize(agents_list, [np.array([0, 3]), np.array([0, 8])])
-        view_controller = ViewController()
+        view_controller = ViewController(0)
         result = view_controller.process_state(orchard.get_state(), agents_list[0].position)
         expected = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
         assert np.array_equal(result, expected)
 
     def test_perfect_info_comm(self):
-        agents_list = [CommAgent(policy=random_policy) for _ in range(2)]
+        agents_list = [CommAgent(random_policy, i) for i in range(2)]
         orchard = Orchard(10, 1, 2, agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
         orchard.initialize(agents_list, [np.array([0, 3]), np.array([0, 8])])
-        view_controller = ViewController()
+        view_controller = ViewController(0)
         result = view_controller.process_state(orchard.get_state(), agents_list[0].position)
         expected = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
         assert np.array_equal(result, expected)
 
     def test_local_info_comm(self):
-        agents_list = [CommAgent(policy=random_policy) for _ in range(2)]
+        agents_list = [CommAgent(random_policy, i) for i in range(2)]
         orchard = Orchard(10, 1, 2, agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
         orchard.initialize(agents_list, [np.array([0, 3]), np.array([0, 8])])
         view_controller = ViewController(vision=5)
@@ -126,10 +126,10 @@ class TestViewController:
         assert np.array_equal(result, expected)
 
     def test_perfrect_simple_2d(self):
-        agents_list = [SimpleAgent(policy=random_policy) for _ in range(2)]
+        agents_list = [CommAgent(random_policy, i) for i in range(2)]
         orchard = Orchard(5, 2, 2, agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
         orchard.initialize(agents_list, [np.array([0, 0]), np.array([1, 1])])
-        view_controller = ViewController()
+        view_controller = ViewController(0)
         result = view_controller.process_state(orchard.get_state(), agents_list[1].position)
         expected = np.array([1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]).reshape(-1, 1)
         assert np.array_equal(result, expected)
