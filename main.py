@@ -3,7 +3,7 @@ import os
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_rgba
 
-from agents.actor_critic_agent import ACAgent, ACAgentBeta
+from agents.actor_critic_agent import ACAgent
 from agents.communicating_agent import CommAgent
 from agents.simple_agent import SimpleAgent
 from orchard.environment import *
@@ -107,7 +107,7 @@ def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.tight_layout()
-    plt.show()
+    # plt.show()
 
 
 def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
@@ -152,7 +152,7 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
         agent_controller = AgentControllerDecentralized(agents_list, ViewController(vision))
     elif type(agents_list[0]) is SimpleAgent:
         agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
-    elif type(agents_list[0]) is ACAgent or type(agents_list[0]) is ACAgentBeta:
+    elif type(agents_list[0]) is ACAgent:
         agent_controller = AgentControllerActorCritic(agents_list, ViewController(vision))
     else:
         agent_controller = AgentControllerActorCriticRates(agents_list, ViewController(vision))
@@ -222,13 +222,13 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     # for agent_id in range(num_agents):
     #     arr = agent_distance_hist[agent_id]  # shape [T, num_agents]
     #     series_list = [arr[:, j] for j in range(num_agents)]
-    #     labels = [f"Distance to {j}" for j in range(num_agents)]
-    #     plot_smoothed(series_list, labels, title=f"Distance to Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
+    #     labels = [f"Distance to Agent {j}" for j in range(num_agents)]
+    #     plot_smoothed(series_list, labels, title=f"Distances of Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
     # for agent_id in range(num_agents):
     #     arr = alpha_ema[agent_id]  # shape [T, num_agents]
     #     series_list = [arr[:, j] for j in range(num_agents)]
-    #     labels = [f"Alpha EMA to {j}" for j in range(num_agents)]
-    #     plot_raw(series_list, labels, title="Alpha EMA over time", xlabel="Training Step", ylabel="Alpha EMA")
+    #     labels = [f"Q-value from Agent {j}" for j in range(num_agents)]
+    #     plot_smoothed(series_list, labels, title=f"Observed Q-values Over Time, Agent {agent_id}", xlabel="Training Step", ylabel="Q-value")
 
 
     # positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
