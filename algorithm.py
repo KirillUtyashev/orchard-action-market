@@ -188,15 +188,15 @@ class Algorithm:
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state, sample_state["poses"][i]))
-        v_value = self.agent_controller.get_collective_value(agent_obs, 0, False)
+        v_value = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state5, sample_state5["poses"][i]))
-        v_value5 = self.agent_controller.get_collective_value(agent_obs, 0, False)
+        v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
             agent_obs.append(self.view_controller.process_state(sample_state6, sample_state6["poses"][i]))
-        v_value6 = self.agent_controller.get_collective_value(agent_obs, 0, False)
+        v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
         add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
 
@@ -473,12 +473,12 @@ class Algorithm:
     def train(self, agent_pos=None, apples=None) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            if self.train_config.timesteps < 1000000:
-                log_constant = 0.02 * 1000000
-                eval_constant = 0.1 * 1000000
-            else:
-                log_constant = 0.02 * self.train_config.timesteps
-                eval_constant = 0.1 * self.train_config.timesteps
+            # if self.train_config.timesteps < 1000000:
+            #     log_constant = 0.02 * 1000000
+            #     eval_constant = 0.1 * 1000000
+            # else:
+            log_constant = 0.02 * self.train_config.timesteps
+            eval_constant = 0.1 * self.train_config.timesteps
 
             self.create_env(agent_pos, apples)
 
