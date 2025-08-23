@@ -285,7 +285,7 @@ class ActorCriticRates(ActorCritic):
                                 self.agents_list[each_agent].beta_temp_batch.append(total_feedback)
                                 advantage_for_actor = total_feedback - self.agents_list[each_agent].beta
                             else:
-                                advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent, False)
+                                advantage_for_actor = total_feedback - self.agent_controller.collective_value_from_state(s, positions, agent)
                             self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage_for_actor)
 
         except Exception as e:
