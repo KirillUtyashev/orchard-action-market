@@ -56,11 +56,6 @@ class AgentControllerDecentralized(AgentController):
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
             sum_ += value
-            if num != agent_id:
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item())
-                # agent.agent_alphas[agent_id] = np.power(agent.agent_alphas[agent_id], 1.5)
-                # agent.agent_alphas[agent_id] = get_config()["discount"] * value.item()
-                # agent.agent_alphas[agent_id] += np.power(get_config()["discount"] * value.item(), 2)
         return sum_
 
 
@@ -81,16 +76,14 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         action = np.random.choice(len(probs), p=probs)
         return action
 
-    def collective_value_from_state(self, state, positions, agent_id=None, count_for_alpha=False):
+    def collective_value_from_state(self, state, positions, agent_id=None):
         observations = self.get_all_agent_obs(state, positions)
         return self.get_collective_value(observations, agent_id)
 
-    def get_collective_value(self, states, agent_id, count_for_alpha=False):
+    def get_collective_value(self, states, agent_id,):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
-            # if num != agent_id:
-            #     agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item())
             sum_ += value
         return sum_
 
@@ -99,18 +92,17 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
     def __init__(self, agents, view_controller):
         super().__init__(agents, view_controller)
 
-    def collective_value_from_state(self, state, positions, agent_id=None, count_for_alpha=True):
+    def collective_value_from_state(self, state, positions, agent_id=None):
         observations = self.get_all_agent_obs(state, positions)
-        return self.get_collective_value(observations, agent_id, count_for_alpha)
+        return self.get_collective_value(observations, agent_id)
 
-    def get_collective_value(self, states, agent_id, count_for_alpha=True):
+    def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
                 pass
                 value = agent.get_value_function(states[num])
-                if count_for_alpha:
-                    agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)
+                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)
                 sum_ += value * agent.agent_observing_probabilities[agent_id]
             else:
                 sum_ += agent.get_value_function(states[num])
@@ -128,57 +120,53 @@ class ViewController:
 
     def process_state(self, state, agent_pos):
         agents, apples = unwrap_state(state)
+        H, W = agents.shape
 
-        height, length = agents.shape
+        # Helper to append agent_pos if provided
+        def append_pos(vec):
+            if agent_pos is None:
+                return vec
+            pos = convert_position(agent_pos)
+            return np.concatenate((vec, pos), axis=0)
 
         if self.perfect_info:
-            agents_vector = agents[0].reshape(-1, 1)
-            apples_vector = apples[0].reshape(-1, 1)
-            for i in range(1, height):
-                agents_vector = np.concatenate([agents_vector, agents[i].reshape(-1, 1)], axis=0)
-                apples_vector = np.concatenate([apples_vector, apples[i].reshape(-1, 1)], axis=0)
+            # Flatten once; no per-row concatenation
+            res = np.concatenate(
+                (agents.ravel()[:, None],
+                 apples.ravel()[:, None]),
+                axis=0
+            )
+            return append_pos(res)
 
-            res = np.concatenate([agents_vector, apples_vector], axis=0)
-            if agent_pos is not None:
-                pos = convert_position(agent_pos)
-                res = np.concatenate([res, pos], axis=0)
-            return res
+        # Partial info path
+        half = self.vision // 2
+
+        # Pad horizontally always; pad vertically only if H != 1 (to match your original logic)
+        pad_y = (half, half) if H != 1 else (0, 0)
+        pad_x = (half, half)
+
+        ap = np.pad(agents, (pad_y, pad_x), mode='constant', constant_values=-1)
+        bp = np.pad(apples, (pad_y, pad_x), mode='constant', constant_values=-1)
+
+        r, c = agent_pos
+        r_true = r + pad_y[0]
+        c_true = c + half
+
+        # Extract local vision window
+        rs = slice(r_true - half, r_true + half + 1)
+        cs = slice(c_true - half, c_true + half + 1)
+        true_a = ap[rs, cs]
+        true_b = bp[rs, cs]
+
+        # Vectorize without loops; preserve your 1D handling
+        if H != 1:
+            av = true_a.ravel()[:, None]
+            bv = true_b.ravel()[:, None]
         else:
-            half = self.vision // 2
+            # match your original: use transposed window so shape is (2*half+1, 1)
+            av = true_a.T.ravel()[:, None]
+            bv = true_b.T.ravel()[:, None]
 
-            fill = np.full((half, len(agents[0])), -1, dtype=int)
+        res = np.concatenate((av, bv), axis=0)
+        return append_pos(res)
 
-            if height != 1:
-                ap = np.concatenate((fill, agents, fill))
-                bp = np.concatenate((fill, apples, fill))
-            else:
-                ap = agents
-                bp = apples
-
-            # build a column‐fill of shape (ap.shape[0], pad)
-            col_fill = np.full((ap.shape[0], half), -1, dtype=int)
-
-            # now pad left and right:
-            ap = np.concatenate((col_fill, ap, col_fill), axis=1)
-            bp = np.concatenate((col_fill, bp, col_fill), axis=1)
-            r, c = agent_pos
-
-            # get initial coordinate
-            r_true, c_true = r + half, c + half
-
-            true_a = ap[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
-            true_b = bp[r_true - half:r_true + half + 1, c_true - half:c_true + half + 1]
-
-            if height != 1:
-                agents_vector = true_a[0].reshape(-1, 1)
-                apples_vector = true_b[0].reshape(-1, 1)
-                for i in range(1, self.vision):
-                    agents_vector = np.concatenate([agents_vector, true_a[i].reshape(-1, 1)], axis=0)
-                    apples_vector = np.concatenate([apples_vector, true_b[i].reshape(-1, 1)], axis=0)
-                res = np.concatenate([agents_vector, apples_vector], axis=0)
-            else:
-                res = np.concatenate([true_a.T, true_b.T], axis=0)
-            if agent_pos is not None:
-                pos = convert_position(agent_pos)
-                res = np.concatenate([res, pos], axis=0)
-            return res
