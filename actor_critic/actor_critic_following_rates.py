@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from algorithm import Algorithm
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
 from actor_critic.actor_critic import ActorCritic
@@ -9,6 +10,7 @@ from configs.config import ExperimentConfig
 import numpy as np
 from helpers.helpers import get_discounted_value
 from helpers.controllers import AgentControllerActorCriticRates, \
+    AgentControllerActorCriticRatesAdvantage, \
     AgentControllerActorCriticRatesFixed, ViewController
 from main import plot_smoothed
 
@@ -274,14 +276,17 @@ class ActorCriticRates(ActorCritic):
         for num, agent in enumerate(self.agents_list):
             agent.agent_rates = np.asarray(self.foll_rate_hist[num][-1], dtype=float).copy()
             agent.agent_alphas = np.asarray(self.alpha_ema[num][-1], dtype=float).copy()
-        return super().restore_all()
+        # name = f"""ActorCriticFixedRates-<{self.train_config.num_agents}>_agents-_length-<{self.env_config.length}>_width-<{self.env_config.width}>_s_target-<{self.env_config.s_target}>-alpha-<{self.train_config.alpha}>-apple_mean_lifetime-<{self.env_config.apple_mean_lifetime}>-<{self.train_config.hidden_dimensions}>-<{self.train_config.num_layers}>-vision-<{self.train_config.vision}>-batch_size-<{self.train_config.batch_size}>-actor_alpha-<{self.train_config.actor_alpha}>-actor_hidden-<{self.train_config.hidden_dimensions_actor}>-actor_layers-<{self.train_config.num_layers_actor}>-beta-<0.0>-budget-<{self.train_config.budget}>"""
+        # self.load_networks(name)
+        # agent_pos, apples = self._load_env_state()
+        # return agent_pos, apples
+        super().restore_all()
 
     def run(self):
         try:
             self.view_controller = ViewController(self.train_config.vision)
             self.agent_controller = AgentControllerActorCriticRates(self.agents_list, self.view_controller)
 
-            are_beta_agents = True if self.train_config.beta_rate > 0 else False
             for nummer in range(self.train_config.num_agents):
                 agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget)
                 agent.policy_network, agent.policy_value = self.init_networks()
@@ -293,6 +298,45 @@ class ActorCriticRates(ActorCritic):
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise
+
+
+class ActorCriticRatesAdvantage(ActorCriticRates):
+    def __init__(self, config: ExperimentConfig):
+        super().__init__(config, f"""ActorCriticRatesAdv-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>-beta-<{config.train_config.beta_rate}>-budget-<{config.train_config.budget}>""")
+
+    def run(self):
+        try:
+            self.view_controller = ViewController(self.train_config.vision)
+            self.agent_controller = AgentControllerActorCriticRatesAdvantage(self.agents_list, self.view_controller)
+            for nummer in range(self.train_config.num_agents):
+                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget)
+                agent.policy_network, agent.policy_value = self.init_networks()
+                self.agents_list.append(agent)
+                self.v_network_list.append(agent.policy_value)
+                self.p_network_list.append(agent.policy_network)
+            self.network_for_eval = self.p_network_list
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
+        except Exception as e:
+            self.logger.error(f"Failed to run decentralized training: {e}")
+            raise
+
+    def log_progress(self, sample_state, sample_state5, sample_state6):
+        Algorithm.log_progress(self, sample_state, sample_state5, sample_state6)
+
+        for agent_id in range(self.train_config.num_agents):
+            self._save_follow_rates_for_agent(agent_id)
+            plt.figure(figsize=(10, 4))
+            arr = self.alpha_ema[agent_id]
+            for other_agent in range(self.train_config.num_agents):
+                series = arr[:, other_agent]  # <-- column j, not row j
+                if series.size > 0:
+                    plt.plot(series, label=f"Advantage-value from Agent {other_agent}", linestyle=linestyles[other_agent % len(linestyles)])
+            plt.legend()
+            plt.title(f"Observed Advantage-values for Agent {agent_id}")
+            plt.xlabel("Training Step")
+            plt.ylabel("Advantage-value")
+            plt.savefig(self.graphs_out_path / f"QAdvantage-values_agent_{agent_id}.png")
+            plt.close()
 
 
 class ActorCriticRatesFixed(ActorCritic):

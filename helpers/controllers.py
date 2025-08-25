@@ -135,6 +135,24 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
         return sum_
 
 
+class AgentControllerActorCriticRatesAdvantage(AgentControllerActorCriticRates):
+    def __init__(self, agents, view_controller):
+        super().__init__(agents, view_controller)
+
+    def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
+        new_observations = self.get_all_agent_obs(new_state, new_positions)
+        old_observations = self.get_all_agent_obs(state, positions)
+        sum_ = 0
+        for num, agent in enumerate(self.agents_list):
+            if num != agent_id:
+                q_value = get_config()["discount"] * agent.get_value_function(new_observations[num])
+                v_value = agent.get_value_function(old_observations[num])
+                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value - v_value, agent.rate)
+                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[agent_id]
+            else:
+                sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
+        return sum_
+
 class ViewController:
     def __init__(self, vision=None):
         if vision == 0:
