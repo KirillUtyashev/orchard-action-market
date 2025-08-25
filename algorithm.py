@@ -11,7 +11,7 @@ from config import CHECKPOINT_DIR, DEVICE
 from main import run_environment_1d
 from plots import add_to_plots, graph_plots
 from orchard.environment import *
-from helpers import generate_sample_states
+from helpers.helpers import generate_sample_states
 import os
 import time
 from policies.random_policy import random_policy

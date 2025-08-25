@@ -1,5 +1,5 @@
 from agents.actor_critic_agent import ACAgent
-from actor_critic import ActorCritic
+from actor_critic.actor_critic import ActorCritic
 from configs.config import ExperimentConfig
 from plots import add_to_plots
 from helpers.controllers import AgentControllerActorCritic, \
