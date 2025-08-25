@@ -1,10 +1,8 @@
-import math
-import random
 from abc import abstractmethod
 
 from agents.agent import calculate_ir
 from config import get_config
-from helpers import get_discounted_value, unwrap_state, convert_position
+from helpers.helpers import get_discounted_value, unwrap_state, convert_position
 import numpy as np
 
 
@@ -81,7 +79,7 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         observations = self.get_all_agent_obs(state, positions)
         return self.get_collective_value(observations, agent_id)
 
-    def get_collective_value(self, states, agent_id,):
+    def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
@@ -115,7 +113,7 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
             if num != agent_id:
                 q_value = get_config()["discount"] * agent.get_value_function(new_observations[num])
                 v_value = agent.get_value_function(old_observations[num])
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value - v_value, agent.rate)
+                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value, agent.rate)
                 sum_ += (q_value - v_value) * agent.agent_observing_probabilities[agent_id]
             else:
                 sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
