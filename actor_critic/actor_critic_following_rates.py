@@ -3,11 +3,11 @@ from pathlib import Path
 
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
-from actor_critic import ActorCritic
+from actor_critic.actor_critic import ActorCritic
 from agents.actor_critic_agent import ACAgentRates, ACAgentRatesFixed
 from configs.config import ExperimentConfig
 import numpy as np
-from helpers import get_discounted_value
+from helpers.helpers import get_discounted_value
 from helpers.controllers import AgentControllerActorCriticRates, \
     AgentControllerActorCriticRatesFixed, ViewController
 from main import plot_smoothed
