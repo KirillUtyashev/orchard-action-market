@@ -1,19 +1,15 @@
-import os
 import random
-import time
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 import torch
 import numpy as np
-from config import CHECKPOINT_DIR
 from configs.config import ExperimentConfig
-from .controllers import AgentControllerCentralized, \
+from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 from main import run_environment_1d
 from models.value_function import VNetwork
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
-from policies.random_policy import random_policy
 from algorithm import Algorithm
 
 
@@ -137,7 +133,7 @@ class DecentralizedValueFunction(ValueFunction):
     def init_agents_for_eval(self) -> List[CommAgent]:
         a_list = []
         for ii in range(len(self.agents_list)):
-            trained_agent = CommAgent("value_function", self.train_config.num_agents, ii)
+            trained_agent = CommAgent("value_function", ii, self.train_config.num_agents)
             trained_agent.policy_value = self.network_list[ii]
             a_list.append(trained_agent)
         return a_list
@@ -166,6 +162,12 @@ class DecentralizedValueFunction(ValueFunction):
             for tick in range(self.train_config.num_agents):
                 s, new_s, r, old_pos, agent = self.env_step(tick)
 
+                # curr_pos = self.agents_list[agent].position
+                # processed_state = self.view_controller.process_state(s, old_pos)
+                # processed_new_state = self.view_controller.process_state(new_s, curr_pos)
+                # self.agents_list[agent].add_experience(
+                #     processed_state, processed_new_state, r)
+
                 for each_agent in range(len(self.agents_list)):
                     curr_pos = self.agents_list[each_agent].position
                     reward = r if each_agent == agent else 0
@@ -188,7 +190,7 @@ class DecentralizedValueFunction(ValueFunction):
 
             # Initialize networks and agents
             for nummer in range(self.train_config.num_agents):
-                agent = CommAgent("value_function", self.train_config.num_agents, nummer)
+                agent = CommAgent("value_function", nummer, self.train_config.num_agents)
                 if self.train_config.alt_input:
                     if self.env_config.width != 1:
                         network = VNetwork(self.train_config.vision ** 2 + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
