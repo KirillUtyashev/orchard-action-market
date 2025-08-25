@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from helpers import ten
+from helpers.helpers import ten
 from config import DEVICE
 from models.network import Network
 torch.set_default_dtype(torch.float64)

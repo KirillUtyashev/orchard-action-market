@@ -1,7 +1,6 @@
 import os
 
 from matplotlib import pyplot as plt
-from matplotlib.colors import to_rgba
 
 from agents.actor_critic_agent import ACAgent
 from agents.communicating_agent import CommAgent
@@ -13,17 +12,21 @@ import random
 from policies.nearest import nearest_policy
 from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
-from metrics.metrics import PositionRecorder, append_metrics, \
-    append_positional_metrics, \
-    append_y_coordinates, plot_agent_specific_metrics, plot_agents_heatmap_alpha
-from value_function_learning.controllers import AgentControllerActorCritic, \
+from metrics.metrics import PositionRecorder, append_positional_metrics, \
+    append_y_coordinates, plot_agent_specific_metrics
+from helpers.controllers import AgentControllerActorCritic, \
     AgentControllerActorCriticRates, AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController
 
 
+adv_plot = []
+
 def step(agents_list, environment: Orchard, agent_controller, epsilon):
     agent = random.randint(0, environment.n - 1)
     state = environment.get_state()
+    old_positions = []
+    for agent_1 in agents_list:
+        old_positions.append(agent_1.position)
     if agents_list[agent].policy == "value_function":
         if random.random() < epsilon:
             action = random_policy(environment.available_actions)
@@ -40,8 +43,8 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon):
     # positions = []
     # for agent_ in agents_list:
     #     positions.append(agent_.position)
-    # agent_controller.collective_value_from_state(environment.get_state(), positions, agent)
-    # print(new_position)
+    # global adv_plot
+    # adv_plot.append(reward + get_config()["discount"] * agent_controller.collective_value_from_state(environment.get_state(), positions, agent).item() - agent_controller.collective_value_from_state(state, old_positions, agent).item())
     return agent, reward, 1 if action == nearest_policy(state, agents_list[agent].position) else 0, 1 if action == 2 else 0
 
 
@@ -218,6 +221,10 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
     plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, experiment, name, "x")
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, experiment, name, "y")
+
+    global adv_plot
+    plt.plot(adv_plot)
+    # plt.show()
 
     # for agent_id in range(num_agents):
     #     arr = agent_distance_hist[agent_id]  # shape [T, num_agents]

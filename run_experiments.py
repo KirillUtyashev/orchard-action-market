@@ -4,8 +4,8 @@ import numpy as np
 import random
 import torch
 
-from actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed
-from actor_critic_perfect_info import ActorCriticPerfect, \
+from actor_critic.actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed
+from actor_critic.actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
 from value_function_learning.train_value_function import (

@@ -82,11 +82,11 @@ class MainNet(nn.Module):
                     nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
-        for i in range(len(self.layers_list)):
-            x = F.leaky_relu(self.layers_list[i](x))
-        return x
-        # for i, layer in enumerate(self.layers_list):
-        #     x = layer(x)
-        #     if i < len(self.layers_list) - 1:   # no activation on last layer
-        #         x = F.leaky_relu(x)
+        # for i in range(len(self.layers_list)):
+        #     x = F.leaky_relu(self.layers_list[i](x))
         # return x
+        for i, layer in enumerate(self.layers_list):
+            x = layer(x)
+            if i < len(self.layers_list) - 1:   # no activation on last layer
+                x = F.leaky_relu(x)
+        return x

@@ -9,7 +9,7 @@ from agents.actor_critic_agent import ACAgent
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
 from main import step
-from models.actor_dc_1d import ActorNetwork
+from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 from orchard.algorithms import single_apple_despawn, single_apple_spawn, spawn_apple_same_pos_once_every_4_steps
 from orchard.environment import Orchard

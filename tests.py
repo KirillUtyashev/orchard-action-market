@@ -1,6 +1,6 @@
 from agents.communicating_agent import CommAgent
 from policies.nearest import nearest_policy
-from value_function_learning.controllers import ViewController
+from helpers.controllers import ViewController
 from orchard.environment import Orchard
 from agents.simple_agent import SimpleAgent
 from orchard.algorithms import spawn_apple, despawn_apple

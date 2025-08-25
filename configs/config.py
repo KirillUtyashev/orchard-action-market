@@ -21,8 +21,8 @@ class TrainingConfig:
     discount: float = 0.99
     alt_input: bool = False
     vision: Optional[int] = 0
-    hidden_dimensions: Optional[int] = 128
-    hidden_dimensions_actor: Optional[int] = 128
+    hidden_dimensions: Optional[int] = 16
+    hidden_dimensions_actor: Optional[int] = 64
     num_layers: int = 4
     num_layers_actor: int = 4
     epsilon: float = 0.1

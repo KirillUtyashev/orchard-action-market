@@ -1,9 +1,6 @@
 import numpy as np
 
-from agents.rate_updater import RateUpdater
 from agents.agent import Agent
-from config import get_config
-from helpers import convert_input, convert_position
 
 """
 The "Communicating Agent" - The decentralized agent that has its own value functions. Retrieves Q-values from other agents in the list.
@@ -15,7 +12,7 @@ class CommAgent(Agent):
         super().__init__(policy, id_)
         # self.budget = float(1)
         # self.neigh_ids = [j for j in range(num_agents) if j != id_]
-        # self.agent_alphas = np.zeros(num_agents)
+        self.agent_alphas = np.zeros(num_agents)
         # self.updater = RateUpdater(neigh_ids=self.neigh_ids, budget=self.budget)
         # self.num_agents = num_agents
         #
