@@ -1,4 +1,4 @@
-# Action Market (Orchard Implementation)
+# Action Market (Orchard Implementation) (Alex's README)
 
 This repository implements aspects of the Content Market and the Action Market. 
 
@@ -31,3 +31,50 @@ Pytorch with CUDA is highly recommended. I run most experiments on an RTX-4060 (
 
 `ac_content_EI_observer.py`: An Actor-Critic approach to the Content Market (with an emergent influencer). All content market dynamics apply.
 
+## Project Structure (Kirill's README)
+
+This repository implements multi-agent reinforcement learning in the **Orchard** environment. Below is an overview of the main folders and files:
+
+### **agents/**
+- `agent.py` – Parent class for all agent implementations.
+- `simple_agent.py` – Agent used for *Centralized Value Function Learning* (no communication).
+- `communicating_agent.py` – Agent used for *Decentralized Value Function Learning* (perfect communication).
+- `actor_critic_agent.py` – Agent for *Actor-Critic Learning*, including variations with following rates from content market theory.
+
+### **helpers/**
+- `helpers.py` – General utility functions.
+- `rate_updater.py` – Class for solving the optimization problem behind following rates.
+- `controller.py` – Classes that manage agent communication for different algorithms.
+
+### **models/**
+- `main_net.py` – Defines a simple MLP architecture for critic and actor networks.
+- `value_function.py` – Object for training the critic’s value network.
+- `actor_network.py` – Object for training the actor’s policy network.
+
+### **orchard/**
+- `environment.py` – Orchard environment definition.
+- `algorithms.py` – Logic for spawning and respawning apples.
+
+### **policies/**
+- Baseline policy implementations (e.g., random actions, nearest-apple movement).
+
+### **policyitchk/**
+- Stores neural network weights during training.
+
+### **setup_vm/**, **train_vm/**, **train_scripts/**
+- Shell scripts for launching and managing simulations on virtual machines.
+
+### **value_function_learning/**
+- `train_value_function.py` – Training logic for centralized and decentralized value function learning.
+
+### **actor_critic/**
+- `actor_critic.py` – Parent class for actor-critic algorithms.
+- `actor_critic_perfect_info.py` – Actor-critic in perfect-information setup.
+- `actor_critic_following_rates.py` – Actor-critic with following rates optimization.
+
+### **Core Files**
+- `algorithm.py` – Parent class for all training algorithms; contains main training loop logic.
+- `main.py` – Evaluation function for trained algorithms.
+- `run_experiments.py` – Entry point for launching experiments locally.
+- `run_experiments_vm.py` – Entry point for launching experiments on virtual machines.
+- `tests.py` – Basic unit tests for core functionality.  

@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-from algorithm import Algorithm
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
 from actor_critic import ActorCritic
@@ -9,7 +8,7 @@ from agents.actor_critic_agent import ACAgentRates, ACAgentRatesFixed
 from configs.config import ExperimentConfig
 import numpy as np
 from helpers import get_discounted_value
-from value_function_learning.controllers import AgentControllerActorCriticRates, \
+from helpers.controllers import AgentControllerActorCriticRates, \
     AgentControllerActorCriticRatesFixed, ViewController
 from main import plot_smoothed
 
@@ -193,16 +192,12 @@ class ActorCriticRates(ActorCritic):
         path = os.path.join(str(path), "alphas.npz")
         np.savez(path, **{f"agent_{i}": self.alpha_ema[i] for i in range(self.train_config.num_agents)})
 
-    def update_critic(self):
-        super().update_critic()
+    def training_step(self, step):
+        super().training_step(step)
         for num, agent in enumerate(self.agents_list):
-            # Record rates for plotting
             self._record_rates(num, agent.agent_rates, agent.agent_alphas)
             self._save_agent_distances(num)
             self._record_collected_rewards()
-
-    def training_step(self, step):
-        super().training_step(step)
         if step > 5000:
             if (step % 1000) == 0:
                 for agent in self.agents_list:
@@ -224,7 +219,7 @@ class ActorCriticRates(ActorCritic):
                             new_positions = []
                             for j in range(len(self.agents_list)):
                                 new_positions.append(self.agents_list[j].position)
-                            advantage = reward + self.agent_controller.get_collective_advantage(processed_state, positions, processed_new_state, new_positions, agent)
+                            advantage = reward + self.agent_controller.get_collective_advantage(s, positions, new_s, new_positions, agent)
                             self.agents_list[each_agent].policy_network.add_experience(processed_state, processed_new_state, r, action, advantage)
 
         except Exception as e:
@@ -265,9 +260,6 @@ class ActorCriticRates(ActorCritic):
             plot.close()
 
         self._save_follow_rates_arrays()
-        if self.train_config.beta_rate > 0:
-            self._save_all_betas()
-            self._save_beta_arrays()
         self._save_alpha_arrays()
 
         plot_agent_rewards(self.collected_rewards_over_time,
@@ -277,15 +269,11 @@ class ActorCriticRates(ActorCritic):
 
     def restore_all(self):
         self.foll_rate_hist = load_follow_rates(str(os.path.join(CHECKPOINT_DIR, self.name, "follow_rates.npz")))
-        if self.train_config.beta_rate > 0:
-            self.beta_hist = load_beta_arrays(str(os.path.join(CHECKPOINT_DIR, self.name, "betas.npz")))
         self.alpha_ema = load_alphas(str(os.path.join(CHECKPOINT_DIR, self.name, "alphas.npz")))
 
         for num, agent in enumerate(self.agents_list):
             agent.agent_rates = np.asarray(self.foll_rate_hist[num][-1], dtype=float).copy()
             agent.agent_alphas = np.asarray(self.alpha_ema[num][-1], dtype=float).copy()
-            if self.train_config.beta_rate > 0:
-                agent.beta = self.beta_hist[num][-1]
         return super().restore_all()
 
     def run(self):
@@ -295,7 +283,7 @@ class ActorCriticRates(ActorCritic):
 
             are_beta_agents = True if self.train_config.beta_rate > 0 else False
             for nummer in range(self.train_config.num_agents):
-                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget, are_beta_agents)
+                agent = ACAgentRates("learned_policy", self.train_config.num_agents, self.train_config.beta_rate, nummer, self.train_config.budget)
                 agent.policy_network, agent.policy_value = self.init_networks()
                 self.agents_list.append(agent)
                 self.v_network_list.append(agent.policy_value)

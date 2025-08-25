@@ -1,12 +1,9 @@
 from abc import ABC
 import torch
-from agents.actor_critic_agent import ACAgent
 from algorithm import Algorithm
 from configs.config import ExperimentConfig
-from models.actor_dc_1d import ActorNetwork
+from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
-from value_function_learning.controllers import AgentControllerActorCritic, \
-    ViewController
 
 
 class ActorCritic(Algorithm, ABC):

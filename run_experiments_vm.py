@@ -51,6 +51,45 @@ def download_most_recent_log(sftp, local_log_dir, remote_log_dir, working_dir):
     print(f"Downloaded most recent file: {latest_file.filename}")
 
 
+def download_all_folders(sftp, local_dir, remote_dir, working_dir):
+    os.makedirs(local_dir, exist_ok=True)
+    remote_path = os.path.join(working_dir, remote_dir)
+
+    # List all entries with attributes
+    entries = sftp.listdir_attr(remote_path)
+
+    # Filter only directories
+    folders = [e for e in entries if stat.S_ISDIR(e.st_mode)]
+
+    if not folders:
+        print("No folders found in remote directory.")
+        return
+
+    for folder in folders:
+        folder_name = folder.filename
+        local_folder_path = os.path.join(local_dir, folder_name)
+
+        if os.path.exists(local_folder_path):
+            print(f"Skipped {folder_name} (already exists locally).")
+            continue
+
+        remote_folder_path = os.path.join(remote_path, folder_name)
+        os.makedirs(local_folder_path, exist_ok=True)
+
+        # Download all .png files from the most recent folder
+        files = sftp.listdir(remote_folder_path)
+        for filename in files:
+            remote_file_path = os.path.join(remote_folder_path, filename)
+            local_file_path = os.path.join(local_folder_path, filename)
+
+            if os.path.exists(local_file_path):
+                print(f"Skipped {filename} (already exists locally).")
+                continue
+
+            sftp.get(remote_file_path, local_file_path)
+            print(f"Downloaded {filename}")
+
+
 def download_most_recent_folder(sftp, local_dir, remote_dir, working_dir):
     os.makedirs(local_dir, exist_ok=True)
     remote_path = os.path.join(working_dir, remote_dir)
@@ -87,7 +126,6 @@ def download_most_recent_folder(sftp, local_dir, remote_dir, working_dir):
 
         sftp.get(remote_file_path, local_file_path)
         print(f"Downloaded {filename}")
-
 
 def run_command(ssh, env_script, working_dir, args):
     # Build remote experiment command
@@ -155,6 +193,7 @@ def run_experiment_and_fetch_logs_with_key(vm_ip, username, private_key_path, wo
     download_most_recent_log(sftp, local_log_dir, remote_log_dir, working_dir)
     download_most_recent_folder(sftp, local_graph_dir, remote_graph_dir, working_dir)
     download_most_recent_folder(sftp, local_weights_dir, remote_weights_dir, working_dir)
+    # download_all_folders(sftp, local_weights_dir, remote_weights_dir, working_dir)
 
     sftp.close()
     ssh.close()

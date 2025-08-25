@@ -25,19 +25,6 @@ def ten(c):
     return torch.from_numpy(c).to(device).double()
 
 
-def calculate_ir(a, b, pos, action):
-    new_pos = np.clip(pos + action_vectors[action], [0, 0], a.shape-np.array([1, 1]))
-    agents = a.copy()
-    apples = b.copy()
-    agents[new_pos[0], new_pos[1]] += 1
-    agents[pos[0], pos[1]] -= 1
-    if apples[new_pos[0], new_pos[1]] > 0:
-        apples[new_pos[0], new_pos[1]] -= 1
-        return 1, agents, apples, new_pos
-    else:
-        return 0, agents, apples, new_pos
-
-
 def onehot(a, pos):
     length = a.size
     posr = np.zeros(length)

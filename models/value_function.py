@@ -1,8 +1,6 @@
 import numpy as np
 import torch
-from models.main_net import MainNet
-import torch.optim as optim
-from helpers import convert_position, ten, unwrap_state
+from helpers.helpers import ten
 from config import DEVICE
 from models.network import Network
 torch.set_default_dtype(torch.float64)

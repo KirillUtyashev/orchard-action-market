@@ -1,8 +1,7 @@
 import numpy as np
 
-from helpers import get_discounted_value
 from agents.communicating_agent import CommAgent
-from agents.rate_updater import RateUpdater
+from helpers.rate_updater import RateUpdater
 
 
 class ACAgent(CommAgent):
@@ -33,11 +32,13 @@ class ACAgentRatesFixed(ACAgent):
 
 
 class ACAgentRates(ACAgent):
-    def __init__(self, policy, num_agents, beta_rate, id_, budget=4, is_beta_agent=True):
+    def __init__(self, policy, num_agents, beta_rate, id_, budget=4):
         super().__init__(policy, id_)
         self.num_agents = num_agents
         self.budget = float(budget)
         print(self.budget)
+
+        self.rate = beta_rate
 
         # neighbors: global IDs excluding self
         self.neigh_ids = [j for j in range(num_agents) if j != id_]

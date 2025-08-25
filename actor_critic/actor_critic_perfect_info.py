@@ -1,17 +1,9 @@
-import os
-
-from matplotlib import pyplot as plt
-
-from agents.actor_critic_agent import ACAgent, ACAgentRates
+from agents.actor_critic_agent import ACAgent
 from actor_critic import ActorCritic
-from config import CHECKPOINT_DIR
 from configs.config import ExperimentConfig
-from models.actor_dc_1d import ActorNetwork
-from models.value_function import VNetwork
 from plots import add_to_plots
-from value_function_learning.controllers import AgentControllerActorCritic, \
+from helpers.controllers import AgentControllerActorCritic, \
     ViewController
-import numpy as np
 
 
 class ActorCriticPerfect(ActorCritic):
