@@ -9,7 +9,7 @@ class TrainingConfig:
     """Configuration for training parameters."""
     batch_size: int = 4
     alpha: float = 0.000275
-    actor_alpha: float = 0.00005
+    actor_alpha: float = 0.0002
     lr_schedule: dict = field(
         default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075}
     )
@@ -22,15 +22,15 @@ class TrainingConfig:
     alt_input: bool = False
     vision: Optional[int] = 0
     hidden_dimensions: Optional[int] = 16
-    hidden_dimensions_actor: Optional[int] = 64
+    hidden_dimensions_actor: Optional[int] = 8
     num_layers: int = 4
     num_layers_actor: int = 4
     epsilon: float = 0.1
     test: bool = False
     skip: bool = False
     seed: int = 42069
-    beta_rate: float = 0.05
-    budget: float = 4
+    beta_rate: float = 0.0
+    budget: float = 0.0
 
 
 @dataclass

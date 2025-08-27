@@ -9,7 +9,8 @@ from actor_critic.actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
 from value_function_learning.train_value_function import (
-    CentralizedValueFunction, DecentralizedValueFunction
+    CentralizedValueFunction, DecentralizedValueFunction,
+    DecentralizedValueFunctionPersonal
 )
 
 
@@ -81,6 +82,8 @@ def main(args):
         algo = CentralizedValueFunction(exp_config)
     elif args.algorithm == "Decentralized":
         algo = DecentralizedValueFunction(exp_config)
+    elif args.algorithm == "DecentralizedPersonal":
+        algo = DecentralizedValueFunctionPersonal(exp_config)
     elif args.algorithm == "ActorCritic":
         algo = ActorCriticPerfect(exp_config)
     elif args.algorithm == "ActorCriticRates":

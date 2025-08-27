@@ -37,3 +37,8 @@ class CommAgent(Agent):
 
     def add_experience(self, old_state, new_state, reward):
         self.policy_value.add_experience(old_state, new_state, reward)
+
+
+class CommAgentPersonal(CommAgent):
+    def __init__(self, policy, id_, num_agents=None):
+        super().__init__(policy, id_, num_agents)
