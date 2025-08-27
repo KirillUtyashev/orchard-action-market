@@ -5,11 +5,12 @@ import torch
 import numpy as np
 from configs.config import ExperimentConfig
 from helpers.controllers import AgentControllerCentralized, \
-    AgentControllerDecentralized, ViewController
+    AgentControllerDecentralized, AgentControllerDecentralizedPersonal, \
+    ViewController
 from main import run_environment_1d
 from models.value_function import VNetwork
 from agents.simple_agent import SimpleAgent
-from agents.communicating_agent import CommAgent
+from agents.communicating_agent import CommAgent, CommAgentPersonal
 from algorithm import Algorithm
 
 
@@ -118,10 +119,12 @@ class DecentralizedValueFunction(ValueFunction):
     def update_actor(self):
         pass
 
-    def __init__(self, config: ExperimentConfig):
+    def __init__(self, config: ExperimentConfig, name=None):
         """Initialize the value function algorithm."""
-        super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>")
-
+        if name is None:
+            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>")
+        else:
+            super().__init__(config, name)
         self.network_list = []
 
     def _format_env_step_return(self, state: dict, new_state: dict,
@@ -137,12 +140,6 @@ class DecentralizedValueFunction(ValueFunction):
             trained_agent.policy_value = self.network_list[ii]
             a_list.append(trained_agent)
         return a_list
-
-    # def save_networks(self, path: str) -> None:
-    #     for nummer, netwk in enumerate(self.network_list):
-    #         torch.save(netwk.function.state_dict(),
-    #                    path + "/" + self.name + "_decen_" + str(
-    #                        nummer) + ".pt")
 
     def update_critic(self):
         losses = []
@@ -161,13 +158,6 @@ class DecentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 s, new_s, r, old_pos, agent = self.env_step(tick)
-
-                # curr_pos = self.agents_list[agent].position
-                # processed_state = self.view_controller.process_state(s, old_pos)
-                # processed_new_state = self.view_controller.process_state(new_s, curr_pos)
-                # self.agents_list[agent].add_experience(
-                #     processed_state, processed_new_state, r)
-
                 for each_agent in range(len(self.agents_list)):
                     curr_pos = self.agents_list[each_agent].position
                     reward = r if each_agent == agent else 0
@@ -209,6 +199,44 @@ class DecentralizedValueFunction(ValueFunction):
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise
 
+
+class DecentralizedValueFunctionPersonal(DecentralizedValueFunction):
+    def __init__(self, config: ExperimentConfig):
+        super().__init__(config, f"DecentralizedPersonal-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.vision}>-batch_size-<{config.train_config.batch_size}>")
+
+    def init_agents_for_eval(self) -> List[CommAgent]:
+        a_list = []
+        for ii in range(len(self.agents_list)):
+            trained_agent = CommAgentPersonal("value_function", ii, self.train_config.num_agents)
+            trained_agent.policy_value = self.network_list[ii]
+            a_list.append(trained_agent)
+        return a_list
+
+    def run(self):
+        try:
+            self.view_controller = ViewController(self.train_config.vision)
+            self.agent_controller = AgentControllerDecentralizedPersonal(self.agents_list, self.view_controller)
+
+            # Initialize networks and agents
+            for nummer in range(self.train_config.num_agents):
+                agent = CommAgentPersonal("value_function", nummer, self.train_config.num_agents)
+                if self.train_config.alt_input:
+                    if self.env_config.width != 1:
+                        network = VNetwork(self.train_config.vision ** 2 + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                    else:
+                        network = VNetwork(self.train_config.vision + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                else:
+                    network = VNetwork(self.env_config.length * self.env_config.width + 1, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
+                agent.policy_value = network
+                self.network_list.append(network)
+                self.agents_list.append(agent)
+
+            self.network_for_eval = self.network_list
+            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
+
+        except Exception as e:
+            self.logger.error(f"Failed to run decentralized training: {e}")
+            raise
 
 def evaluate_policy(env_config,
                     num_agents,
