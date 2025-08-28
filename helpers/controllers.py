@@ -95,6 +95,7 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
+            self.agents_list[num].personal_q_value = get_config()["discount"] * value.item()
             sum_ += value
         return sum_
 
@@ -104,7 +105,9 @@ class AgentControllerActorCriticIndividual(AgentControllerActorCritic):
         super().__init__(agents, critic_view_controller, actor_view_controller)
 
     def get_collective_value(self, states, agent_id):
-        return self.agents_list[agent_id].get_value_function(states[agent_id])
+        value = self.agents_list[agent_id].get_value_function(states[agent_id])
+        self.agents_list[agent_id].personal_q_value = get_config()["discount"] * value.item()
+        return value
 
 
 class AgentControllerActorCriticRatesFixed(AgentControllerActorCritic):

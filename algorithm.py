@@ -230,14 +230,14 @@ class Algorithm:
         np.random.seed(seed)
         torch.manual_seed(seed)
 
-        agents_list = self.init_agents_for_eval()
+        agents_list, agent_controller = self.init_agents_for_eval()
 
         with torch.no_grad():
             results = eval_performance(
                 num_agents=self.train_config.num_agents,
                 side_length=self.env_config.length,
                 width=self.env_config.width,
-                agent_controller=self.agent_controller,
+                agent_controller=agent_controller,
                 name=self.name,
                 agents_list=agents_list,
                 spawn_algo=self.env_config.spawn_algo,

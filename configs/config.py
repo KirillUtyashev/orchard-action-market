@@ -19,11 +19,10 @@ class TrainingConfig:
     checkpoint_dir: str = "checkpoints"
     log_dir: str = "logs"
     discount: float = 0.99
-    alt_input: bool = False
     critic_vision: Optional[int] = 0
-    actor_vision: Optional[int] = 0
+    actor_vision: Optional[int] = 5
     hidden_dimensions: Optional[int] = 16
-    hidden_dimensions_actor: Optional[int] = 8
+    hidden_dimensions_actor: Optional[int] = 32
     num_layers: int = 4
     num_layers_actor: int = 4
     epsilon: float = 0.1
@@ -31,7 +30,7 @@ class TrainingConfig:
     skip: bool = False
     seed: int = 42069
     beta_rate: float = 0.0
-    budget: float = 0.0
+    budget: float = 1.0
 
 
 @dataclass

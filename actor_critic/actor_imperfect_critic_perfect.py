@@ -20,8 +20,13 @@ class ActorImperfectCriticPerfect(ActorCritic):
         for ii in range(len(self.agents_list)):
             trained_agent = ACAgent("learned_policy", ii)
             trained_agent.policy_network = self.p_network_list[ii]
+            trained_agent.policy_value = self.v_network_list[ii]
             a_list.append(trained_agent)
-        return a_list
+        if self.train_config.budget == 0:
+            agent_controller = AgentControllerActorCriticIndividual(a_list, self.critic_view_controller, self.actor_view_controller)
+        else:
+            agent_controller = AgentControllerActorCritic(a_list, self.critic_view_controller, self.actor_view_controller)
+        return a_list, agent_controller
 
     def collect_observation(self, step):
         try:

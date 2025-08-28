@@ -11,6 +11,7 @@ class ACAgent(CommAgent):
     def __init__(self, policy, id_):
         super().__init__(policy, id_)
         self.policy_network = None
+        self.personal_q_value = 0
 
     def add_experience_actor_network(self, state, new_state, reward, action, old_positions, new_positions):
         self.policy_network.add_experience(state, new_state, reward, action, old_positions, new_positions, self.id)
