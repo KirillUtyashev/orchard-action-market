@@ -7,7 +7,7 @@ from configs.config import ExperimentConfig
 from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, AgentControllerDecentralizedPersonal, \
     ViewController
-from main import run_environment_1d
+from main import eval_performance
 from models.value_function import VNetwork
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent, CommAgentPersonal
@@ -244,7 +244,7 @@ def evaluate_policy(env_config,
                     timesteps=10000,
                     seed=42069):
     """
-    Runs `run_environment_1d` with agents created by `agent_factory` and
+    Runs `eval_performance` with agents created by `agent_factory` and
     returns a dict of metrics.
 
     agent_factory: fn(i: int) -> Agent
@@ -259,7 +259,7 @@ def evaluate_policy(env_config,
 
     # run the environment
     total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
-        run_environment_1d(
+        eval_performance(
             num_agents,
             env_config.length,
             env_config.width,

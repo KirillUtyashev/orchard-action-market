@@ -8,7 +8,7 @@ from typing import Optional
 import torch
 from numpy import floating
 from config import CHECKPOINT_DIR, DEVICE
-from main import run_environment_1d
+from main import eval_performance
 from plots import add_to_plots, graph_plots
 from orchard.environment import *
 from helpers.helpers import generate_sample_states
@@ -146,7 +146,8 @@ class Algorithm:
         # Network(s) used for eval_network at the middle and end of training
         self.network_for_eval = []
         self.v_weights = {}
-        self.view_controller = None
+        self.critic_view_controller = None
+        self.actor_view_controller = None
         self.agent_controller = None
 
         if self.train_config.test:
@@ -190,15 +191,15 @@ class Algorithm:
     def log_progress(self, sample_state, sample_state5, sample_state6):
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.view_controller.process_state(sample_state, sample_state["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state, sample_state["poses"][i]))
         v_value = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.view_controller.process_state(sample_state5, sample_state5["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state5, sample_state5["poses"][i]))
         v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.view_controller.process_state(sample_state6, sample_state6["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state6, sample_state6["poses"][i]))
         v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
         add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
@@ -232,18 +233,16 @@ class Algorithm:
         agents_list = self.init_agents_for_eval()
 
         with torch.no_grad():
-            results = run_environment_1d(
+            results = eval_performance(
                 num_agents=self.train_config.num_agents,
                 side_length=self.env_config.length,
                 width=self.env_config.width,
-                S=None,
-                phi=None,
+                agent_controller=self.agent_controller,
                 name=self.name,
                 agents_list=agents_list,
                 spawn_algo=self.env_config.spawn_algo,
                 despawn_algo=self.env_config.despawn_algo,
                 timesteps=10000,
-                vision=self.train_config.vision,
                 s_target=self.env_config.s_target,
                 apple_mean_lifetime=self.env_config.apple_mean_lifetime,
                 epsilon=self.train_config.epsilon

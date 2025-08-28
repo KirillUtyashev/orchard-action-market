@@ -122,7 +122,7 @@ def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
     # plt.show()
 
 
-def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", experiment="Default", timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, vision=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
+def eval_performance(num_agents, side_length, width, agent_controller, name, timesteps=5000, agents_list=None, action_algo=None, spawn_algo=None, despawn_algo=None, s_target=0.1, apple_mean_lifetime=0.35, epsilon=0.1):
     metrics = []
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
@@ -161,18 +161,6 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
                 distances.append(distance(current_pos, other_agent.position))
         return min(distances) if distances else float('inf')
 
-    if type(agents_list[0]) is CommAgent:
-        agent_controller = AgentControllerDecentralized(agents_list, ViewController(vision))
-    elif type(agents_list[0]) is CommAgentPersonal:
-        agent_controller = AgentControllerDecentralizedPersonal(agents_list, ViewController(vision))
-    elif type(agents_list[0]) is SimpleAgent:
-        agent_controller = AgentControllerCentralized(agents_list, ViewController(vision))
-    elif type(agents_list[0]) is ACAgent:
-        agent_controller = AgentControllerActorCritic(agents_list, ViewController(vision))
-    elif type(agents_list[0]) is ACAgentRatesFixed:
-        agent_controller = AgentControllerActorCriticRatesFixed(agents_list, ViewController(vision))
-    else:
-        agent_controller = AgentControllerActorCriticRates(agents_list, ViewController(vision))
     os.makedirs("positions", exist_ok=True)
     with PositionRecorder(num_agents, timesteps * num_agents + 1, f"positions/{name}_pos.npy") as rec:
         rec.log(agents_list)
@@ -192,7 +180,7 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
                     env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
                     env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
                 rec.log(agents_list)
-                if name != "test" and experiment != "test":
+                if name != "test":
                     agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
                     agent_y_coordinates = append_y_coordinates(agent_y_coordinates, agents_list)
                     to_add_x = []
@@ -235,8 +223,8 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     print("Apples per agent:", reward / num_agents)
     print("Average Reward: ", reward / env.total_apples)
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
-    plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, experiment, name, "x")
-    plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, experiment, name, "y")
+    plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, name, "x")
+    plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
 
     # global adv_plot
     # plt.plot(adv_plot)
@@ -254,12 +242,12 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     #     fig = plot_smoothed(series_list, labels, title=f"Observed Q-values Over Time, Agent {agent_id}", xlabel="Training Step", ylabel="Q-value")
     #     fig.show()
     #
-    def average_every_n(arr, n=500):
-        """Average consecutive n points in 1D array."""
-        length = len(arr) // n * n  # trim remainder
-        arr = arr[:length]
-        return arr.reshape(-1, n).mean(axis=1)
-
+    # def average_every_n(arr, n=500):
+    #     """Average consecutive n points in 1D array."""
+    #     length = len(arr) // n * n  # trim remainder
+    #     arr = arr[:length]
+    #     return arr.reshape(-1, n).mean(axis=1)
+    #
     # plt.figure()
     # for agent_id in range(num_agents):
     #     arr = personal_q_values[agent_id]
@@ -271,22 +259,23 @@ def run_environment_1d(num_agents, side_length, width, S, phi, name="Default", e
     # plt.ylabel("Q-value")
     # plt.legend()
     # plt.show()
-
-    positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
-    # fig, ax = plt.subplots(figsize=(6, 5))
-    # plot_agents_heatmap_alpha(
-    #     positions,
-    #     agent_ids=[0, 1, 2, 3],                      # pick any subset
-    #     colors=["royalblue", "crimson", "gold", "purple"],  # one hue per agent
-    #     ax=ax
-    # )
+    #
+    # positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
+    # # fig, ax = plt.subplots(figsize=(6, 5))
+    # # plot_agents_heatmap_alpha(
+    # #     positions,
+    # #     agent_ids=[0, 1, 2, 3],                      # pick any subset
+    # #     colors=["royalblue", "crimson", "gold", "purple"],  # one hue per agent
+    # #     ax=ax
+    # # )
     # plt.show()
+    #
     # for agent_id in range(num_agents):
-    #     plot_agents_trajectories(positions, agent_ids=[agent_id], colors=["royalblue"])
+    #     plot_agent_heatmap_alpha(positions, agent_ids=[agent_id], colors=["red"])
     #     plt.show()
     #
     # for agent_id in range(num_agents):
-    #     plot_agent_heatmap_alpha(positions, agent_id=agent_id, color="red")
+    #     plot_agents_trajectories(positions, agent_ids=[agent_id], colors=["royalblue"])
     #     plt.show()
 
     return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second), nearest_apple_actions, idle_actions

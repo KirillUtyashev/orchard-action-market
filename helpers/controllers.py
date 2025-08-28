@@ -7,9 +7,9 @@ import numpy as np
 
 
 class AgentController:
-    def __init__(self, agents, view_controller):
+    def __init__(self, agents, critic_view_controller):
         self.agents_list = agents
-        self.view_controller = view_controller
+        self.critic_view_controller = critic_view_controller
 
     def get_best_action(self, state, agent_id, available_actions):
         agents, apples = unwrap_state(state)
@@ -32,7 +32,7 @@ class AgentController:
         return action.idx
 
     def get_agent_obs(self, state, agent_pos):
-        return self.view_controller.process_state(state, agent_pos)
+        return self.critic_view_controller.process_state(state, agent_pos)
 
     def get_all_agent_obs(self, state, positions):
         obs = []
@@ -46,40 +46,44 @@ class AgentController:
 
 
 class AgentControllerDecentralized(AgentController):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller):
+        super().__init__(agents, critic_view_controller)
 
     def get_collective_value(self, states, agent_id):
         # sum_ = self.agents_list[agent_id].get_value_function(states[agent_id])
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
+            agent.personal_q_value = get_config()["discount"] * value.item()
             sum_ += value
         return sum_
 
 
 class AgentControllerDecentralizedPersonal(AgentController):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller):
+        super().__init__(agents, critic_view_controller)
 
     def get_collective_value(self, states, agent_id):
-        return self.agents_list[agent_id].get_value_function(states[agent_id])
+        value = self.agents_list[agent_id].get_value_function(states[agent_id])
+        self.agents_list[agent_id].personal_q_value = get_config()["discount"] * value.item()
+        return value
 
 
 class AgentControllerCentralized(AgentController):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller):
+        super().__init__(agents, critic_view_controller)
 
     def get_collective_value(self, states, agent_id):
         return self.agents_list[0].get_value_function(states[agent_id])
 
 
 class AgentControllerActorCritic(AgentControllerDecentralized):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller, actor_view_controller):
+        super().__init__(agents, critic_view_controller)
+        self.actor_view_controller = actor_view_controller
 
     def get_best_action(self, state, agent_id, available_actions):
-        probs = self.agents_list[agent_id].policy_network.get_function_output(self.view_controller.process_state(state, self.agents_list[agent_id].position))
+        probs = self.agents_list[agent_id].policy_network.get_function_output(self.actor_view_controller.process_state(state, self.agents_list[agent_id].position))
         action = np.random.choice(len(probs), p=probs)
         return action
 
@@ -95,9 +99,17 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         return sum_
 
 
+class AgentControllerActorCriticIndividual(AgentControllerActorCritic):
+    def __init__(self, agents, critic_view_controller, actor_view_controller):
+        super().__init__(agents, critic_view_controller, actor_view_controller)
+
+    def get_collective_value(self, states, agent_id):
+        return self.agents_list[agent_id].get_value_function(states[agent_id])
+
+
 class AgentControllerActorCriticRatesFixed(AgentControllerActorCritic):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller, actor_view_controller):
+        super().__init__(agents, critic_view_controller, actor_view_controller)
 
     def get_collective_value(self, states, agent_id):
         sum_ = 0
@@ -112,8 +124,8 @@ class AgentControllerActorCriticRatesFixed(AgentControllerActorCritic):
 
 
 class AgentControllerActorCriticRates(AgentControllerActorCritic):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller, actor_view_controller):
+        super().__init__(agents, critic_view_controller, actor_view_controller)
 
     def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
         new_observations = self.get_all_agent_obs(new_state, new_positions)
@@ -146,8 +158,8 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
 
 
 class AgentControllerActorCriticRatesAdvantage(AgentControllerActorCriticRates):
-    def __init__(self, agents, view_controller):
-        super().__init__(agents, view_controller)
+    def __init__(self, agents, critic_view_controller, actor_view_controller):
+        super().__init__(agents, critic_view_controller, actor_view_controller)
 
     def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
         new_observations = self.get_all_agent_obs(new_state, new_positions)
@@ -162,6 +174,7 @@ class AgentControllerActorCriticRatesAdvantage(AgentControllerActorCriticRates):
             else:
                 sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
         return sum_
+
 
 class ViewController:
     def __init__(self, vision=None):

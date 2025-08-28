@@ -1,30 +1,27 @@
+import glob
 import os
 import random
-import sys
+import re
 
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
 
-from actor_critic_perfect_info import ActorCriticPerfect
-from agents.actor_critic_agent import ACAgent
+from actor_critic.actor_critic_following_rates import ActorCriticRatesFixed
+from actor_critic.actor_critic_perfect_info import ActorCriticPerfect
+from agents.actor_critic_agent import ACAgent, ACAgentRatesFixed
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
-from main import plot_agents_heatmap_alpha, run_environment_1d
-from metrics.metrics import plot_agents_trajectories
-from models.actor_dc_1d import ActorNetwork
+from main import eval_performance
+from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 from policies.random_policy import random_policy
-from policies.nearest import nearest_policy
 from configs.config import EnvironmentConfig, ExperimentConfig, TrainingConfig
 from orchard.algorithms import spawn_apple, despawn_apple
-from value_function_learning.controllers import AgentControllerDecentralized, \
-    ViewController
 from value_function_learning.train_value_function import \
-    CentralizedValueFunction, DecentralizedValueFunction, evaluate_policy, \
+    CentralizedValueFunction, DecentralizedValueFunction, \
+    DecentralizedValueFunctionPersonal, evaluate_policy, \
     make_baseline_factory
-from run_experiments import parse_args
-from agents.communicating_agent import CommAgent
+from agents.communicating_agent import CommAgent, CommAgentPersonal
 
 
 def load_weights_only(name, networks, agents_list, path: str):
@@ -42,8 +39,32 @@ def load_weights_only(name, networks, agents_list, path: str):
     networks: List
     name: str
     """
-    ckpt_path = os.path.join(path, f"{name}_ckpt.pt")
-    ckpt = torch.load(ckpt_path, map_location=DEVICE)
+    path = os.path.join(CHECKPOINT_DIR, name)
+
+    # 1) Find the newest ckpt_{number}.pt by numeric suffix
+    candidates = glob.glob(os.path.join(path, "*_ckpt_*.pt"))
+
+    latest_step = None
+    latest_path = None
+
+    for f in candidates:
+        m = re.search(r"ckpt_(\d+)\.pt$", os.path.basename(f))
+        if m:
+            step = int(m.group(1))
+            if latest_step is None or step > latest_step:
+                latest_step, latest_path = step, f
+
+    # Fallback to legacy file if no step-tagged snapshot is present
+    if latest_path is None:
+        latest_path = os.path.join(path, f"{name}_ckpt.pt")
+
+    ckpt = torch.load(latest_path, map_location="cpu")
+
+    # 2) Set global 'times' to the detected step (or ckpt['step'] if present)
+    step_in_ckpt = ckpt.get("step")
+    final_step = step_in_ckpt if isinstance(step_in_ckpt, int) else (latest_step or 0)
+    global times
+    times = final_step
 
     # Map critics (skip RNG/env state)
     crit_blobs = ckpt.get("critics", [])
@@ -94,10 +115,10 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
     )
 
     train_config = TrainingConfig(
-        batch_size=num_agents,
         num_agents=num_agents,
         hidden_dimensions=hidden_dim,
         num_layers=4,
+        batch_size=num_agents
     )
 
     exp_config = ExperimentConfig(
@@ -128,7 +149,7 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
         algo = DecentralizedValueFunction(exp_config)
         # Initialize networks and agents
         for nummer in range(train_config.num_agents):
-            agent = CommAgent("value_function", train_config.num_agents, nummer)
+            agent = CommAgent("value_function", nummer, train_config.num_agents)
             if train_config.alt_input:
                 if env_config.width != 1:
                     network = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
@@ -141,9 +162,34 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
             agent.policy_value = network
             agents_list.append(agent)
 
+            agent.personal_q_value = 0.0
+
         if not old:
             load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-    else:
+    elif algorithm == "DecentralizedPersonal":
+        agents_list = []
+        algo = DecentralizedValueFunctionPersonal(exp_config)
+        # Initialize networks and agents
+        for nummer in range(train_config.num_agents):
+            agent = CommAgentPersonal("value_function", nummer, train_config.num_agents)
+            if train_config.alt_input:
+                if env_config.width != 1:
+                    network = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+                else:
+                    network = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+            else:
+                network = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+            if old:
+                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_decen_" + str(nummer) + ".pt"))
+            agent.policy_value = network
+            agents_list.append(agent)
+
+            agent.personal_q_value = 0.0
+
+        if not old:
+            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
+
+    elif algorithm == "ActorCritic":
         agents_list = []
         algo = ActorCriticPerfect(exp_config)
         # Initialize networks and agents
@@ -168,8 +214,40 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
 
         if not old:
             load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
+
+    else:
+        agents_list = []
+        algo = ActorCriticRatesFixed(exp_config)
+        # Initialize networks and agents
+        for nummer in range(train_config.num_agents):
+            agent = ACAgentRatesFixed("learned_policy", train_config.num_agents, nummer, 0)
+            if train_config.alt_input:
+                if env_config.width != 1:
+                    policy_value = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+                else:
+                    policy_value = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+            else:
+                policy_value = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+            if old:
+                policy_value.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_critic_network_AC_" + str(nummer) + ".pt"))
+            agent.policy_value = policy_value
+            network = ActorNetwork(env_config.length * env_config.width + 1, 5, train_config.actor_alpha, train_config.discount, train_config.hidden_dimensions_actor, train_config.num_layers_actor)
+            agent.agent_alphas = np.zeros(num_agents)
+            agent.rate = 0.05
+            agent.personal_q_value = 0.0
+
+            if old:
+                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_actor_network_AC_" + str(nummer) + ".pt"))
+            agent.policy_network = network
+            agents_list.append(agent)
+
+        if not old:
+            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
+
+    algo.agents_list = agents_list
+
     total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
-        run_environment_1d(
+        eval_performance(
             num_agents,
             env_config.length,
             env_config.width,
@@ -178,7 +256,7 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
             agents_list=agents_list,
             spawn_algo=env_config.spawn_algo,
             despawn_algo=env_config.despawn_algo,
-            timesteps=5000,
+            timesteps=10000,
             vision=train_config.vision,
             s_target=env_config.s_target,
             apple_mean_lifetime=env_config.apple_mean_lifetime,
@@ -237,5 +315,5 @@ if __name__ == "__main__":
     #     print(evaluate_factory(6, 6, 2))
     # evaluate_network(sys.argv[1:])
 
-    evaluate_network(20, 1, 4, 128, "Decentralized", False)
+    evaluate_network(12, 12, 7, 64, "Decentralized", True)
 

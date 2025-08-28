@@ -33,7 +33,7 @@ class ActorCritic(Algorithm, ABC):
     def log_progress(self, sample_state, sample_state5, sample_state6):
         super().log_progress(sample_state, sample_state5, sample_state6)
 
-        observation = self.view_controller.process_state(sample_state, sample_state["poses"][0])
+        observation = self.actor_view_controller.process_state(sample_state, sample_state["poses"][0])
         res = self.agents_list[0].policy_network.get_function_output(observation)
 
         self.prob_sample_action_0.append(res[0])
@@ -51,12 +51,23 @@ class ActorCritic(Algorithm, ABC):
         return action
 
     def init_networks(self):
-        if self.train_config.alt_input:
+        # Get critic network vision
+        if self.train_config.critic_vision != 0:
             if self.env_config.width != 1:
-                input_dim = self.train_config.vision ** 2 + 1
+                critic_input_dim = self.train_config.critic_vision ** 2 + 1
             else:
-                input_dim = self.train_config.vision + 1
+                critic_input_dim = self.train_config.critic_vision + 1
         else:
-            input_dim = self.env_config.length * self.env_config.width + 1
-        return (ActorNetwork(input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor),
-                VNetwork(input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))
+            critic_input_dim = self.env_config.length * self.env_config.width + 1
+
+        # Get actor network vision
+        if self.train_config.actor_vision != 0:
+            if self.env_config.width != 1:
+                actor_input_dim = self.train_config.actor_vision ** 2 + 1
+            else:
+                actor_input_dim = self.train_config.actor_vision + 1
+        else:
+            actor_input_dim = self.env_config.length * self.env_config.width + 1
+
+        return (ActorNetwork(actor_input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor),
+                VNetwork(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))
