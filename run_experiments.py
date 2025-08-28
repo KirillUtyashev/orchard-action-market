@@ -7,6 +7,8 @@ import torch
 from actor_critic.actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed, ActorCriticRatesAdvantage
 from actor_critic.actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
+from actor_critic.actor_imperfect_critic_perfect import \
+    ActorImperfectCriticPerfect
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
 from value_function_learning.train_value_function import (
     CentralizedValueFunction, DecentralizedValueFunction,
@@ -33,8 +35,8 @@ def parse_args(args):
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for critic network.")
     parser.add_argument("--num_layers_actor", type=int, default=4, help="Number of layers for actor network.")
     parser.add_argument("--debug", type=bool, default=True, help="Debug.")
-    parser.add_argument("--alt_vision", type=int, default=1, help="Alternative Vision.")
-    parser.add_argument("--vision", type=int, default=None, help="Vision.")
+    parser.add_argument("--critic_vision", type=int, default=None, help="Critic Vision.")
+    parser.add_argument("--actor_vision", type=int, default=None, help="Actor Vision.")
     parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
     parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
@@ -63,8 +65,8 @@ def main(args):
         hidden_dimensions_actor=args.hidden_dim_actor,
         num_layers=args.num_layers,
         num_layers_actor=args.num_layers_actor,
-        alt_input=True if args.alt_vision == 0 else False,
-        vision=args.vision,
+        critic_vision=args.critic_vision,
+        actor_vision=args.actor_vision,
         skip=True if args.skip == 0 else False,
         epsilon=args.epsilon,
         seed=args.seed,
@@ -94,6 +96,8 @@ def main(args):
         algo = ActorCriticRatesFixed(exp_config)
     elif args.algorithm == "ActorCriticRatesAdvantage":
         algo = ActorCriticRatesAdvantage(exp_config)
+    elif args.algorithm == "ActorImperfectCriticPerfect":
+        algo = ActorImperfectCriticPerfect(exp_config)
     else:
         exit(1)
     np.random.seed(train_config.seed)

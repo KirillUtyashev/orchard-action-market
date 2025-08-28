@@ -1,8 +1,10 @@
 from pathlib import Path
 from contextlib import AbstractContextManager
+from typing import List, Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba
 
 graph = 0
@@ -58,96 +60,17 @@ class PositionRecorder(AbstractContextManager):
             return False            # propagate any exception
 
 
-def plot_agents_heatmap_alpha(positions: np.ndarray,
-                              agent_ids: list[int] | None = None,
-                              colors: list[str] | None = None,
-                              ax: plt.Axes | None = None,
-                              grid_color: str = "white") -> plt.Axes:
+def plot_agents_trajectories(
+        positions: np.ndarray,
+        agent_ids: Optional[List[int]] = None,
+        colors: Optional[List[str]] = None,
+        ax: Optional[Axes] = None,
+        linewidth: float = 2.0,
+        alpha: float = 0.9,
+        show_markers: bool = True,
+) -> Axes:
     """
-    Overlay single-colour α-heat-maps for several agents on one axes.
-
-    Parameters
-    ----------
-    positions : (T, N, 2) ndarray
-        Logged grid coordinates for all agents.
-    agent_ids : list[int] | None
-        Which agents to plot; default = *all*.
-    colors     : list[str] | None
-        One Matplotlib colour per agent (cycled if shorter).
-        Default palette = tab10.
-    ax        : matplotlib Axes | None
-        Plot on this axes; create new fig/ax if None.
-    grid_color : str
-        Colour of grid lines.
-
-    Returns
-    -------
-    ax : matplotlib Axes
-        The axes the heat-maps were drawn on.
-    """
-    if agent_ids is None:
-        agent_ids = list(range(positions.shape[1]))
-
-    if colors is None:
-        # repeat a default palette if fewer colours than agents
-        base = plt.cm.get_cmap("tab10").colors
-        colors = [base[i % len(base)] for i in range(len(agent_ids))]
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(5, 4.5))
-
-    # assume square grid; infer side length
-    L = int(positions[..., :2].max()) + 1
-
-    # draw one RGBA layer per agent
-    for agent_idx, colour in zip(agent_ids, colors):
-        xy = positions[:, agent_idx]                 # (T, 2)
-        counts = np.zeros((L, L), dtype=np.int32)
-        xs, ys = xy[:, 0], xy[:, 1]
-        np.add.at(counts, (ys, xs), 1)
-
-        alpha = counts / counts.max() if counts.max() else counts
-        r, g, b, _ = to_rgba(colour)
-        rgba = np.zeros((L, L, 4), dtype=float)
-        rgba[..., 0], rgba[..., 1], rgba[..., 2] = r, g, b
-        rgba[..., 3] = alpha
-
-        ax.imshow(rgba, origin="upper", extent=[0, L, 0, L])
-
-    # cosmetics (done once)
-    ax.set_xticks(range(L + 1))
-    ax.set_yticks(range(L + 1))
-    ax.grid(which="both", color=grid_color, lw=0.5)
-    ax.set_aspect("equal")
-    ax.set_title("Occupancy (α ∝ visits)")
-    plt.tight_layout()
-    return ax
-
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-
-def plot_agents_trajectories(positions: np.ndarray,
-                             agent_ids: list[int] | None = None,
-                             colors: list[str] | None = None,
-                             ax: plt.Axes | None = None,
-                             linewidth: float = 2,
-                             alpha: float = 0.9,
-                             show_markers: bool = True,
-                             *,
-                             mode: str = "time",            # "time" | "plain"
-                             cmap: str = "plasma",
-                             step_stride: int = 1,          # plot every k-th step
-                             quiver_every: int | None = None  # arrows every k steps
-                             ) -> plt.Axes:
-    """
-    Plot trajectories for one or more agents.
-
-    New features:
-      - mode="time": color encodes time (early→late) using `cmap`
-      - step_stride: decimate time to speed up plotting
-      - quiver_every: draw arrows every k steps (direction cues)
+    Overlay plain trajectories (no time-colour) for one or more agents.
 
     Parameters
     ----------
@@ -156,159 +79,167 @@ def plot_agents_trajectories(positions: np.ndarray,
     agent_ids : list[int] | None
         Agents to plot; default = all.
     colors : list[str] | None
-        Used only for mode="plain"; default = tab10.
+        Base colours cycled if shorter than agent_ids; default = tab10.
     ax : matplotlib Axes | None
-        If None, a new fig/ax is created.
-    linewidth, alpha, show_markers
-        Styling options.
-    mode : {"time","plain"}
-        "time" = gradient by time; "plain" = single color per agent.
-    cmap : str
-        Colormap name for mode="time".
-    step_stride : int
-        Plot every k-th time step.
-    quiver_every : int | None
-        If set, draws direction arrows every k steps.
+        Pass an existing Axes to draw on; if None, a new fig/ax is created.
+    linewidth : float
+        Width of the trajectory lines.
+    alpha : float
+        Global opacity for all trajectories.
+    show_markers : bool
+        If True, draw start (○) and end (✕) markers.
 
     Returns
     -------
     ax : matplotlib Axes
+        The axes on which the trajectories were drawn.
     """
     assert positions.ndim == 3 and positions.shape[-1] == 2, "positions must be (T, N, 2)"
 
+    # default to all agents
     if agent_ids is None:
-        agent_ids = list(range(positions.shape[1]))  # all agents
+        agent_ids = list(range(positions.shape[1]))
 
+    # default palette
+    if colors is None:
+        palette = plt.cm.get_cmap("tab10").colors
+        colors = [palette[i % len(palette)] for i in range(len(agent_ids))]
+
+    # create axes if needed
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 5))
 
     # infer square grid size from max coordinate
     L = int(np.ceil(positions[..., :2].max())) + 1
 
-    # default colors for plain mode
-    if mode == "plain":
-        if colors is None:
-            palette = plt.cm.get_cmap("tab10").colors
-            colors = [palette[i % len(palette)] for i in range(len(agent_ids))]
-        color_iter = iter(colors)
-
-    for aid in agent_ids:
-        # center cells and decimate in time
-        xy = positions[::step_stride, aid].astype(float) + 0.5
+    # draw each agent
+    for aid, colour in zip(agent_ids, colors):
+        xy = positions[:, aid].astype(float) + 0.5  # cell centres
         xs, ys = xy[:, 0], xy[:, 1]
 
-        if mode == "plain":
-            colour = next(color_iter)
-            ax.plot(xs, ys, color=colour, lw=linewidth, alpha=alpha, label=f"agent {aid}")
-            marker_color = colour
-        elif mode == "time":
-            # build colored segments along time
-            if len(xs) > 1:
-                pts = np.column_stack([xs, ys]).reshape(-1, 1, 2)
-                segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
-                t = np.linspace(0.0, 1.0, len(segs))  # 0→1 over time
-                lc = LineCollection(segs, cmap=plt.get_cmap(cmap), norm=plt.Normalize(0, 1))
-                lc.set_array(t)
-                lc.set_linewidth(linewidth)
-                lc.set_alpha(alpha)
-                ax.add_collection(lc)
-            # pick a stable marker color (midpoint of cmap) for start/end
-            marker_color = plt.get_cmap(cmap)(0.6)
-        else:
-            raise ValueError("mode must be 'time' or 'plain'")
+        ax.plot(xs, ys, color=colour, lw=linewidth, alpha=alpha, label=f"agent {aid}")
 
-        # start/end markers
         if show_markers and len(xs) > 0:
-            ax.scatter(xs[0],  ys[0],  s=60, c=[marker_color],
-                       marker="o", edgecolors="k", linewidths=.5, zorder=3)
-            ax.scatter(xs[-1], ys[-1], s=80, c=[marker_color],
-                       marker="X", edgecolors="k", linewidths=.5, zorder=3)
-
-        # optional direction arrows every k steps
-        if quiver_every is not None and quiver_every > 0 and len(xs) > 1:
-            idx = np.arange(0, len(xs) - 1, quiver_every)
-            dx = xs[idx + 1] - xs[idx]
-            dy = ys[idx + 1] - ys[idx]
-            ax.quiver(xs[idx], ys[idx], dx, dy, angles="xy", scale_units="xy",
-                      scale=1, width=0.003, alpha=min(alpha, 0.85))
+            ax.scatter(xs[0],  ys[0],  s=60, c=[colour],
+                       marker="o", edgecolors="k", linewidths=.5)
+            ax.scatter(xs[-1], ys[-1], s=80, c=[colour],
+                       marker="X", edgecolors="k", linewidths=.5)
 
     # cosmetics
-    ax.set_xlim(0, L); ax.set_ylim(0, L)
-    ax.set_xticks(range(L + 1)); ax.set_yticks(range(L + 1))
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
+    ax.set_xticks(range(L + 1))
+    ax.set_yticks(range(L + 1))
     ax.grid(which="both", color="gray", lw=.4, alpha=.3)
     ax.set_aspect("equal")
-    title_suffix = " (time-colored)" if mode == "time" else " (start ○  end ✕)"
-    ax.set_title("Agent trajectories" + title_suffix)
-    if mode == "plain":
-        ax.legend(loc="upper right", fontsize=8, frameon=False)
+    ax.set_title("Agent trajectories (start ○  end ✕)")
+    ax.legend(loc="upper right", fontsize=8, frameon=False)
     plt.tight_layout()
     return ax
 
-def plot_agent_heatmap_alpha(positions: np.ndarray,
-                             agent_id: int,
-                             ax: plt.Axes | None = None,
-                             color: str = "tab:blue",
-                             grid_color: str = "white",
-                             title: str | None = None) -> plt.Axes:
+
+def plot_agent_heatmap_alpha(
+        positions: np.ndarray,
+        agent_ids: Optional[List[int]] = None,
+        colors: Optional[List[str]] = None,
+        ax: Optional[plt.Axes] = None,
+        grid_color: str = "white",
+        normalize: str = "per_agent",   # "per_agent" or "global"
+) -> plt.Axes:
     """
-    Plot a single-colour alpha heatmap (occupancy) for ONE agent.
+    Overlay single-colour α-heat-maps for several agents on ONE axes.
+
+    NOTE: Treats positions EXACTLY like plot_agents_trajectories:
+      - positions[t, n] = (x, y)  (no swapping)
+      - y increases upward (Cartesian)
+      - grid cells are unit squares; trajectories are drawn at +0.5 cell centres
+      - imshow uses origin='lower' and extent=[0, L, 0, L] to align perfectly
 
     Parameters
     ----------
     positions : (T, N, 2) ndarray
-        Logged integer grid coordinates for all agents.
-    agent_id : int
-        Which agent to plot.
+        Logged integer grid coordinates (x, y) per timestep.
+    agent_ids : list[int] | None
+        Which agents to plot; default = all.
+    colors : list[str] | None
+        One Matplotlib colour per agent (cycled if shorter). Default = tab10.
     ax : matplotlib Axes | None
-        Draw on this axes; create a new fig/ax if None.
-    color : str
-        Base colour; alpha encodes visit frequency.
+        Plot on this axes; create new fig/ax if None.
     grid_color : str
-        Grid line colour.
-    title : str | None
-        Optional plot title.
+        Colour of grid lines.
+    normalize : {"per_agent","global"}
+        Alpha normalization per agent or across all selected agents.
 
     Returns
     -------
     ax : matplotlib Axes
     """
     assert positions.ndim == 3 and positions.shape[-1] == 2, "positions must be (T, N, 2)"
-    assert 0 <= agent_id < positions.shape[1], "agent_id out of range"
+    T, N, _ = positions.shape
+
+    if agent_ids is None:
+        agent_ids = list(range(N))
+
+    if colors is None:
+        base = plt.cm.get_cmap("tab10").colors
+        colors = [base[i % len(base)] for i in range(len(agent_ids))]
 
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 4.5))
 
-    # infer (square) grid size
+    # Same L inference as trajectories
     L = int(np.ceil(positions[..., :2].max())) + 1
+    L = max(L, 1)
 
-    # visits per cell for this agent
-    xy = positions[:, agent_id]
-    counts = np.zeros((L, L), dtype=np.int32)
-    xs, ys = xy[:, 0], xy[:, 1]
-    np.add.at(counts, (ys, xs), 1)
+    # Integer coordinates (no swap), clipped to bounds
+    x_all = np.clip(positions[..., 0].astype(int), 0, L - 1)
+    y_all = np.clip(positions[..., 1].astype(int), 0, L - 1)
 
-    # normalize to [0,1] for alpha
-    if counts.max() > 0:
-        alpha = counts / counts.max()
-    else:
-        alpha = counts.astype(float)
+    # Global normalization (if requested)
+    if normalize == "global":
+        global_counts = np.zeros((L, L), dtype=np.int32)  # rows=y, cols=x
+        for aid in agent_ids:
+            np.add.at(global_counts, (y_all[:, aid], x_all[:, aid]), 1)
+        global_max = int(global_counts.max()) or 1
 
-    # single-colour RGBA image with alpha = occupancy
-    r, g, b, _ = to_rgba(color)
-    rgba = np.zeros((L, L, 4), dtype=float)
-    rgba[..., 0], rgba[..., 1], rgba[..., 2] = r, g, b
-    rgba[..., 3] = alpha
+    # Draw one RGBA layer per agent
+    for aid, colour in zip(agent_ids, colors):
+        counts = np.zeros((L, L), dtype=np.int32)
+        np.add.at(counts, (y_all[:, aid], x_all[:, aid]), 1)  # rows=y, cols=x
 
-    ax.imshow(rgba, origin="upper", extent=[0, L, 0, L], interpolation="nearest")
+        if normalize == "per_agent":
+            cmax = int(counts.max()) or 1
+        elif normalize == "global":
+            cmax = global_max
+        else:
+            raise ValueError("normalize must be 'per_agent' or 'global'")
 
-    # cosmetics
+        alpha = counts.astype(float) / cmax
+
+        r, g, b, _ = to_rgba(colour)
+        rgba = np.zeros((L, L, 4), dtype=float)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = r, g, b
+        rgba[..., 3] = alpha
+
+        # y-up, aligned with trajectories (+0.5 centres will sit inside these cells)
+        ax.imshow(
+            rgba,
+            origin="lower",
+            extent=[0, L, 0, L],
+            interpolation="nearest",
+        )
+
+    # Cosmetics (match trajectories)
+    ax.set_xlim(0, L)
+    ax.set_ylim(0, L)
     ax.set_xticks(range(L + 1))
     ax.set_yticks(range(L + 1))
     ax.grid(which="both", color=grid_color, lw=0.5)
     ax.set_aspect("equal")
-    ax.set_title(title or f"Occupancy heatmap (agent {agent_id})")
+    ax.set_title("Occupancy (α ∝ visits)")
     plt.tight_layout()
     return ax
+
 
 def avg_apples_picked(state, total_reward, timestep):
     return total_reward / timestep
@@ -435,7 +366,7 @@ def plot_metrics(metrics, name, experiment):
         plt.savefig(str(filename))
 
 
-def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector):
+def plot_agent_specific_metrics(agent_metrics, apples, name, vector):
     """Plot per-agent x-coords and overlay apples as a scatter cloud.
 
     Parameters
@@ -453,7 +384,7 @@ def plot_agent_specific_metrics(agent_metrics, apples, experiment, name, vector)
     graph += 1
     graph_folder = Path(f"graphs/{name}")
     graph_folder.mkdir(parents=True, exist_ok=True)
-    fig_id = f"{experiment}_{name}_{str(graph)}"
+    fig_id = f"graph_{name}_{str(graph)}"
     plt.figure(fig_id, figsize=(6, 5))
 
     # --- agents: keep as connected lines ------------------------------
