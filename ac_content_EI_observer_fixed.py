@@ -391,7 +391,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             # for ag in agents_list:
             #     ag.shed_influencer(agents_list)
 
-        p_network_list[agent].train(agents_list)
+        p_network_list[agent].training_loop(agents_list)
         # if i != 0:
         #     if i % 20 == 0:
         #         for ntwk in p_network_list:

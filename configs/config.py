@@ -24,13 +24,14 @@ class TrainingConfig:
     hidden_dimensions: Optional[int] = 16
     hidden_dimensions_actor: Optional[int] = 32
     num_layers: int = 4
+    policy: str = "value_function"
     num_layers_actor: int = 4
     epsilon: float = 0.1
     test: bool = False
     skip: bool = False
-    seed: int = 42069
+    seed: int = 1234
     beta_rate: float = 0.0
-    budget: float = 1.0
+    budget: float = 0.0
 
 
 @dataclass
@@ -42,6 +43,7 @@ class EnvironmentConfig:
     despawn_algo: callable = despawn_apple
     length: int = 20
     width: int = 1
+    env_cls: str = "OrchardBasic"
 
 
 @dataclass

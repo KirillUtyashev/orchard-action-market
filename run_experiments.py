@@ -41,6 +41,7 @@ def parse_args(args):
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
     parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
     parser.add_argument("--budget", type=float, default=4.0, help="Budget")
+    parser.add_argument("--env_cls", type=str, default="OrchardBasic", help="Environment Class")
 
     return parser.parse_args(args)
 
@@ -53,6 +54,7 @@ def main(args):
         apple_mean_lifetime=args.apple_life,
         length=args.length,
         width=args.width,
+        env_cls=args.env_cls
     )
 
     train_config = TrainingConfig(
@@ -69,6 +71,7 @@ def main(args):
         actor_vision=args.actor_vision,
         skip=True if args.skip == 0 else False,
         epsilon=args.epsilon,
+        policy="policy_network" if "Actor" in args.algorithm else "value_function",
         seed=args.seed,
         beta_rate=args.beta_rate,
         budget=args.budget
@@ -79,32 +82,37 @@ def main(args):
         train_config=train_config,
         debug=args.debug
     )
-
-    if args.algorithm == "Centralized":
-        algo = CentralizedValueFunction(exp_config)
-    elif args.algorithm == "Decentralized":
-        algo = DecentralizedValueFunction(exp_config)
-    elif args.algorithm == "DecentralizedPersonal":
-        algo = DecentralizedValueFunctionPersonal(exp_config)
-    elif args.algorithm == "ActorCritic":
-        algo = ActorCriticPerfect(exp_config)
-    elif args.algorithm == "ActorCriticRates":
-        algo = ActorCriticRates(exp_config)
-    elif args.algorithm == "ActorCriticNoAdvantage":
-        algo = ActorCriticPerfectNoAdvantage(exp_config)
-    elif args.algorithm == "ActorCriticRatesFixed":
-        algo = ActorCriticRatesFixed(exp_config)
-    elif args.algorithm == "ActorCriticRatesAdvantage":
-        algo = ActorCriticRatesAdvantage(exp_config)
-    elif args.algorithm == "ActorImperfectCriticPerfect":
-        algo = ActorImperfectCriticPerfect(exp_config)
-    else:
+    algo = pick_experiment(args.algorithm, exp_config)
+    if algo is None:
         exit(1)
     np.random.seed(train_config.seed)
     torch.manual_seed(train_config.seed)
     random.seed(train_config.seed)
+    algo.train()
 
-    algo.run()
+
+def pick_experiment(algorithm, exp_config):
+    if algorithm == "Centralized":
+        algo = CentralizedValueFunction(exp_config)
+    elif algorithm == "Decentralized":
+        algo = DecentralizedValueFunction(exp_config)
+    elif algorithm == "DecentralizedPersonal":
+        algo = DecentralizedValueFunctionPersonal(exp_config)
+    elif algorithm == "ActorCritic":
+        algo = ActorCriticPerfect(exp_config)
+    elif algorithm == "ActorCriticRates":
+        algo = ActorCriticRates(exp_config)
+    elif algorithm == "ActorCriticNoAdvantage":
+        algo = ActorCriticPerfectNoAdvantage(exp_config)
+    elif algorithm == "ActorCriticRatesFixed":
+        algo = ActorCriticRatesFixed(exp_config)
+    elif algorithm == "ActorCriticRatesAdvantage":
+        algo = ActorCriticRatesAdvantage(exp_config)
+    elif algorithm == "ActorImperfectCriticPerfect":
+        algo = ActorImperfectCriticPerfect(exp_config)
+    else:
+        algo = None
+    return algo
 
 
 if __name__ == "__main__":

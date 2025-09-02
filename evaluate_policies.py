@@ -8,6 +8,8 @@ import torch
 
 from actor_critic.actor_critic_following_rates import ActorCriticRatesFixed
 from actor_critic.actor_critic_perfect_info import ActorCriticPerfect
+from actor_critic.actor_imperfect_critic_perfect import \
+    ActorImperfectCriticPerfect
 from agents.actor_critic_agent import ACAgent, ACAgentRatesFixed
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
@@ -19,9 +21,60 @@ from configs.config import EnvironmentConfig, ExperimentConfig, TrainingConfig
 from orchard.algorithms import spawn_apple, despawn_apple
 from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction, \
-    DecentralizedValueFunctionPersonal, evaluate_policy, \
-    make_baseline_factory
+    DecentralizedValueFunctionPersonal
 from agents.communicating_agent import CommAgent, CommAgentPersonal
+
+
+def evaluate_policy(env_config,
+                    num_agents,
+                    agent_factory,
+                    timesteps=10000,
+                    seed=42069):
+    """
+    Runs `eval_performance` with agents created by `agent_factory` and
+    returns a dict of metrics.
+
+    agent_factory: fn(i: int) -> Agent
+    """
+    # seed for reproducibility
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    # create agents
+    agents = [agent_factory(i) for i in range(num_agents)]
+
+    # run the environment
+    total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
+        eval_performance(
+            num_agents,
+            env_config.length,
+            env_config.width,
+            None, None,
+            f"Eval-{env_config.length}x{env_config.width}",
+            agents_list=agents,
+            spawn_algo=env_config.spawn_algo,
+            despawn_algo=env_config.despawn_algo,
+            timesteps=timesteps,
+            s_target=env_config.s_target,
+            apple_mean_lifetime=env_config.apple_mean_lifetime
+        )
+
+    return {
+        "total_apples": int(total_apples),
+        "total_picked": int(total_picked),
+        "picked_per_agent": float(picked_per_agent),
+        "ratio_per_agent": float(per_agent),
+        "mean_distance": float(mean_dist),
+        "apples_per_sec": float(apples_per_sec)
+    }
+
+
+def make_baseline_factory(policy_name):
+    """Returns an agent_factory for SimpleAgent(policy=policy_name)."""
+    def factory(i):
+        return SimpleAgent(policy_name, i)
+    return factory
 
 
 def load_weights_only(name, networks, agents_list, path: str):
@@ -102,9 +155,9 @@ def evaluate_factory(length, width, num_agents):
 
 
 def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
-    random.seed(12)
-    np.random.seed(12)
-    torch.manual_seed(12)
+    random.seed(1234)
+    np.random.seed(1234)
+    torch.manual_seed(1234)
 
 
     env_config = EnvironmentConfig(
@@ -214,8 +267,7 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
 
         if not old:
             load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-
-    else:
+    elif algorithm == "ActorCriticRates":
         agents_list = []
         algo = ActorCriticRatesFixed(exp_config)
         # Initialize networks and agents
@@ -244,20 +296,54 @@ def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
         if not old:
             load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
 
+    else:
+        agents_list = []
+        algo = ActorImperfectCriticPerfect(exp_config)
+        # Initialize networks and agents
+        for nummer in range(train_config.num_agents):
+            agent = ACAgent("learned_policy",  nummer)
+            if train_config.critic_vision != 0:
+                if env_config.width != 1:
+                    critic_input_dim = train_config.critic_vision ** 2 + 1
+                else:
+                    critic_input_dim = train_config.critic_vision + 1
+            else:
+                critic_input_dim = env_config.length * env_config.width + 1
+
+            # Get actor network vision
+            if train_config.actor_vision != 0:
+                if env_config.width != 1:
+                    actor_input_dim = train_config.actor_vision ** 2 + 1
+                else:
+                    actor_input_dim = train_config.actor_vision + 1
+            else:
+                actor_input_dim = env_config.length * env_config.width + 1
+
+            network = ActorNetwork(actor_input_dim, 5 if env_config.width > 1 else 3, train_config.actor_alpha, train_config.discount, train_config.hidden_dimensions_actor, train_config.num_layers_actor)
+            policy_value = VNetwork(critic_input_dim, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
+            agent.policy_value = policy_value
+            agent.agent_alphas = np.zeros(num_agents)
+            agent.rate = 0.05
+            agent.personal_q_value = 0.0
+            agent.policy_network = network
+            agents_list.append(agent)
+
+        if not old:
+            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
+
     algo.agents_list = agents_list
+    algo.agent_controller.agents_list = algo.agents_list
 
     total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
         eval_performance(
             num_agents,
             env_config.length,
             env_config.width,
-            None, None,
-            algo.name,
+            algo.agent_controller, algo.name,
             agents_list=agents_list,
             spawn_algo=env_config.spawn_algo,
             despawn_algo=env_config.despawn_algo,
             timesteps=10000,
-            vision=train_config.vision,
             s_target=env_config.s_target,
             apple_mean_lifetime=env_config.apple_mean_lifetime,
             epsilon=train_config.epsilon
@@ -315,5 +401,4 @@ if __name__ == "__main__":
     #     print(evaluate_factory(6, 6, 2))
     # evaluate_network(sys.argv[1:])
 
-    evaluate_network(12, 12, 7, 64, "Decentralized", True)
-
+    evaluate_network(12, 12, 7, 64, "ActorImperfectCriticPerfect", False)

@@ -438,7 +438,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             if agent3.num != agent:
                 agent3.beta *= (1 - agents_list[agent].discount_factor)
 
-        #p_network_list[agent].train(sp_state, sp_new_state, reward, action, agents_list)
+        #p_network_list[agent].training_loop(sp_state, sp_new_state, reward, action, agents_list)
         p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         o_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
 

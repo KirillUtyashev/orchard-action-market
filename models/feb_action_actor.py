@@ -403,7 +403,7 @@ class ActorNetwork():
             q_value = 0
             for agent in agents_list:
                 if agent.num == self.num:
-                    q, v = agents_list[self.num].value_network.train(state, new_state, reward, old_pos, new_pos)
+                    q, v = agents_list[self.num].value_network.training_loop(state, new_state, reward, old_pos, new_pos)
                     v_value += v
                     q_value += q
                     v_value += v * agents_list[agents_list[self.num].target_influencer].agent_rates[
@@ -412,7 +412,7 @@ class ActorNetwork():
                         self.num] * agent.infl_rate
                 else:
                     if len(agent.followers) == 0:
-                        q, v = agent.value_network.train(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
+                        q, v = agent.value_network.training_loop(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
                         v_value += v * agent.agent_rates[self.num]
                         v_value += v * agents_list[agents_list[self.num].target_influencer].agent_rates[agent.num] * agent.infl_rate
                         q_value += q * agent.agent_rates[self.num]
@@ -493,7 +493,7 @@ class ActorNetwork():
             q_value = 0.0
             for agent in agents_list:
                 if agent.num == self.num:
-                    q, v = agents_list[self.num].value_network.train(state, new_state, reward, old_pos, new_pos)
+                    q, v = agents_list[self.num].value_network.training_loop(state, new_state, reward, old_pos, new_pos)
                     # q, v = agents_list[self.num].value_network.just_get_q_v(state, new_state, reward, old_pos, new_pos)
                     v_value += v
                     q_value += q.item()
@@ -505,7 +505,7 @@ class ActorNetwork():
                         #q, v = agent.value_network.train_with_learned_util(state, new_state, 0, all_pos[agent.num], all_pos[agent.num], action_utils_raw[agent.num], agent.agent_rates[self.num])
                         # q, v = agents_list[self.num].value_network.just_get_q_v(state, new_state, reward, old_pos,
                         #                                                        new_pos)
-                        q, v = agents_list[agent.num].value_network.train(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
+                        q, v = agents_list[agent.num].value_network.training_loop(state, new_state, 0, all_pos[agent.num], all_pos[agent.num])
                         v_value += v * agent.agent_rates[self.num]
                         v_value += v * agents_list[agents_list[agent.num].target_influencer].agent_rates[self.num] * agent.infl_rate
                         q_value += q.item() * agent.agent_rates[self.num]

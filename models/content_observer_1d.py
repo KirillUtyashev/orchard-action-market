@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 
 from config import DEVICE
-from helpers import convert_position, ten, unwrap_state
+from helpers.helpers import convert_position, ten, unwrap_state
 from models.main_net import MainNet
 
 torch.set_default_dtype(torch.float64)

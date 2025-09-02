@@ -1,35 +1,24 @@
+import random
 from abc import abstractmethod
 
-from agents.agent import calculate_ir
+import torch
+
 from config import get_config
 from helpers.helpers import get_discounted_value, unwrap_state, convert_position
 import numpy as np
 
+from policies.random_policy import random_policy
+
 
 class AgentController:
-    def __init__(self, agents, critic_view_controller):
+    def __init__(self, agents, critic_view_controller, actor_view_controller=None):
         self.agents_list = agents
         self.critic_view_controller = critic_view_controller
+        self.actor_view_controller = actor_view_controller
 
-    def get_best_action(self, state, agent_id, available_actions):
-        agents, apples = unwrap_state(state)
-        action = available_actions.STAY
-        best_val = 0
-
-        for act in available_actions:
-            val, new_a, new_b, new_pos = calculate_ir(agents, apples, self.agents_list[agent_id].position, act.vector)
-            positions = []
-            for agent in range(len(self.agents_list)):
-                if agent != agent_id:
-                    positions.append(self.agents_list[agent].position)
-                else:
-                    positions.append(new_pos)
-            observations = self.get_all_agent_obs({"agents": new_a, "apples": new_b}, positions)
-            val += get_config()["discount"] * self.get_collective_value(observations, agent_id)
-            if val > best_val:
-                action = act
-                best_val = val
-        return action.idx
+    @abstractmethod
+    def get_best_action(self, env, agent_id):
+        raise NotImplementedError
 
     def get_agent_obs(self, state, agent_pos):
         return self.critic_view_controller.process_state(state, agent_pos)
@@ -44,37 +33,83 @@ class AgentController:
     def get_collective_value(self, states, agent_id):
         raise NotImplementedError
 
+    @abstractmethod
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        raise NotImplementedError
 
-class AgentControllerDecentralized(AgentController):
-    def __init__(self, agents, critic_view_controller):
-        super().__init__(agents, critic_view_controller)
 
+class AgentControllerValue(AgentController):
+    def __init__(self, agents, critic_view_controller, agent_view_controller=None, test=False):
+        super().__init__(agents, critic_view_controller, agent_view_controller)
+        self.test = test
+        if test:
+            self.count_random_actions = 0
+
+    @abstractmethod
     def get_collective_value(self, states, agent_id):
-        # sum_ = self.agents_list[agent_id].get_value_function(states[agent_id])
+        pass
+
+    def get_best_action(self, env, agent_id, communal=True):
+        action = env.available_actions.STAY
+        best_val = -1000000
+
+        for act in env.available_actions:
+            val, new_a, new_b, new_pos = env.calculate_ir(self.agents_list[agent_id].position, act.vector, communal)
+            positions = []
+            for agent in range(len(self.agents_list)):
+                if agent != agent_id:
+                    positions.append(self.agents_list[agent].position)
+                else:
+                    positions.append(new_pos)
+            observations = self.get_all_agent_obs({"agents": new_a, "apples": new_b}, positions)
+            val += get_config()["discount"] * self.get_collective_value(observations, agent_id)
+            if val > best_val:
+                action = act
+                best_val = val
+        return action.idx
+
+    def agent_get_action(self, env, agent_id, epsilon=0.1):
+        action = None
+        if random.random() < epsilon:
+            action = random_policy(env.available_actions)
+            if self.test:
+                self.count_random_actions += 1
+        else:
+            with torch.no_grad():
+                action = self.get_best_action(env, agent_id)
+        return action
+
+
+class AgentControllerCentralized(AgentControllerValue):
+    def get_collective_value(self, states, agent_id):
+        return self.agents_list[0].get_value_function(states[agent_id])
+
+
+class AgentControllerDecentralized(AgentControllerValue):
+    def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             value = agent.get_value_function(states[num])
-            agent.personal_q_value = get_config()["discount"] * value.item()
             sum_ += value
         return sum_
 
 
-class AgentControllerDecentralizedPersonal(AgentController):
-    def __init__(self, agents, critic_view_controller):
-        super().__init__(agents, critic_view_controller)
-
+class AgentControllerDecentralizedPersonal(AgentControllerValue):
     def get_collective_value(self, states, agent_id):
         value = self.agents_list[agent_id].get_value_function(states[agent_id])
         self.agents_list[agent_id].personal_q_value = get_config()["discount"] * value.item()
         return value
 
-
-class AgentControllerCentralized(AgentController):
-    def __init__(self, agents, critic_view_controller):
-        super().__init__(agents, critic_view_controller)
-
-    def get_collective_value(self, states, agent_id):
-        return self.agents_list[0].get_value_function(states[agent_id])
+    def agent_get_action(self, env, agent_id, epsilon=0.1):
+        action = None
+        if random.random() < epsilon:
+            action = random_policy(env.available_actions)
+            if self.test:
+                self.count_random_actions += 1
+        else:
+            with torch.no_grad():
+                action = self.get_best_action(env, agent_id, False)
+        return action
 
 
 class AgentControllerActorCritic(AgentControllerDecentralized):
@@ -98,6 +133,11 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
             self.agents_list[num].personal_q_value = get_config()["discount"] * value.item()
             sum_ += value
         return sum_
+
+    def agent_get_action(self, state, agent_id, available_actions, epsilon=None) -> int:
+        with torch.no_grad():
+            action = self.get_best_action(state, agent_id, available_actions)
+        return action
 
 
 class AgentControllerActorCriticIndividual(AgentControllerActorCritic):

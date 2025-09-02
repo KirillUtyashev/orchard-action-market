@@ -21,7 +21,7 @@ class ActorCritic(Algorithm, ABC):
     def update_critic(self):
         losses = []
         for agent in self.agents_list:
-            losses.append(agent.policy_value.train())
+            losses.append(agent.policy_value.training_loop())
         return losses[-1]
 
     def train_batch(self):
@@ -49,25 +49,3 @@ class ActorCritic(Algorithm, ABC):
                                                            agent_id,
                                                            self.env.available_actions)
         return action
-
-    def init_networks(self):
-        # Get critic network vision
-        if self.train_config.critic_vision != 0:
-            if self.env_config.width != 1:
-                critic_input_dim = self.train_config.critic_vision ** 2 + 1
-            else:
-                critic_input_dim = self.train_config.critic_vision + 1
-        else:
-            critic_input_dim = self.env_config.length * self.env_config.width + 1
-
-        # Get actor network vision
-        if self.train_config.actor_vision != 0:
-            if self.env_config.width != 1:
-                actor_input_dim = self.train_config.actor_vision ** 2 + 1
-            else:
-                actor_input_dim = self.train_config.actor_vision + 1
-        else:
-            actor_input_dim = self.env_config.length * self.env_config.width + 1
-
-        return (ActorNetwork(actor_input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor),
-                VNetwork(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))

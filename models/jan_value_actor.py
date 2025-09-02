@@ -1,14 +1,11 @@
 import numpy as np
 
 from config import DEVICE
-from helpers import convert_position, ten, unwrap_state
+from helpers.helpers import convert_position, ten, unwrap_state
 from models.main_net import MainNet
-from policies.random_policy import random_policy
 from policies.nearest import nearest
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 torch.set_default_dtype(torch.float64)
 
