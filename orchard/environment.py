@@ -261,7 +261,7 @@ class OrchardSelfless(Orchard):
                 return 0, c.owner_id, 1  # picker=0, owner gets +1
 
     def calculate_ir(self, position, action_vector, communal=True):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1

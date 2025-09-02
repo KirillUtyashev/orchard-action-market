@@ -137,7 +137,7 @@ class DecentralizedValueFunction(ValueFunction):
 
 class DecentralizedValueFunctionPersonal(DecentralizedValueFunction):
     def __init__(self, config: ExperimentConfig):
-        super().__init__(config, f"DecentralizedPersonal-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{self.env_config.env_cls}>")
+        super().__init__(config, f"DecentralizedPersonal-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
 
     def init_agents_for_eval(self) -> Tuple[List[CommAgent], AgentControllerDecentralizedPersonal]:
         a_list = []
