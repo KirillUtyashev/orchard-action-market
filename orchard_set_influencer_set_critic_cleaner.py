@@ -80,8 +80,6 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
     """
     if plotting:
         follow_plots = []
-        follow_indices = []
-        follow_setup = False
 
         apple_pos_x = []
         apple_pos_y = []
@@ -356,7 +354,6 @@ def training_loop(agents_list, orchard_length, S, phi, name, discount=0.99, time
         if i % 1000 == 0:
             for agent1 in agents_list:
                 agent1.generate_rates_only(state["agents"], state["apples"], const_ext=False)
-
 
         if plotting:
             if i % 100 == 0 or i == timesteps - 1:

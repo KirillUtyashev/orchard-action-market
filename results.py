@@ -908,21 +908,21 @@ def plot_diffs(filepaths, agent_counts):
 
 
 if __name__ == '__main__':
-    base = {
-        "length": 15,
-        "num_agents": 10,
-        "width": 15,
-        "dimensions": 4,
-        "alpha": 0.000275,
-    }
-
-    # sweep = {
-    #     "alpha": [0.00005, 0.0000316, 0.0001, 0.000275, 0.000316, 0.00063, 0.001]
+    # base = {
+    #     "length": 15,
+    #     "num_agents": 10,
+    #     "width": 15,
+    #     "dimensions": 4,
+    #     "alpha": 0.000275,
     # }
-    sweep = {
-        "hidden_dimensions": [16, 64, 256, 512, 1024]
-    }
-    run(base, sweep)
+    #
+    # # sweep = {
+    # #     "alpha": [0.00005, 0.0000316, 0.0001, 0.000275, 0.000316, 0.00063, 0.001]
+    # # }
+    # sweep = {
+    #     "hidden_dimensions": [16, 64, 256, 512, 1024]
+    # }
+    # run(base, sweep)
 
     # run(base, sweep)
 
@@ -955,20 +955,26 @@ if __name__ == '__main__':
     # plt.show()
 
 
-    # following_probabilities = [0, 0.3, 0.6, 1]
-    #
-    # performance = [324, 531, 801, 911.0]
-    #
-    # plt.figure()
-    # plt.plot(following_probabilities, performance, marker='o', linestyle=':')
-    #
-    # plt.title("Actor Critic With Fixed Following Rates")
-    # plt.xlabel("Following Probability")
-    # plt.ylabel("Apples Picked Per Agent")
-    # plt.legend()
-    # plt.grid(True, which="both", ls="--", linewidth=0.5)
-    # plt.tight_layout()
-    # plt.show()
+    following_probabilities = [0, 0.3, 0.6, 0.9, 1]
+
+    performance_fixed = [390.5, 490.0, 519.5, 620.0, 687.25]
+    performance_allocation_q_value = [390.5, 531.0,  551.0, 656.0, 687.25]
+    performance_allocation_adv_value = [390.5, 488.0, 524.0, 639.25, 687.25]
+    random = [211, 211, 211, 211, 211]
+
+    plt.figure()
+    plt.plot(following_probabilities, performance_fixed, marker='o', linestyle=':', label="Actor Critic, Fixed Fol. Rates")
+    plt.plot(following_probabilities, performance_allocation_adv_value, marker='o', linestyle=':', label="Actor Critic, Advantage Func. Optimization")
+    plt.plot(following_probabilities, performance_allocation_q_value, marker='o', linestyle=':', label="Actor Critic, Q-value Optimization")
+    plt.plot(following_probabilities, random, marker='o', linestyle=':', color="red", label="Random")
+
+    plt.title("Actor Critic With Fixed Following Rates")
+    plt.xlabel("Following Probability")
+    plt.ylabel("Apples Picked Per Agent")
+    plt.legend()
+    plt.grid(True, which="both", ls="--", linewidth=0.5)
+    plt.tight_layout()
+    plt.show()
 
 
     # files = [

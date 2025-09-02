@@ -53,7 +53,7 @@ class ActorCriticPerfect(ActorCritic):
                 self.v_network_list.append(agent.policy_value)
                 self.p_network_list.append(agent.policy_network)
             self.network_for_eval = self.p_network_list
-            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
+            return self.training_loop() if not self.train_config.skip else self.training_loop(*self.restore_all())
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise
@@ -125,7 +125,7 @@ class ActorCriticPerfectNoAdvantage(ActorCritic):
                 self.v_network_list.append(agent.policy_value)
                 self.p_network_list.append(agent.policy_network)
             self.network_for_eval = self.p_network_list
-            return self.train() if not self.train_config.skip else self.train(*self.restore_all())
+            return self.training_loop() if not self.train_config.skip else self.training_loop(*self.restore_all())
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise

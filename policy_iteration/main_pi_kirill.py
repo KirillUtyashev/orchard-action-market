@@ -9,7 +9,7 @@ from agents.actor_critic_alloc_agent import ACAgent as ACAAgent
 from config import CHECKPOINT_DIR
 from models.value_function import VNetwork
 from policies.random_policy import random_policy_1d
-from models.actor_dc_1d import ActorNetwork
+from models.actor_network import ActorNetwork
 from value_function_learning.train_value_function import training_loop_d
 from config import get_config
 import torch
@@ -121,7 +121,7 @@ def sweep_learning_rates_and_plot(
 # Example usage:
 # def train_agent(learning_rate, num_episodes, env, agent_class, **kwargs):
 #     agent = agent_class(lr=learning_rate, **kwargs)
-#     return agent.train(num_episodes, env)  # should return final reward ratio
+#     return agent.training_loop(num_episodes, env)  # should return final reward ratio
 #
 # results = sweep_learning_rates_and_plot(
 #     train_fn=train_agent,

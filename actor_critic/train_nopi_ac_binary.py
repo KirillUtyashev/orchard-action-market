@@ -1,6 +1,6 @@
 import time
 
-from main import run_environment_1d
+from main import eval_performance
 from models.simple_connected_multiple_blind import SCMBNetwork
 from models.simple_connected_multiple import CNetwork
 from orchard.environment import *
@@ -16,7 +16,7 @@ from agents.simple_agent import SimpleAgent
 from models.simple_connected import SimpleConnected
 from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
 from models.simple_connected_multiple import CNetwork as SCMNetwork_Central
-from models.actor_dc_1d import ActorNetwork
+from models.actor_network import ActorNetwork
 #from models.actor_dc_1d_complex import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
@@ -177,7 +177,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             "apples": new_state["apples"].copy(),
             "pos": agents_list[agent].position.copy()
         }
-        # p_network_list[agent].train(sp_state, sp_new_state, reward, action, agents_list)
+        # p_network_list[agent].training_loop(sp_state, sp_new_state, reward, action, agents_list)
         p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
         # if i == 1000:
         #     start = time.time()
@@ -325,8 +325,8 @@ def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agent
         trained_agent.policy_network = p_network_list[ii]
         a_list.append(trained_agent)
     with torch.no_grad():
-        val = run_environment_1d(num_agents, random_policy_1d, side_length, None, None, "AC", "test", agents_list=a_list,
-                           spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
+        val = eval_performance(num_agents, random_policy_1d, side_length, None, None, "AC", "test", agents_list=a_list,
+                               spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
     if val > maxi and iteration != 99:
         print("saving best")
         for nummer, netwk in enumerate(p_network_list):

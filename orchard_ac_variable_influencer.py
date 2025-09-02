@@ -5,7 +5,7 @@ from helpers import convert_position
 
 import time
 from actor_critic import eval_network
-from main import run_environment_1d
+from main import eval_performance
 from orchard.environment import *
 import matplotlib.pyplot as plt
 
@@ -566,9 +566,9 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         #     #if i % 20 == 0:
         #     for agnum, ntwk in enumerate(v_network_list):
         #         if agnum == agent:
-        #             v_network_list[agnum].train(state, new_state, reward, old_pos, agents_list[agnum].position)
+        #             v_network_list[agnum].training_loop(state, new_state, reward, old_pos, agents_list[agnum].position)
         #         else:
-        #             v_network_list[agnum].train(state, new_state, 0, agents_list[agnum].position, agents_list[agnum].position)
+        #             v_network_list[agnum].training_loop(state, new_state, 0, agents_list[agnum].position, agents_list[agnum].position)
 
         if i > gossip_timestep:
             if i % 20 == 0:
@@ -1208,9 +1208,9 @@ def eval_network(name, discount, gen_budget, maxi, p_network_list, v_network_lis
         trained_agent.policy_network = p_network_list[ii]
         a_list.append(trained_agent)
     with torch.no_grad():
-        val = run_environment_1d(num_agents, random_policy_1d, side_length, None, None, "MARL", "test1",
-                                 agents_list=a_list,
-                                 spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=10000)
+        val = eval_performance(num_agents, random_policy_1d, side_length, None, None, "MARL", "test1",
+                               agents_list=a_list,
+                               spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=10000)
     # if val > maxi and iteration != 99:
     #     print("saving best")
     #     for nummer, netwk in enumerate(p_network_list):

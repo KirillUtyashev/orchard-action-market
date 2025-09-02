@@ -1,8 +1,16 @@
 import math
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 import random
 from enum import Enum, auto
+
+from orchard.algorithms import despawn_apple, despawn_apple_selfless_orchard, \
+    spawn_apple, \
+    spawn_apple_selfless_orchard
+
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
 
@@ -61,104 +69,82 @@ class Action2D(ActionMixin, Enum):
         self._vector = vector
 
 
-class Orchard:
+@dataclass
+class ProcessAction:
+    new_position: np.ndarray
+    picker_reward: int = 0
+    owner_id: Optional[int] = None
+    owner_reward: int = 0
+
+
+@dataclass
+class ConsumeResult:
+    consumed: bool
+    owner_id: Optional[int] = None
+
+
+class Orchard(ABC):
     def __init__(self,
                  length,
                  width,
                  num_agents,
                  agents_list=None,
                  action_algo=None,
-                 spawn_algo=None,
-                 despawn_algo=None,
+                 spawn_algo=spawn_apple,
+                 despawn_algo=despawn_apple,
                  s_target=0.1,
                  apple_mean_lifetime=None):
         self.length = length
         self.width = width
-        if width == 1:
-            self.available_actions = Action1D
-        else:
-            self.available_actions = Action2D
+        self.available_actions = Action1D if width == 1 else Action2D
 
         self.n = num_agents
+        assert agents_list is not None and self.n == len(agents_list)
+        self.agents_list = agents_list
 
+        # state grids
         self.agents = np.zeros((self.width, self.length), dtype=int)
         self.apples = np.zeros((self.width, self.length), dtype=int)
 
-        assert self.n == len(agents_list)
-        self.agents_list = agents_list
-
+        # plug-ins
         self.spawn_algorithm = spawn_algo
         self.despawn_algorithm = despawn_algo
+        self.action_algorithm = action_algo or self.process_action
 
-        if action_algo is None:
-            self.action_algorithm = self.process_action
-        else:
-            self.action_algorithm = action_algo
-
+        # stats
         self.total_apples = 0
         self.apples_despawned = 0
 
+        # spawn/despawn rates (unchanged logic)
         self.spawn_rate = (self.n / (self.length * self.width)) * s_target
         if apple_mean_lifetime is None:
-            self.despawn_rate = min(1.0, 1.0 / ((math.ceil(1 / (2 * math.sqrt((self.n / (self.length * self.width))))) + 1) if self.width > 1 else (1 / (2 * (self.n / (self.length * self.width))) + 1)))
+            self.despawn_rate = min(
+                1.0,
+                1.0 / ((math.ceil(1 / (2 * math.sqrt((self.n / (self.length * self.width))))) + 1)
+                       if self.width > 1 else (1 / (2 * (self.n / (self.length * self.width))) + 1))
+            )
         else:
             self.despawn_rate = 1 / apple_mean_lifetime
-        # Variables needed when visualizing Orchard environment
+
+        # rendering flags
         self._rendering_initialized = False
         self.render_mode = None
 
+    # ---------- your existing helpers (unchanged) ----------
     def initialize(self, agents_list, agent_pos=None, apples=None):
-        """
-        Populate the Orchard environment with agents in agent_list and randomly spawn the first apple
-        """
         self.agents = np.zeros((self.width, self.length), dtype=int)
-        if apples is None:
-            self.apples = np.zeros((self.width, self.length), dtype=int)
-        else:
-            self.apples = apples  # This has to be an array
+        self.apples = np.zeros((self.width, self.length), dtype=int) if apples is None else apples
         self.agents_list = agents_list
         self.set_positions(agent_pos)
-        # self.spawn_algorithm(self)
 
     def set_positions(self, agent_pos=None):
         for i in range(self.n):
-            if agent_pos is not None:
-                position = agent_pos[i]
-            else:
-                position = np.random.randint(0, [self.width, self.length])
+            position = agent_pos[i] if agent_pos is not None else np.random.randint(0, [self.width, self.length])
             self.agents_list[i].position = position
             self.agents[position[0], position[1]] += 1
 
     def get_state(self):
-        return {
-            "agents": self.agents.copy(),
-            "apples": self.apples.copy(),
-        }
-
-    def process_action(self, position, action):
-        """
-
-        :param position:
-        :param action:
-        :return:
-        """
-        # Find the new position of the agent based on their old position and their action
-        if action is not None:
-            new_pos = np.clip(position + self.available_actions.from_idx(action).vector, [0, 0], [self.width-1, self.length-1])
-            self.agents[new_pos[0], new_pos[1]] += 1
-            self.agents[position[0], position[1]] -= 1
-        else:
-            new_pos = position
-        if self.apples[new_pos[0], new_pos[1]] >= 1:
-            self.apples[new_pos[0], new_pos[1]] -= 1
-            return 1, new_pos
-        return 0, new_pos
-
-    def main_step(self, position, action):
-        reward, new_position = self.action_algorithm(position, action)
-        # self.total_apples += self.spawn_algorithm(self)
-        # self.apples_despawned += self.despawn_algorithm(self)
-        return reward, new_position
+        return {"agents": self.agents.copy(), "apples": self.apples.copy()}
 
     def _init_render(self):
         from rendering import Viewer
@@ -169,3 +155,125 @@ class Orchard:
         if not self._rendering_initialized:
             self._init_render()
         return self.viewer.render(self, return_rgb_array=self.render_mode == "rgb_array")
+
+    @abstractmethod
+    def _consume_apple(self, pos: np.ndarray) -> Optional[int]:
+        """
+        Mutate self.apples to reflect consumption.
+        Return owner_id if applicable, else None.
+        """
+
+    @abstractmethod
+    def _route_rewards(self, picker_id: int, owner_id: Optional[int]) -> Tuple[int, Optional[int], int]:
+        """
+        Return (picker_reward, owner_id_to_credit_or_None).
+        """
+
+    def _apply_move(self, position, action_idx):
+        vec = self.available_actions.from_idx(action_idx).vector
+        new_pos = np.clip(position + vec, [0, 0], [self.width - 1, self.length - 1])
+        self.agents[new_pos[0], new_pos[1]] += 1
+        self.agents[position[0], position[1]] -= 1
+        return new_pos
+
+    # ---------- Shared movement and action orchestration ----------
+    def process_action(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]) -> ProcessAction:
+        # move
+        if action_idx is not None:
+            new_pos = self._apply_move(position, action_idx)
+        else:
+            new_pos = position
+
+        # consume (subclass defines semantics)
+        c = self._consume_apple(new_pos)
+        picker_r, owner_id, owner_r = self._route_rewards(agent_id, c)
+
+        return ProcessAction(
+            new_position=new_pos,
+            picker_reward=picker_r,
+            owner_id=owner_id,
+            owner_reward=owner_r
+        )
+
+    @abstractmethod
+    def calculate_ir(self, position, action_vector, communal=True):
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_sum_apples(self):
+        raise NotImplementedError
+
+class OrchardBasic(Orchard):
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
+        if self.apples[pos[0], pos[1]] > 0:
+            self.apples[pos[0], pos[1]] -= 1
+            return ConsumeResult(consumed=True)
+        return ConsumeResult(consumed=False)
+
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if c.consumed:
+            return 1, None, None   # picker gets 1, no owner
+        return 0, None, None
+
+    def calculate_ir(self, position, action_vector, communal=True):
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
+        agents = self.agents.copy()
+        apples = self.apples.copy()
+        agents[new_position[0], new_position[1]] += 1
+        agents[position[0], position[1]] -= 1
+        if apples[new_position[0], new_position[1]] > 0:
+            apples[new_position[0], new_position[1]] -= 1
+            return 1, agents, apples, new_position
+        else:
+            return 0, agents, apples, new_position
+
+    def get_sum_apples(self):
+        return np.sum(self.apples)
+
+
+class OrchardSelfless(Orchard):
+    def __init__(self,
+                 length,
+                 width,
+                 num_agents,
+                 agents_list=None,
+                 action_algo=None,
+                 spawn_algo=spawn_apple_selfless_orchard,
+                 despawn_algo=despawn_apple_selfless_orchard,
+                 s_target=0.1,
+                 apple_mean_lifetime=None):
+        super().__init__(length, width, num_agents, agents_list, action_algo, spawn_algo, despawn_algo, s_target, apple_mean_lifetime)
+
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
+        owner_plus1 = self.apples[pos[0], pos[1]]
+        if owner_plus1 > 0:
+            self.apples[pos[0], pos[1]] = 0
+            return ConsumeResult(consumed=True, owner_id=owner_plus1.item())
+        return ConsumeResult(consumed=False)
+
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if not c.consumed:
+            return 0, None, 0
+        else:
+            if c.owner_id == (picker_id + 1):
+                return 0, c.owner_id, 0
+            else:
+                return 0, c.owner_id, 1  # picker=0, owner gets +1
+
+    def calculate_ir(self, position, action_vector, communal=True):
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
+        agents = self.agents.copy()
+        apples = self.apples.copy()
+        agents[new_position[0], new_position[1]] += 1
+        agents[position[0], position[1]] -= 1
+        if apples[new_position[0], new_position[1]] > 0:
+            apples[new_position[0], new_position[1]] = 0
+            if communal:
+                return 1, agents, apples, new_position
+            else:
+                return 0, agents, apples, new_position
+        else:
+            return 0, agents, apples, new_position
+
+    def get_sum_apples(self):
+        return np.count_nonzero(self.apples)

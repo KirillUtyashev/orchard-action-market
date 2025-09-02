@@ -1,20 +1,19 @@
-from actor_critic import train_ac_value, train_ac_rate, train_ac_beta, train_ac_binary
+from actor_critic.actor_critic import train_ac_value, train_ac_rate, train_ac_beta, train_ac_binary
 from agents.actor_critic_agent import ACAgent
 from agents.actor_critic_alloc_agent import ACAgent as ACAAgent
 from agents.communicating_agent import CommAgent
-from main import run_environment_1d
+from main import eval_performance
 from models.simple_connected_multiple import SCMNetwork
-from policies.random_policy import random_policy_1d, random_policy
+from policies.random_policy import random_policy_1d
 from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
-from models.actor_dc_1d import ActorNetwork
+from models.actor_network import ActorNetwork
 # from models.simple_connected_multiple_dc_altinput import SCMNetwork, SimpleConnectedMultiple
 # from models.actor_dc_1d_altinput import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 from train_decentral import training_loop as training_loop_d
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
+
 torch.set_default_dtype(torch.float64)
 
 """
@@ -37,8 +36,8 @@ def eval_network(name, discount, side_length, experiment, iteration, num_agents,
         trained_agent.policy_network = network_list[ii]
         a_list.append(trained_agent)
     with torch.no_grad():
-        run_environment_1d(num_agents, random_policy_1d, side_length, S, phi, name, experiment + "_" + str(iteration), agents_list=a_list,
-                           spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
+        eval_performance(num_agents, random_policy_1d, side_length, S, phi, name, experiment + "_" + str(iteration), agents_list=a_list,
+                         spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
 
 def eval_network_dece(name, num_agents, discount, side_length, experiment, iteration, prefix, approach):
     print(prefix, name, approach)
@@ -58,8 +57,8 @@ def eval_network_dece(name, num_agents, discount, side_length, experiment, itera
         trained_agent.policy_value = network_list[ii]
         a_list.append(trained_agent)
     with torch.no_grad():
-        run_environment_1d(num_agents, random_policy_1d, side_length, None, None, name, experiment + "_" + str(iteration), agents_list=a_list,
-                           spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
+        eval_performance(num_agents, random_policy_1d, side_length, None, None, name, experiment + "_" + str(iteration), agents_list=a_list,
+                         spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
 
 
 def policy_iteration(approach="value", name="D-2_5", num_agents=2, orchard_size=5, first_it=0, skip_decen=False):
