@@ -140,7 +140,7 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
             apples_per_second = 0
             for tick in range(num_agents):
                 apples_before = env.get_sum_apples()
-                action_result = step(agents_list, env, agent_controller, epsilon)
+                step(agents_list, env, agent_controller, epsilon)
                 reward += (apples_before - env.get_sum_apples())
                 if tick == num_agents - 1:
                     env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
