@@ -59,7 +59,7 @@ def spawn_apple_selfless_orchard(env, p_cell):
 
     if total_spawned > 0:
         # assign random agent IDs (0 ... num_agents-1)
-        assigned_agents = np.random.randint(0, env.n, size=total_spawned)
+        assigned_agents = np.random.randint(1, env.n + 1, size=total_spawned)
 
         for pos, agent_id in zip(positions, assigned_agents):
             env.apples[tuple(pos)] = agent_id

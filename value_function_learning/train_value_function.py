@@ -51,8 +51,8 @@ class CentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.env_step(tick)
-                processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[env_step_result.acting_agent_id])
-                processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[env_step_result.acting_agent_id].position)
+                processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[env_step_result.acting_agent_id], None)
+                processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[env_step_result.acting_agent_id].position, None)
 
                 # Add rewards here
                 # If orchard is basic, add the reward picker
@@ -87,7 +87,8 @@ class DecentralizedValueFunction(ValueFunction):
     def __init__(self, config: ExperimentConfig, name=None):
         """Initialize the value function algorithm."""
         if name is None:
-            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
+            # super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
+            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>")
         else:
             super().__init__(config, name)
         self.network_list = []
@@ -125,8 +126,8 @@ class DecentralizedValueFunction(ValueFunction):
                 for each_agent in range(len(self.agents_list)):
                     reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else (
                         env_step_result.apple_owner_reward) if (env_step_result.apple_owner_reward is not None) and (env_step_result.apple_owner_id == (each_agent + 1)) else 0
-                    processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[each_agent])
-                    processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position)
+                    processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[each_agent], each_agent + 1)
+                    processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position, each_agent + 1)
 
                     self.agents_list[each_agent].add_experience(
                         processed_state, processed_new_state, reward)

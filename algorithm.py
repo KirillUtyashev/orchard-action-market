@@ -8,7 +8,8 @@ from numpy import floating
 from agents.agent import AgentInfo
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
-from helpers.controllers import AgentControllerCentralized, ViewController
+from helpers.controllers import AgentControllerCentralized, ViewController, \
+    ViewControllerOrchardSelfless
 from main import eval_performance
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
@@ -184,9 +185,9 @@ class Algorithm:
         if self.train_config.test:
             self.count_random_actions = 0
 
-    def create_env(self, agent_pos, apples, env_cls=OrchardBasic):
-        env = env_cls(self.env_config.length, self.env_config.width, self.train_config.num_agents, self.agents_list, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
-        env.initialize(self.agents_list, agent_pos=agent_pos, apples=apples)
+    def create_env(self, agent_pos, apples, agents_list, env_cls=OrchardBasic):
+        env = env_cls(self.env_config.length, self.env_config.width, self.train_config.num_agents, agents_list, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
+        env.initialize(agents_list, agent_pos=agent_pos, apples=apples)
         return env
 
     @abstractmethod
@@ -211,15 +212,15 @@ class Algorithm:
     def log_progress(self, sample_state, sample_state5, sample_state6):
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state, sample_state["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state, sample_state["poses"][i], i + 1))
         v_value = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state5, sample_state5["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state5, sample_state5["poses"][i], i + 1))
         v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state6, sample_state6["poses"][i]))
+            agent_obs.append(self.critic_view_controller.process_state(sample_state6, sample_state6["poses"][i], i + 1))
         v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
         add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
@@ -252,7 +253,7 @@ class Algorithm:
 
         agents_list, agent_controller = self.init_agents_for_eval()
 
-        env = self.create_env(None, None, self.env_cls)
+        env = self.create_env(None, None, agents_list, self.env_cls)
 
         with torch.no_grad():
             results = eval_performance(
@@ -567,7 +568,7 @@ class Algorithm:
         self.actor_view_controller = view_controller_cls(self.train_config.actor_vision)
         self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
         self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls))
-        self.env = self.create_env(*self.restore_all() if self.train_config.skip else (None, None), self.env_cls)
+        self.env = self.create_env(*self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
 
     def _init_agents_for_training(self, agent_cls, value_networks, actor_networks):
         info = self.agent_info
@@ -581,7 +582,7 @@ class Algorithm:
             self.agents_list.append(agent)
 
     def train(self):
-        self.build_experiment()
+        self.build_experiment(view_controller_cls=ViewController if self.env_cls is OrchardBasic else ViewControllerOrchardSelfless)
         self.training_loop()
 
     def _init_critic_networks(self, value_network_cls=VNetwork):

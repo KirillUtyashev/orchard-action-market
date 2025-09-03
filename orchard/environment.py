@@ -203,6 +203,7 @@ class Orchard(ABC):
     def get_sum_apples(self):
         raise NotImplementedError
 
+
 class OrchardBasic(Orchard):
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         if self.apples[pos[0], pos[1]] > 0:
