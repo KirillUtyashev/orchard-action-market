@@ -54,7 +54,7 @@ class AgentControllerValue(AgentController):
         best_val = -1000000
 
         for act in env.available_actions:
-            val, new_a, new_b, new_pos = env.calculate_ir(self.agents_list[agent_id].position, act.vector, communal)
+            val, new_a, new_b, new_pos = env.calculate_ir(self.agents_list[agent_id].position, act.vector, communal, agent_id)
             positions = []
             for agent in range(len(self.agents_list)):
                 if agent != agent_id:

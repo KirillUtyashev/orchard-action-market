@@ -185,7 +185,7 @@ def run_experiment_and_fetch_logs_with_key(vm_ip, username, private_key_path, wo
     transport = ssh.get_transport()
     transport.set_keepalive(5)
 
-    run_command(ssh, env_script, working_dir, args)
+    # run_command(ssh, env_script, working_dir, args)
 
     # 2. Fetch logs via SFTP
     sftp = ssh.open_sftp()
