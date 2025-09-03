@@ -196,7 +196,7 @@ class Orchard(ABC):
         )
 
     @abstractmethod
-    def calculate_ir(self, position, action_vector, communal=True):
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         raise NotImplementedError
 
     @abstractmethod
@@ -216,7 +216,7 @@ class OrchardBasic(Orchard):
             return 1, None, None   # picker gets 1, no owner
         return 0, None, None
 
-    def calculate_ir(self, position, action_vector, communal=True):
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
         agents = self.agents.copy()
         apples = self.apples.copy()
@@ -257,19 +257,20 @@ class OrchardSelfless(Orchard):
             return 0, None, 0
         else:
             if c.owner_id == (picker_id + 1):
-                return 0, c.owner_id, 0
+                return 1, c.owner_id, 0
             else:
                 return 0, c.owner_id, 1  # picker=0, owner gets +1
 
-    def calculate_ir(self, position, action_vector, communal=True):
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
         agents[position[0], position[1]] -= 1
         if apples[new_position[0], new_position[1]] > 0:
+            apple_id = apples[new_position[0], new_position[1]]
             apples[new_position[0], new_position[1]] = 0
-            if communal:
+            if communal or ((not communal) and (agent_id + 1) == apple_id):
                 return 1, agents, apples, new_position
             else:
                 return 0, agents, apples, new_position
