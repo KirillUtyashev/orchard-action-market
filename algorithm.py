@@ -507,12 +507,12 @@ class Algorithm:
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            # if self.train_config.timesteps < 2000000:
-            #     log_constant = 0.02 * 2000000
-            #     eval_constant = 0.1 * 2000000
-            # else:
-            log_constant = 0.02 * self.train_config.timesteps
-            eval_constant = 0.1 * self.train_config.timesteps
+            if self.train_config.timesteps < 1000000:
+                log_constant = 0.02 * 1000000
+                eval_constant = 0.1 * 1000000
+            else:
+                log_constant = 0.02 * self.train_config.timesteps
+                eval_constant = 0.1 * self.train_config.timesteps
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
                 self.env.length, self.env.width, self.train_config.num_agents)
