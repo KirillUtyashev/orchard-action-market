@@ -103,7 +103,6 @@ class AgentControllerDecentralized(AgentControllerValue):
 class AgentControllerDecentralizedPersonal(AgentControllerValue):
     def get_collective_value(self, states, agent_id):
         value = self.agents_list[agent_id].get_value_function(states[agent_id])
-        self.agents_list[agent_id].personal_q_value = get_config()["discount"] * value.item()
         return value
 
     def agent_get_action(self, env, agent_id, epsilon=0.1):

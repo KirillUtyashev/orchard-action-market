@@ -140,7 +140,7 @@ class DecentralizedValueFunctionPersonal(DecentralizedValueFunction):
     def __init__(self, config: ExperimentConfig):
         super().__init__(config, f"DecentralizedPersonal-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
 
-    def init_agents_for_eval(self) -> Tuple[List[CommAgent], AgentControllerDecentralizedPersonal]:
+    def init_agents_for_eval(self) -> Tuple[List[SimpleAgent], AgentControllerDecentralizedPersonal]:
         a_list = []
         info = self.agent_info
         for ii in range(len(self.agents_list)):
@@ -149,3 +149,9 @@ class DecentralizedValueFunctionPersonal(DecentralizedValueFunction):
             trained_agent.policy_value = self.network_list[ii]
             a_list.append(trained_agent)
         return a_list, AgentControllerDecentralizedPersonal(a_list, self.critic_view_controller)
+
+    def build_experiment(self, view_controller_cls=ViewController,
+                         agent_controller_cls=AgentControllerDecentralizedPersonal,
+                         agent_type=SimpleAgent, value_network_cls=VNetwork,
+                         actor_network_cls=ActorNetwork, **kwargs):
+        super().build_experiment(view_controller_cls, agent_controller_cls, agent_type, value_network_cls, **kwargs)
