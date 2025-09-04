@@ -140,7 +140,7 @@ class TestOrchard:
             assert result.owner_id is None
             assert int(self.orchard.apples[0][3]) == 1
         else:
-            assert result.picker_reward == 0
+            assert result.picker_reward == 1
             assert result.owner_reward == 1
             assert result.owner_id == 2
             assert int(self.orchard.apples[0][3]) == 0
