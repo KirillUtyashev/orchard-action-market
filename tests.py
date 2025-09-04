@@ -14,7 +14,6 @@ from orchard.algorithms import despawn_apple_selfless_orchard, spawn_apple, \
     spawn_apple_selfless_orchard
 from policies.random_policy import random_policy
 import numpy as np
-from plots import graph_plots
 from configs.config import EnvironmentConfig
 from configs.config import TrainingConfig
 from configs.config import ExperimentConfig
