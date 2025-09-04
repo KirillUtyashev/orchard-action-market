@@ -122,8 +122,8 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         super().__init__(agents, critic_view_controller)
         self.actor_view_controller = actor_view_controller
 
-    def get_best_action(self, state, agent_id, available_actions):
-        probs = self.agents_list[agent_id].policy_network.get_function_output(self.actor_view_controller.process_state(state, self.agents_list[agent_id].position))
+    def get_best_action(self, env, agent_id, communal=True):
+        probs = self.agents_list[agent_id].policy_network.get_function_output(self.actor_view_controller.process_state(env.get_state(), self.agents_list[agent_id].position))
         action = np.random.choice(len(probs), p=probs)
         return action
 
@@ -131,17 +131,9 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         observations = self.get_all_agent_obs(state, positions)
         return self.get_collective_value(observations, agent_id)
 
-    def get_collective_value(self, states, agent_id):
-        sum_ = 0
-        for num, agent in enumerate(self.agents_list):
-            value = agent.get_value_function(states[num])
-            self.agents_list[num].personal_q_value = get_config()["discount"] * value.item()
-            sum_ += value
-        return sum_
-
-    def agent_get_action(self, state, agent_id, available_actions, epsilon=None) -> int:
+    def agent_get_action(self, env, agent_id, epsilon=None) -> int:
         with torch.no_grad():
-            action = self.get_best_action(state, agent_id, available_actions)
+            action = self.get_best_action(env, agent_id, env.available_actions)
         return action
 
 

@@ -15,7 +15,6 @@ adv_plot = []
 
 def step(agents_list, environment: Orchard, agent_controller, epsilon):
     agent = random.randint(0, environment.n - 1)
-    state = environment.get_state()
     if agents_list[agent].policy is not random_policy:
         action = agent_controller.agent_get_action(environment, agent, epsilon)
     else:

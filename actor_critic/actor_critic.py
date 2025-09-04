@@ -1,9 +1,6 @@
 from abc import ABC
-import torch
 from algorithm import Algorithm
 from configs.config import ExperimentConfig
-from models.actor_network import ActorNetwork
-from models.value_function import VNetwork
 
 
 class ActorCritic(Algorithm, ABC):
@@ -14,18 +11,6 @@ class ActorCritic(Algorithm, ABC):
         self.prob_sample_action_0 = []
         self.prob_sample_action_1 = []
         self.prob_sample_action_2 = []
-
-    def _format_env_step_return(self, state, new_state, reward, agent_id, positions, action, old_pos):
-        return state, new_state, reward, agent_id, positions, action
-
-    def update_critic(self):
-        losses = []
-        for agent in self.agents_list:
-            losses.append(agent.policy_value.training_loop())
-        return losses[-1]
-
-    def train_batch(self):
-        pass
 
     def update_lr(self, i):
         pass
@@ -42,10 +27,3 @@ class ActorCritic(Algorithm, ABC):
 
         print(res[0])
         print(res[1])
-
-    def agent_get_action(self, agent_id: int) -> int:
-        with torch.no_grad():
-            action = self.agent_controller.get_best_action(self.env.get_state(),
-                                                           agent_id,
-                                                           self.env.available_actions)
-        return action
