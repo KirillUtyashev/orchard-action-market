@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 from collections import deque
+
+from agents.simple_agent import SimpleAgent
 from algorithm import Algorithm
 from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
@@ -11,8 +13,11 @@ import numpy as np
 from helpers.helpers import get_discounted_value
 from helpers.controllers import AgentControllerActorCriticRates, \
     AgentControllerActorCriticRatesAdvantage, \
-    AgentControllerActorCriticRatesFixed, ViewController
+    AgentControllerActorCriticRatesFixed, AgentControllerCentralized, \
+    ViewController
 from main import plot_smoothed
+from models.actor_network import ActorNetwork
+from models.value_function import VNetwork
 
 linestyles = ["-", "--", "-.", ":"]
 
@@ -436,3 +441,9 @@ class ActorCriticRatesFixed(ActorCritic):
         except Exception as e:
             self.logger.error(f"Failed to run decentralized training: {e}")
             raise
+
+    def build_experiment(self, view_controller_cls=ViewController,
+                         agent_controller_cls=AgentControllerCentralized,
+                         agent_type=SimpleAgent, value_network_cls=VNetwork,
+                         actor_network_cls=ActorNetwork):
+        pass
