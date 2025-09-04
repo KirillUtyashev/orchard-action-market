@@ -111,12 +111,6 @@ class DecentralizedValueFunction(ValueFunction):
             a_list.append(trained_agent)
         return a_list, AgentControllerDecentralized(a_list, self.critic_view_controller)
 
-    # def update_alphas(self, new_state, acting_agent_id):
-    #     """Update the alpha values for the agents."""
-    #     for agent in self.agents_list:
-    #         if agent.agent_id != acting_agent_id:
-    #             agent.agents_alpha[acting_agent_id] = get_discounted_value(agent.agents_alpha[acting_agent_id], )
-
     def collect_observation(self, step: int) -> None:
         """Collect observations for decentralized training."""
         try:

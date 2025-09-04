@@ -5,13 +5,9 @@ from helpers.rate_updater import RateUpdater
 
 
 class ACAgent(CommAgent):
-    # def __init__(self, policy, id_, num_agents=None):
-    #     super().__init__(policy, id_, num_agents)
-    #     self.policy_network = None
-    def __init__(self, policy, id_):
-        super().__init__(policy, id_)
+    def __init__(self, agent_info):
+        super().__init__(agent_info)
         self.policy_network = None
-        self.personal_q_value = 0
 
     def add_experience_actor_network(self, state, new_state, reward, action, old_positions, new_positions):
         self.policy_network.add_experience(state, new_state, reward, action, old_positions, new_positions, self.id)
