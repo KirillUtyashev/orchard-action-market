@@ -20,7 +20,7 @@ class TrainingConfig:
     log_dir: str = "logs"
     discount: float = 0.99
     critic_vision: Optional[int] = 0
-    actor_vision: Optional[int] = 5
+    actor_vision: Optional[int] = 0
     hidden_dimensions: Optional[int] = 16
     hidden_dimensions_actor: Optional[int] = 32
     num_layers: int = 4
