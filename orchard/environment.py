@@ -232,7 +232,7 @@ class OrchardBasic(Orchard):
         return np.sum(self.apples)
 
 
-class OrchardSelfless(Orchard):
+class OrchardWithAppleIDs(Orchard):
     def __init__(self,
                  length,
                  width,
@@ -252,15 +252,6 @@ class OrchardSelfless(Orchard):
             return ConsumeResult(consumed=True, owner_id=owner_plus1.item())
         return ConsumeResult(consumed=False)
 
-    def _route_rewards(self, picker_id: int, c: ConsumeResult):
-        if not c.consumed:
-            return 0, None, 0
-        else:
-            if c.owner_id == (picker_id + 1):
-                return 1, c.owner_id, 0
-            else:
-                return 0, c.owner_id, 1  # picker=1, owner gets +1
-
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
         agents = self.agents.copy()
@@ -277,5 +268,50 @@ class OrchardSelfless(Orchard):
         else:
             return 0, agents, apples, new_position
 
+    @abstractmethod
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        raise NotImplementedError
+
     def get_sum_apples(self):
         return np.count_nonzero(self.apples)
+
+
+class OrchardIDs(OrchardWithAppleIDs):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if not c.consumed:
+            return 0, None, 0
+        else:
+            if c.owner_id == (picker_id + 1):
+                return 0, c.owner_id, 0
+            else:
+                return 0, c.owner_id, 1  # picker=1, owner gets +1
+
+
+class OrchardMineNoReward(OrchardWithAppleIDs):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if not c.consumed:
+            return 0, None, 0
+        else:
+            if c.owner_id == (picker_id + 1):
+                return 0, c.owner_id, 0
+            else:
+                return 0, c.owner_id, 1  # picker=1, owner gets +1
+
+
+class OrchardSelfless(OrchardWithAppleIDs):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if not c.consumed:
+            return 0, None, 0
+        else:
+            if c.owner_id == (picker_id + 1):
+                return 1, c.owner_id, 1
+            else:
+                return 0, c.owner_id, 1  # picker=1, owner gets +1
+
+
+class OrchardMineAllRewards(OrchardWithAppleIDs):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+        if not c.consumed:
+            return 0, None, 0
+        else:
+            return 1, c.owner_id, 1  # picker=1, owner gets +1

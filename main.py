@@ -1,6 +1,8 @@
 import os
 
 from matplotlib import pyplot as plt
+
+from config import get_config
 from orchard.environment import *
 import numpy as np
 import random
@@ -13,7 +15,7 @@ from metrics.metrics import PositionRecorder, append_positional_metrics, \
 adv_plot = []
 
 
-def step(agents_list, environment: Orchard, agent_controller, epsilon):
+def step(agents_list, environment: Orchard, agent_controller, epsilon, inference=False):
     agent = random.randint(0, environment.n - 1)
     if agents_list[agent].policy is not random_policy:
         action = agent_controller.agent_get_action(environment, agent, epsilon)
@@ -21,7 +23,18 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon):
         action = random_policy(environment.available_actions)
     action_result = environment.process_action(agent, agents_list[agent].position.copy(), action)
     agents_list[agent].position = action_result.new_position
-    # global adv_plot
+    if inference:
+        # Update personal Q-value from given action
+        for agent_num in range(len(agents_list)):
+            if agent_num == agent:
+                reward = action_result.picker_reward
+            elif (agent_num + 1) == action_result.owner_id:
+                reward = action_result.owner_reward
+            else:
+                reward = 0
+
+            q_value = reward + get_config()["discount"] * agents_list[agent_num].get_value_function(agent_controller.critic_view_controller.process_state(environment.get_state(), agents_list[agent_num].position, agent_num + 1))
+            agents_list[agent_num].personal_q_value = q_value
     return action_result
 
 
@@ -94,12 +107,13 @@ def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
     # plt.show()
 
 
-def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, agents_list=None, epsilon=0.1):
+def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, agents_list=None, epsilon=0.1, inference=False):
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
-    agent_distance_hist = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
-    alpha_ema = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
-    personal_q_values = {i: [] for i in range(num_agents)}
+    if inference:
+        agent_distance_hist = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
+        alpha_ema = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
+        personal_q_values = {i: [] for i in range(num_agents)}
     apple_x_coordinates = []
     apple_y_coordinates = []
 
@@ -139,7 +153,7 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
             apples_per_second = 0
             for tick in range(num_agents):
                 apples_before = env.get_sum_apples()
-                step(agents_list, env, agent_controller, epsilon)
+                step(agents_list, env, agent_controller, epsilon, inference)
                 reward += (apples_before - env.get_sum_apples())
                 if tick == num_agents - 1:
                     env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
@@ -158,13 +172,13 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
                     apple_x_coordinates.append(to_add_x)
                     apple_y_coordinates.append(to_add_y)
                 apples_picked.append(apples_per_second)
-                for num, agent in enumerate(agents_list):
-                    pass
-                    # stack = add_distances(num, agents_list)
-                    # agent_distance_hist[num] = np.vstack([agent_distance_hist[num], stack])
-                    # stack = np.asarray(agents_list[num].agent_alphas, dtype=float).reshape(1, -1)
-                    # alpha_ema[num] = np.concatenate([alpha_ema[num], stack], axis=0)
-                    # personal_q_values[num].append(agent.personal_q_value)
+                if inference:
+                    for num, agent in enumerate(agents_list):
+                        stack = add_distances(num, agents_list)
+                        agent_distance_hist[num] = np.vstack([agent_distance_hist[num], stack])
+                        # stack = np.asarray(agents_list[num].agent_alphas, dtype=float).reshape(1, -1)
+                        # alpha_ema[num] = np.concatenate([alpha_ema[num], stack], axis=0)
+                        personal_q_values[num].append(agent.personal_q_value)
 
             # Calculate mean nearest neighbor distance for this timestep
             # for num, agent in enumerate(agents_list):
@@ -190,57 +204,7 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
     print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
     plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, name, "x")
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
-
-    # global adv_plot
-    # plt.plot(adv_plot)
-    # plt.show()
-
-    # for agent_id in range(num_agents):
-    #     arr = agent_distance_hist[agent_id]  # shape [T, num_agents]
-    #     series_list = [arr[:, j] for j in range(num_agents)]
-    #     labels = [f"Distance to Agent {j}" for j in range(num_agents)]
-    #     plot_smoothed(series_list, labels, title=f"Distances of Agent {agent_id}", xlabel="Training Step", ylabel="Distance")
-    # for agent_id in range(num_agents):
-    #     arr = alpha_ema[agent_id]  # shape [T, num_agents]
-    #     series_list = [arr[:, j] for j in range(num_agents)]
-    #     labels = [f"Q-value from Agent {j}" for j in range(num_agents)]
-    #     fig = plot_smoothed(series_list, labels, title=f"Observed Q-values Over Time, Agent {agent_id}", xlabel="Training Step", ylabel="Q-value")
-    #     fig.show()
-    #
-    def average_every_n(arr, n=500):
-        """Average consecutive n points in 1D array."""
-        length = len(arr) // n * n  # trim remainder
-        arr = arr[:length]
-        return arr.reshape(-1, n).mean(axis=1)
-
-    # plt.figure()
-    # for agent_id in range(num_agents):
-    #     arr = personal_q_values[agent_id]
-    #     smoothed = average_every_n(np.array(arr), n=150)
-    #     x_axis = np.arange(len(smoothed)) * 50  # step numbers
-    #     plt.plot(x_axis, smoothed, label=f"Agent {agent_id}")
-    #
-    # plt.xlabel("Step")
-    # plt.ylabel("Q-value")
-    # plt.legend()
-    # plt.show()
-
-    # positions = np.load(f"positions/{name}_pos.npy")      # shape (T, N, 2)
-    # fig, ax = plt.subplots(figsize=(6, 5))
-    # plot_agents_heatmap_alpha(
-    #     positions,
-    #     agent_ids=[0, 1, 2, 3],                      # pick any subset
-    #     colors=["royalblue", "crimson", "gold", "purple"],  # one hue per agent
-    #     ax=ax
-    # )
-    # plt.show()
-    #
-    # for agent_id in range(num_agents):
-    #     plot_agent_heatmap_alpha(positions, agent_ids=[agent_id], colors=["red"])
-    #     plt.show()
-    #
-    # for agent_id in range(num_agents):
-    #     plot_agents_trajectories(positions, agent_ids=[agent_id], colors=["royalblue"])
-    #     plt.show()
-
-    return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second), nearest_apple_actions, idle_actions
+    if not inference:
+        return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second), nearest_apple_actions, idle_actions
+    else:
+        return personal_q_values, agent_distance_hist
