@@ -2,9 +2,11 @@ import glob
 import os
 import random
 import re
+import sys
 
 import numpy as np
 import torch
+from matplotlib import pyplot as plt
 
 from actor_critic.actor_critic_following_rates import ActorCriticRatesFixed
 from actor_critic.actor_critic_perfect_info import ActorCriticPerfect
@@ -13,16 +15,19 @@ from actor_critic.actor_imperfect_critic_perfect import \
 from agents.actor_critic_agent import ACAgent, ACAgentRatesFixed
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
+from helpers.controllers import ViewController, ViewControllerOrchardSelfless
 from main import eval_performance
+from metrics.metrics import plot_agent_heatmap_alpha, plot_agents_trajectories
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
+from orchard.environment import OrchardBasic
 from policies.random_policy import random_policy
 from configs.config import EnvironmentConfig, ExperimentConfig, TrainingConfig
 from orchard.algorithms import spawn_apple, despawn_apple
+from run_experiments import parse_args, set_config
 from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction, \
     DecentralizedValueFunctionPersonal
-from agents.communicating_agent import CommAgent, CommAgentPersonal
 
 
 def evaluate_policy(env_config,
@@ -154,251 +159,68 @@ def evaluate_factory(length, width, num_agents):
     )
 
 
-def evaluate_network(length, width, num_agents, hidden_dim, algorithm, old):
-    random.seed(1234)
-    np.random.seed(1234)
-    torch.manual_seed(1234)
-
-
-    env_config = EnvironmentConfig(
-        s_target=0.16,
-        apple_mean_lifetime=5.0,
-        length=length,
-        width=width,
-    )
-
-    train_config = TrainingConfig(
-        num_agents=num_agents,
-        hidden_dimensions=hidden_dim,
-        num_layers=4,
-        batch_size=num_agents
-    )
+def evaluate_network(args):
+    args = parse_args(args)
+    env_config, train_config = set_config(args)
 
     exp_config = ExperimentConfig(
         env_config=env_config,
         train_config=train_config,
     )
 
-    if algorithm == "Centralized":
+    if args.algorithm == "Centralized":
         algo = CentralizedValueFunction(exp_config)
-        agents_list = []
-        if not train_config.alt_input:
-            network = VNetwork(env_config.width * env_config.length, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-        else:
-            if env_config.width != 1:
-                network = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            else:
-                network = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-        if old:
-            network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_cen_" + ".pt"))
-        else:
-            load_weights_only(algo.name, [network], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-        for nummer in range(train_config.num_agents):
-            agent = SimpleAgent("value_function", nummer)
-            agent.policy_value = network
-            agents_list.append(agent)
-    elif algorithm == "Decentralized":
-        agents_list = []
+    elif args.algorithm == "Decentralized":
         algo = DecentralizedValueFunction(exp_config)
-        # Initialize networks and agents
-        for nummer in range(train_config.num_agents):
-            agent = CommAgent("value_function", nummer, train_config.num_agents)
-            if train_config.alt_input:
-                if env_config.width != 1:
-                    network = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-                else:
-                    network = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            else:
-                network = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            if old:
-                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_decen_" + str(nummer) + ".pt"))
-            agent.policy_value = network
-            agents_list.append(agent)
-
-            agent.personal_q_value = 0.0
-
-        if not old:
-            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-    elif algorithm == "DecentralizedPersonal":
-        agents_list = []
+    elif args.algorithm == "DecentralizedPersonal":
         algo = DecentralizedValueFunctionPersonal(exp_config)
-        # Initialize networks and agents
-        for nummer in range(train_config.num_agents):
-            agent = CommAgentPersonal("value_function", nummer, train_config.num_agents)
-            if train_config.alt_input:
-                if env_config.width != 1:
-                    network = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-                else:
-                    network = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            else:
-                network = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            if old:
-                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_decen_" + str(nummer) + ".pt"))
-            agent.policy_value = network
-            agents_list.append(agent)
-
-            agent.personal_q_value = 0.0
-
-        if not old:
-            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-
-    elif algorithm == "ActorCritic":
-        agents_list = []
-        algo = ActorCriticPerfect(exp_config)
-        # Initialize networks and agents
-        for nummer in range(train_config.num_agents):
-            agent = ACAgent("learned_policy", nummer)
-            if train_config.alt_input:
-                if env_config.width != 1:
-                    policy_value = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-                else:
-                    policy_value = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            else:
-                policy_value = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            if old:
-                policy_value.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_critic_network_AC_" + str(nummer) + ".pt"))
-            agent.policy_value = policy_value
-            network = ActorNetwork(env_config.length * env_config.width + 1, 5, train_config.actor_alpha, train_config.discount, train_config.hidden_dimensions_actor, train_config.num_layers_actor)
-
-            if old:
-                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_actor_network_AC_" + str(nummer) + ".pt"))
-            agent.policy_network = network
-            agents_list.append(agent)
-
-        if not old:
-            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-    elif algorithm == "ActorCriticRates":
-        agents_list = []
-        algo = ActorCriticRatesFixed(exp_config)
-        # Initialize networks and agents
-        for nummer in range(train_config.num_agents):
-            agent = ACAgentRatesFixed("learned_policy", train_config.num_agents, nummer, 0)
-            if train_config.alt_input:
-                if env_config.width != 1:
-                    policy_value = VNetwork(train_config.vision ** 2 + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-                else:
-                    policy_value = VNetwork(train_config.vision + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            else:
-                policy_value = VNetwork(env_config.length * env_config.width + 1, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            if old:
-                policy_value.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_critic_network_AC_" + str(nummer) + ".pt"))
-            agent.policy_value = policy_value
-            network = ActorNetwork(env_config.length * env_config.width + 1, 5, train_config.actor_alpha, train_config.discount, train_config.hidden_dimensions_actor, train_config.num_layers_actor)
-            agent.agent_alphas = np.zeros(num_agents)
-            agent.rate = 0.05
-            agent.personal_q_value = 0.0
-
-            if old:
-                network.function.load_state_dict(torch.load(os.path.join(CHECKPOINT_DIR, algo.name) + "/" + algo.name + "_actor_network_AC_" + str(nummer) + ".pt"))
-            agent.policy_network = network
-            agents_list.append(agent)
-
-        if not old:
-            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
-
-    else:
-        agents_list = []
+    elif args.algorithm == "ActorCritic":
         algo = ActorImperfectCriticPerfect(exp_config)
-        # Initialize networks and agents
-        for nummer in range(train_config.num_agents):
-            agent = ACAgent("learned_policy",  nummer)
-            if train_config.critic_vision != 0:
-                if env_config.width != 1:
-                    critic_input_dim = train_config.critic_vision ** 2 + 1
-                else:
-                    critic_input_dim = train_config.critic_vision + 1
-            else:
-                critic_input_dim = env_config.length * env_config.width + 1
+    elif args.algorithm == "ActorCriticRates":
+        algo = ActorCriticRatesFixed(exp_config)
+    else:
+        algo = ActorImperfectCriticPerfect(exp_config)
+    algo.build_experiment(view_controller_cls=ViewController if algo.env_cls is OrchardBasic else ViewControllerOrchardSelfless)
 
-            # Get actor network vision
-            if train_config.actor_vision != 0:
-                if env_config.width != 1:
-                    actor_input_dim = train_config.actor_vision ** 2 + 1
-                else:
-                    actor_input_dim = train_config.actor_vision + 1
-            else:
-                actor_input_dim = env_config.length * env_config.width + 1
+    random.seed(1234)
+    np.random.seed(1234)
+    torch.manual_seed(1234)
 
-            network = ActorNetwork(actor_input_dim, 5 if env_config.width > 1 else 3, train_config.actor_alpha, train_config.discount, train_config.hidden_dimensions_actor, train_config.num_layers_actor)
-            policy_value = VNetwork(critic_input_dim, 1, train_config.alpha, train_config.discount, train_config.hidden_dimensions, train_config.num_layers)
-            agent.policy_value = policy_value
-            agent.agent_alphas = np.zeros(num_agents)
-            agent.rate = 0.05
-            agent.personal_q_value = 0.0
-            agent.policy_network = network
-            agents_list.append(agent)
+    agents, controller = algo.init_agents_for_eval()
+    env = algo.create_env(None, None, agents_list=agents, env_cls=algo.env_cls)
+    for agent in agents:
+        agent.personal_q_value = 0.0
 
-        if not old:
-            load_weights_only(algo.name, [("1", agent.policy_value) for agent in agents_list], agents_list, str(os.path.join(CHECKPOINT_DIR, algo.name)))
+    personal_q_values, agent_distance_hist = eval_performance(args.num_agents, controller, env, algo.name, 10000, agents, train_config.epsilon, True)
 
-    algo.agents_list = agents_list
-    algo.agent_controller.agents_list = algo.agents_list
+    def average_every_n(arr, n=500):
+        """Average consecutive n points in 1D array."""
+        length = len(arr) // n * n  # trim remainder
+        arr = arr[:length]
+        return arr.reshape(-1, n).mean(axis=1)
 
-    total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
-        eval_performance(
-            num_agents,
-            env_config.length,
-            env_config.width,
-            algo.agent_controller, algo.name,
-            agents_list=agents_list,
-            spawn_algo=env_config.spawn_algo,
-            despawn_algo=env_config.despawn_algo,
-            timesteps=10000,
-            s_target=env_config.s_target,
-            apple_mean_lifetime=env_config.apple_mean_lifetime,
-            epsilon=train_config.epsilon
-        )
+    plt.figure()
+    for agent_id in range(args.num_agents):
+        arr = personal_q_values[agent_id]
+        smoothed = average_every_n(np.array(arr), n=150)
+        x_axis = np.arange(len(smoothed)) * 50  # step numbers
+        plt.plot(x_axis, smoothed, label=f"Agent {agent_id}")
 
-    # for agent_id in range(train_config.num_agents):
-    #     plt.figure(figsize=(10, 4))
-    #     arr = algo.alpha_ema[agent_id]
-    #     for other_agent in range(algo.train_config.num_agents):
-    #         series = arr[:, other_agent]  # <-- column j, not row j
-    #         if series.size > 0:
-    #             plt.plot(series, label=f"Q-value from agent {other_agent}")
-    #         plt.plot(agents_list[agent_id].agent_alphas[other_agent])
-    #     plt.legend()
-    #     plt.title(f"Observed Q-values for Agent {agent_id}")
-    #     plt.xlabel("Training Step")
-    #     plt.ylabel("Q-value")
-    #     plt.show()
+    plt.xlabel("Step")
+    plt.ylabel("Q-value")
+    plt.legend()
+    plt.show()
 
-    # positions = np.load(f"positions/{algo.name}_pos.npy")      # shape (T, N, 2)
-    # fig, ax = plt.subplots(figsize=(6, 5))
-    # plot_agents_heatmap_alpha(
-    #     positions,
-    #     agent_ids=[0, 1, 2, 3],                      # pick any subset
-    #     colors=[
-    #         "royalblue",   # 0
-    #         "crimson",     # 1
-    #         "gold",        # 2
-    #         "purple",      # 3
-    #         # "forestgreen", # 4
-    #         # "orange",      # 5
-    #         # "deeppink"     # 6
-    #     ],
-    #     ax=ax
-    # )
-    # plt.show()
+    positions = np.load(f"positions/{algo.name}_pos.npy")      # shape (T, N, 2)
 
-    # plot_agents_trajectories(positions, agent_ids=[0, 7], colors=["royalblue", "purple"])
-    # plt.show()
-    #
-    # return {
-    #     "total_apples": int(total_apples),
-    #     "total_picked": int(total_picked),
-    #     "picked_per_agent": float(picked_per_agent),
-    #     "ratio_per_agent": float(per_agent),
-    #     "mean_distance": float(mean_dist),
-    #     "apples_per_sec": float(apples_per_sec)
-    # }
+    for agent_id in range(args.num_agents):
+        plot_agent_heatmap_alpha(positions, agent_ids=[agent_id], colors=["red"])
+        plt.show()
+
+    for agent_id in range(args.num_agents):
+        plot_agents_trajectories(positions, agent_ids=[agent_id], colors=["royalblue"])
+        plt.show()
 
 
 if __name__ == "__main__":
-    pass
-    # widths = [6]
-    # for width in widths:
-    #     print(evaluate_factory(6, 6, 2))
-    # evaluate_network(sys.argv[1:])
-
-    evaluate_network(12, 12, 7, 64, "ActorImperfectCriticPerfect", False)
+    evaluate_network(sys.argv[1:])

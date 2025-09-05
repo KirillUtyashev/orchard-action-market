@@ -18,12 +18,29 @@ from orchard.environment import *
 from helpers.helpers import generate_sample_states
 import os
 import time
-from policies.random_policy import random_policy
 import psutil
 from dataclasses import dataclass
 from typing import Tuple
 
 times = 0
+
+
+ENV_MAP = {
+    "OrchardBasic": OrchardBasic,
+    "OrchardSelfless": OrchardSelfless,
+    "OrchardIDs": OrchardIDs,
+    "OrchardMineNoReward": OrchardMineNoReward,
+    "OrchardMineAllRewards": OrchardMineAllRewards
+}
+
+
+VIEW_CONTROLLER_MAP = {
+    OrchardBasic: ViewController,
+    OrchardIDs: ViewController,
+    OrchardMineNoReward: ViewController,
+    OrchardSelfless: ViewControllerOrchardSelfless,
+    OrchardMineAllRewards: ViewControllerOrchardSelfless
+}
 
 
 @dataclass
@@ -241,16 +258,7 @@ class Algorithm:
         print("=====Completed Evaluation=====")
         return result
 
-    def eval_network(self, seed: int) -> EvalResult:
-        """Run network evaluation"""
-
-        self.save_rng_state()
-        print("Before eval: ", random.getstate()[1][0])
-
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-
+    def run_inference(self):
         agents_list, agent_controller = self.init_agents_for_eval()
 
         env = self.create_env(None, None, agents_list, self.env_cls)
@@ -267,7 +275,20 @@ class Algorithm:
             )
 
         # Create EvalResult from returned tuple
-        eval_result = EvalResult(*results)
+        return EvalResult(*results)
+
+    def eval_network(self, seed: int) -> EvalResult:
+        """Run network evaluation"""
+
+        self.save_rng_state()
+        print("Before eval: ", random.getstate()[1][0])
+
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+
+        eval_result = self.run_inference()
+
         print("After eval: ", random.getstate()[1][0])
 
         self.restore_rng_state()
@@ -582,7 +603,7 @@ class Algorithm:
             self.agents_list.append(agent)
 
     def train(self):
-        self.build_experiment(view_controller_cls=ViewController if self.env_cls is OrchardBasic else ViewControllerOrchardSelfless)
+        self.build_experiment(view_controller_cls=VIEW_CONTROLLER_MAP[self.env_cls])
         self.training_loop()
 
     def _init_critic_networks(self, value_network_cls=VNetwork):

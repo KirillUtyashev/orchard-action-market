@@ -46,18 +46,14 @@ def parse_args(args):
     return parser.parse_args(args)
 
 
-def main(args):
-    args = parse_args(args)
-
-    env_config = EnvironmentConfig(
+def set_config(args):
+    return EnvironmentConfig(
         s_target=args.s_target,
         apple_mean_lifetime=args.apple_life,
         length=args.length,
         width=args.width,
         env_cls=args.env_cls
-    )
-
-    train_config = TrainingConfig(
+    ), TrainingConfig(
         batch_size=args.batch_size,
         alpha=args.alpha,
         actor_alpha=args.actor_alpha,
@@ -77,6 +73,10 @@ def main(args):
         budget=args.budget
     )
 
+
+def main(args):
+    args = parse_args(args)
+    env_config, train_config = set_config(args)
     exp_config = ExperimentConfig(
         env_config=env_config,
         train_config=train_config,

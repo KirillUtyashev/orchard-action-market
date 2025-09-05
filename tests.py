@@ -7,7 +7,8 @@ from models.value_function import VNetwork
 from policies.nearest import nearest_policy
 from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController, ViewControllerOrchardSelfless
-from orchard.environment import Orchard, OrchardBasic, OrchardSelfless
+from orchard.environment import Orchard, OrchardBasic, OrchardIDs, \
+    OrchardMineAllRewards, OrchardMineNoReward, OrchardSelfless
 from agents.simple_agent import SimpleAgent
 from orchard.algorithms import despawn_apple_selfless_orchard, spawn_apple, \
     despawn_apple, \
@@ -22,7 +23,7 @@ from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless, OrchardIDs, OrchardMineAllRewards, OrchardMineNoReward])
 class TestOrchard:
     def setup_orchard(self, length, width, env_cls, policy=random_policy):
         self.agents_list = []
@@ -139,7 +140,17 @@ class TestOrchard:
             assert result.owner_reward is None
             assert result.owner_id is None
             assert int(self.orchard.apples[0][3]) == 1
-        else:
+        elif env_cls is OrchardSelfless:
+            assert result.picker_reward == 0
+            assert result.owner_reward == 1
+            assert result.owner_id == 2
+            assert int(self.orchard.apples[0][3]) == 0
+        elif env_cls is OrchardIDs or env_cls is OrchardMineNoReward:
+            assert result.picker_reward == 0
+            assert result.owner_reward == 1
+            assert result.owner_id == 2
+            assert int(self.orchard.apples[0][3]) == 0
+        elif env_cls is OrchardMineAllRewards:
             assert result.picker_reward == 1
             assert result.owner_reward == 1
             assert result.owner_id == 2
@@ -153,9 +164,17 @@ class TestOrchard:
             assert result.picker_reward == 1
             assert result.owner_reward is None
             assert result.owner_id is None
-        else:
+        elif env_cls is OrchardSelfless:
             assert result.picker_reward == 1
+            assert result.owner_reward == 1
+            assert result.owner_id == 1
+        elif env_cls is OrchardIDs or env_cls is OrchardMineNoReward:
+            assert result.picker_reward == 0
             assert result.owner_reward == 0
+            assert result.owner_id == 1
+        elif env_cls is OrchardMineAllRewards:
+            assert result.picker_reward == 1
+            assert result.owner_reward == 1
             assert result.owner_id == 1
         assert int(self.orchard.apples[0][3]) == 0
 
