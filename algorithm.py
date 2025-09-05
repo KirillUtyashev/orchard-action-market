@@ -197,7 +197,7 @@ class Algorithm:
             policy=self.train_config.policy,
             num_agents=self.train_config.num_agents
         )
-        self.env_cls = OrchardBasic if self.env_config.env_cls == "OrchardBasic" else OrchardSelfless
+        self.env_cls = ENV_MAP[self.env_config.env_cls]
 
         if self.train_config.test:
             self.count_random_actions = 0
