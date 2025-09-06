@@ -25,7 +25,7 @@ class ValueFunction(Algorithm, ABC):
         """Update a learning rate based on training progress."""
         pass
 
-    def init_actor_networks(self, actor_network_cls=ActorNetwork):
+    def _init_actor_networks(self, actor_network_cls=ActorNetwork):
         return []
 
 

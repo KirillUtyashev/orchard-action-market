@@ -15,7 +15,7 @@ from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 from plots import add_to_plots, graph_plots
 from orchard.environment import *
-from helpers.helpers import generate_sample_states
+from helpers.helpers import create_env, generate_sample_states
 import os
 import time
 import psutil
@@ -37,10 +37,13 @@ ENV_MAP = {
 VIEW_CONTROLLER_MAP = {
     OrchardBasic: ViewController,
     OrchardIDs: ViewController,
-    OrchardMineNoReward: ViewController,
+    OrchardMineNoReward: ViewControllerOrchardSelfless,
     OrchardSelfless: ViewControllerOrchardSelfless,
     OrchardMineAllRewards: ViewControllerOrchardSelfless
 }
+
+
+SPAWN_MAP = {}
 
 
 @dataclass
@@ -261,7 +264,7 @@ class Algorithm:
     def run_inference(self):
         agents_list, agent_controller = self.init_agents_for_eval()
 
-        env = self.create_env(None, None, agents_list, self.env_cls)
+        env = create_env(self.env_config, self.train_config.num_agents, None, None, agents_list, self.env_cls)
 
         with torch.no_grad():
             results = eval_performance(
@@ -589,7 +592,7 @@ class Algorithm:
         self.actor_view_controller = view_controller_cls(self.train_config.actor_vision)
         self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
         self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls))
-        self.env = self.create_env(*self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
+        self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
 
     def _init_agents_for_training(self, agent_cls, value_networks, actor_networks):
         info = self.agent_info
