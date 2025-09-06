@@ -35,7 +35,7 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon, inference
 
             q_value = reward + get_config()["discount"] * agents_list[agent_num].get_value_function(agent_controller.critic_view_controller.process_state(environment.get_state(), agents_list[agent_num].position, agent_num + 1))
             agents_list[agent_num].personal_q_value = q_value
-    return action_result
+    return action_result, agent
 
 
 def add_distances(agent_i, agents_list):
@@ -112,10 +112,11 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
     agent_y_coordinates = [[] for _ in range(num_agents)]
     if inference:
         agent_distance_hist = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
-        alpha_ema = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
         personal_q_values = {i: [] for i in range(num_agents)}
     apple_x_coordinates = []
     apple_y_coordinates = []
+
+
 
     nearest_apple_actions = 0
     idle_actions = 0
@@ -153,8 +154,9 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
             apples_per_second = 0
             for tick in range(num_agents):
                 apples_before = env.get_sum_apples()
-                step(agents_list, env, agent_controller, epsilon, inference)
-                reward += (apples_before - env.get_sum_apples())
+                action_result, acting_agent_id = step(agents_list, env, agent_controller, epsilon, inference)
+                change = apples_before - env.get_sum_apples()
+                reward += change
                 if tick == num_agents - 1:
                     env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
                     env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
@@ -179,6 +181,17 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
                         # stack = np.asarray(agents_list[num].agent_alphas, dtype=float).reshape(1, -1)
                         # alpha_ema[num] = np.concatenate([alpha_ema[num], stack], axis=0)
                         personal_q_values[num].append(agent.personal_q_value)
+
+                        if change and num == acting_agent_id:
+                            for ids in range(len(agents_list)):
+                                if ids == action_result.owner_id - 1:
+                                    prev = agent.apples_picked[action_result.owner_id - 1][-1]
+                                    agent.apples_picked[action_result.owner_id - 1].append(prev + 1)
+                                else:
+                                    agent.apples_picked[ids - 1].append(agent.apples_picked[ids - 1][-1])
+                        else:
+                            for ids in range(len(agents_list)):
+                                agent.apples_picked[ids - 1].append(agent.apples_picked[ids - 1][-1])
 
             # Calculate mean nearest neighbor distance for this timestep
             # for num, agent in enumerate(agents_list):

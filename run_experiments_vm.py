@@ -185,12 +185,13 @@ def run_experiment_and_fetch_logs_with_key(vm_ip, username, private_key_path, wo
     transport = ssh.get_transport()
     transport.set_keepalive(5)
 
-    run_command(ssh, env_script, working_dir, args)
+    # run_command(ssh, env_script, working_dir, args)
 
     # 2. Fetch logs via SFTP
     sftp = ssh.open_sftp()
 
     download_most_recent_log(sftp, local_log_dir, remote_log_dir, working_dir)
+    # download_logs(sftp, local_log_dir, remote_log_dir, working_dir)
     download_most_recent_folder(sftp, local_graph_dir, remote_graph_dir, working_dir)
     download_most_recent_folder(sftp, local_weights_dir, remote_weights_dir, working_dir)
     # download_all_folders(sftp, local_weights_dir, remote_weights_dir, working_dir)

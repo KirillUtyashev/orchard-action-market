@@ -13,9 +13,11 @@ from actor_critic.actor_critic_perfect_info import ActorCriticPerfect
 from actor_critic.actor_imperfect_critic_perfect import \
     ActorImperfectCriticPerfect
 from agents.actor_critic_agent import ACAgent, ACAgentRatesFixed
+from agents.agent import AgentInfo
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
 from helpers.controllers import ViewController, ViewControllerOrchardSelfless
+from helpers.helpers import create_env
 from main import eval_performance
 from metrics.metrics import plot_agent_heatmap_alpha, plot_agents_trajectories
 from models.actor_network import ActorNetwork
@@ -28,11 +30,12 @@ from run_experiments import parse_args, set_config
 from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction, \
     DecentralizedValueFunctionPersonal
+from algorithm import ENV_MAP
 
 
 def evaluate_policy(env_config,
                     num_agents,
-                    agent_factory,
+                    orchard,
                     timesteps=10000,
                     seed=42069):
     """
@@ -46,23 +49,19 @@ def evaluate_policy(env_config,
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    # create agents
-    agents = [agent_factory(i) for i in range(num_agents)]
+    agents_list = [SimpleAgent(AgentInfo(policy=random_policy)) for _ in range(num_agents)]
+
+    env = create_env(env_config, num_agents, None, None, agents_list, ENV_MAP[orchard])
 
     # run the environment
     total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
         eval_performance(
             num_agents,
-            env_config.length,
-            env_config.width,
-            None, None,
-            f"Eval-{env_config.length}x{env_config.width}",
-            agents_list=agents,
-            spawn_algo=env_config.spawn_algo,
-            despawn_algo=env_config.despawn_algo,
-            timesteps=timesteps,
-            s_target=env_config.s_target,
-            apple_mean_lifetime=env_config.apple_mean_lifetime
+            None,
+            env,
+            "Random",
+            timesteps,
+            agents_list
         )
 
     return {
@@ -73,13 +72,6 @@ def evaluate_policy(env_config,
         "mean_distance": float(mean_dist),
         "apples_per_sec": float(apples_per_sec)
     }
-
-
-def make_baseline_factory(policy_name):
-    """Returns an agent_factory for SimpleAgent(policy=policy_name)."""
-    def factory(i):
-        return SimpleAgent(policy_name, i)
-    return factory
 
 
 def load_weights_only(name, networks, agents_list, path: str):
@@ -136,7 +128,7 @@ def load_weights_only(name, networks, agents_list, path: str):
             agent.policy_network.import_net_state(blob, device=DEVICE)
 
 
-def evaluate_factory(length, width, num_agents):
+def evaluate_factory(length, width, num_agents, orchard):
     random.seed(42069)
     np.random.seed(42069)
     torch.manual_seed(42069)
@@ -145,15 +137,13 @@ def evaluate_factory(length, width, num_agents):
         s_target=0.16,
         apple_mean_lifetime=5,
         length=length,
-        width=width,
-        spawn_algo=spawn_apple,
-        despawn_algo=despawn_apple
+        width=width
     )
 
     return evaluate_policy(
         env_config,
         num_agents=num_agents,
-        agent_factory=make_baseline_factory(random_policy),
+        orchard=orchard,
         timesteps=10000,
         seed=42069
     )
@@ -190,6 +180,7 @@ def evaluate_network(args):
     env = algo.create_env(None, None, agents_list=agents, env_cls=algo.env_cls)
     for agent in agents:
         agent.personal_q_value = 0.0
+        agent.apples_picked = [[0] for _ in range(args.num_agents)]
 
     personal_q_values, agent_distance_hist = eval_performance(args.num_agents, controller, env, algo.name, 10000, agents, train_config.epsilon, True)
 
@@ -210,6 +201,19 @@ def evaluate_network(args):
     plt.ylabel("Q-value")
     plt.legend()
     plt.show()
+
+    for agent_id in range(args.num_agents):
+        plt.figure()
+        for agent_id_2 in range(args.num_agents):
+            arr = agents[agent_id].apples_picked[agent_id_2]
+            smoothed = average_every_n(np.array(arr), n=150)
+            x_axis = np.arange(len(smoothed)) * 50  # step numbers
+            plt.plot(x_axis, smoothed, label=f"Agent {agent_id_2}")
+
+        plt.xlabel("Step")
+        plt.ylabel("Apples Picked By Agent ID")
+        plt.legend()
+        plt.show()
 
     positions = np.load(f"positions/{algo.name}_pos.npy")      # shape (T, N, 2)
 
