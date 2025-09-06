@@ -392,6 +392,10 @@ class Algorithm:
             positions.append(self.agents_list[i].position)
         action = self.agent_controller.agent_get_action(self.env, agent_id, self.train_config.epsilon)
         action_result = self.env.process_action(agent_id, self.agents_list[agent_id].position.copy(), action)
+
+        assert np.sum(action_result.reward_vector) == 1 or np.sum(action_result.reward_vector) == 0
+        assert action_result.reward_vector[agent_id] == 0
+
         if tick == self.train_config.num_agents - 1:
             self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
             self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
