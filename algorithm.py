@@ -30,7 +30,8 @@ ENV_MAP = {
     "OrchardSelfless": OrchardSelfless,
     "OrchardIDs": OrchardIDs,
     "OrchardMineNoReward": OrchardMineNoReward,
-    "OrchardMineAllRewards": OrchardMineAllRewards
+    "OrchardMineAllRewards": OrchardMineAllRewards,
+    "OrchardEuclideanRewards": OrchardEuclideanRewards
 }
 
 
@@ -39,23 +40,19 @@ VIEW_CONTROLLER_MAP = {
     OrchardIDs: ViewController,
     OrchardMineNoReward: ViewControllerOrchardSelfless,
     OrchardSelfless: ViewControllerOrchardSelfless,
-    OrchardMineAllRewards: ViewControllerOrchardSelfless
+    OrchardMineAllRewards: ViewControllerOrchardSelfless,
+    OrchardEuclideanRewards: ViewController
 }
-
-
-SPAWN_MAP = {}
 
 
 @dataclass
 class EnvStep:
     old_state: dict
     new_state: dict
-    picker_reward: int
     acting_agent_id: int
     old_positions: list
     action: int
-    apple_owner_id: Optional[int] = None
-    apple_owner_reward: Optional[int] = None
+    reward_vector: np.ndarray
 
 
 @dataclass
@@ -395,20 +392,17 @@ class Algorithm:
             positions.append(self.agents_list[i].position)
         action = self.agent_controller.agent_get_action(self.env, agent_id, self.train_config.epsilon)
         action_result = self.env.process_action(agent_id, self.agents_list[agent_id].position.copy(), action)
-        self.agents_list[agent_id].position = action_result.new_position.copy()
         if tick == self.train_config.num_agents - 1:
             self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
             self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
-        self.agents_list[agent_id].collected_apples += action_result.picker_reward
+        self.agents_list[agent_id].collected_apples += action_result.reward_vector[agent_id]
         return EnvStep(
             old_state=state,
             new_state=self.env.get_state(),
-            picker_reward=action_result.picker_reward,
             acting_agent_id=agent_id,
             old_positions=positions,
             action=action,
-            apple_owner_id=action_result.owner_id,
-            apple_owner_reward=action_result.owner_reward
+            reward_vector=action_result.reward_vector
         )
 
     @abstractmethod

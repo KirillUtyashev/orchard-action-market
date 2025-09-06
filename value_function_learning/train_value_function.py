@@ -55,11 +55,8 @@ class CentralizedValueFunction(ValueFunction):
                 processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[env_step_result.acting_agent_id].position, None)
 
                 # Add rewards here
-                # If orchard is basic, add the reward picker
-                if self.env_cls is OrchardBasic:
-                    self.agents_list[env_step_result.acting_agent_id].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], env_step_result.picker_reward)
-                else:
-                    self.agents_list[env_step_result.acting_agent_id].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], env_step_result.apple_owner_reward)
+                rewards_sum = np.sum(env_step_result.reward_vector)
+                self.agents_list[env_step_result.acting_agent_id].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], rewards_sum)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise
@@ -117,8 +114,7 @@ class DecentralizedValueFunction(ValueFunction):
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.env_step(tick)
                 for each_agent in range(len(self.agents_list)):
-                    reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else (
-                        env_step_result.apple_owner_reward) if (env_step_result.apple_owner_reward is not None) and (env_step_result.apple_owner_id == (each_agent + 1)) else 0
+                    reward = env_step_result.reward_vector[each_agent]
                     processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[each_agent], each_agent + 1)
                     processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position, each_agent + 1)
 
