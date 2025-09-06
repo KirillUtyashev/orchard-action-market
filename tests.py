@@ -7,7 +7,8 @@ from models.value_function import VNetwork
 from policies.nearest import nearest_policy
 from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController, ViewControllerOrchardSelfless
-from orchard.environment import Orchard, OrchardBasic, OrchardIDs, \
+from orchard.environment import Orchard, OrchardBasic, OrchardEuclideanRewards, \
+    OrchardIDs, \
     OrchardMineAllRewards, OrchardMineNoReward, OrchardSelfless
 from agents.simple_agent import SimpleAgent
 from orchard.algorithms import despawn_apple_selfless_orchard, spawn_apple, \
@@ -281,7 +282,7 @@ class TestDecentralizedController:
     pass
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless, OrchardEuclideanRewards])
 class TestCentralizedLearning:
     algo: Optional[CentralizedValueFunction] = None
 
@@ -398,6 +399,30 @@ class TestCentralizedLearning:
         assert self.algo.agents_list[1].policy_value.batch_states == []
 
         assert self.algo.agents_list[0].policy_value.batch_rewards == []
+
+    def test_env_step_2(self, env_cls):
+        if env_cls is OrchardEuclideanRewards:
+            self.algo.build_experiment()
+            self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+            action = 2  # Stay
+            res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+            assert np.sum(res.reward_vector) == 1
+            assert res.reward_vector[0] == 0
+            assert res.reward_vector[1] == 1
+
+    def test_env_step_3(self, env_cls):
+        if env_cls is OrchardEuclideanRewards:
+            self.algo.build_experiment()
+            self.algo.env.apples = np.zeros((self.algo.env.width, self.algo.env.length), dtype=int)
+            prev = self.algo.agents_list[0].position
+            self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+            action = 1  # Right
+            res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+            assert np.sum(res.reward_vector) == 0
+            assert res.reward_vector[0] == 0
+            assert res.reward_vector[1] == 0
+            assert self.algo.agents_list[0].position[0] == prev[0]
+            assert self.algo.agents_list[0].position[1] == prev[1] + 1
 
 
 @pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless])
