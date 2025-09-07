@@ -31,7 +31,8 @@ ENV_MAP = {
     "OrchardIDs": OrchardIDs,
     "OrchardMineNoReward": OrchardMineNoReward,
     "OrchardMineAllRewards": OrchardMineAllRewards,
-    "OrchardEuclideanRewards": OrchardEuclideanRewards
+    "OrchardEuclideanRewards": OrchardEuclideanRewards,
+    "OrchardEuclideanNegativeRewards": OrchardEuclideanNegativeRewards
 }
 
 
@@ -41,7 +42,8 @@ VIEW_CONTROLLER_MAP = {
     OrchardMineNoReward: ViewControllerOrchardSelfless,
     OrchardSelfless: ViewControllerOrchardSelfless,
     OrchardMineAllRewards: ViewControllerOrchardSelfless,
-    OrchardEuclideanRewards: ViewController
+    OrchardEuclideanRewards: ViewController,
+    OrchardEuclideanNegativeRewards: ViewController
 }
 
 

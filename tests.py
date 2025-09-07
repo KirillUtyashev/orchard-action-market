@@ -7,7 +7,8 @@ from models.value_function import VNetwork
 from policies.nearest import nearest_policy
 from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController, ViewControllerOrchardSelfless
-from orchard.environment import Orchard, OrchardBasic, OrchardEuclideanRewards, \
+from orchard.environment import Orchard, OrchardBasic, \
+    OrchardEuclideanNegativeRewards, OrchardEuclideanRewards, \
     OrchardIDs, \
     OrchardMineAllRewards, OrchardMineNoReward, OrchardSelfless
 from agents.simple_agent import SimpleAgent
@@ -401,23 +402,28 @@ class TestCentralizedLearning:
         assert self.algo.agents_list[0].policy_value.batch_rewards == []
 
     def test_env_step_2(self, env_cls):
-        if env_cls is OrchardEuclideanRewards:
+        if env_cls is OrchardEuclideanRewards or env_cls is OrchardEuclideanNegativeRewards:
             self.algo.build_experiment()
             self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
             action = 2  # Stay
             res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+        if env_cls is OrchardEuclideanRewards:
             assert np.sum(res.reward_vector) == 1
             assert res.reward_vector[0] == 0
             assert res.reward_vector[1] == 1
+        elif env_cls is OrchardEuclideanNegativeRewards:
+            assert np.sum(res.reward_vector) == 1
+            assert res.reward_vector[0] == -1
+            assert res.reward_vector[1] == 2
 
     def test_env_step_3(self, env_cls):
-        if env_cls is OrchardEuclideanRewards:
-            self.algo.build_experiment()
-            self.algo.env.apples = np.zeros((self.algo.env.width, self.algo.env.length), dtype=int)
-            prev = self.algo.agents_list[0].position
-            self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
-            action = 1  # Right
-            res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+        self.algo.build_experiment()
+        self.algo.env.apples = np.zeros((self.algo.env.width, self.algo.env.length), dtype=int)
+        prev = self.algo.agents_list[0].position
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        action = 1  # Right
+        res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+        if env_cls is OrchardEuclideanRewards or env_cls is OrchardEuclideanNegativeRewards:
             assert np.sum(res.reward_vector) == 0
             assert res.reward_vector[0] == 0
             assert res.reward_vector[1] == 0

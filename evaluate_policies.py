@@ -30,7 +30,7 @@ from run_experiments import parse_args, set_config
 from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction, \
     DecentralizedValueFunctionPersonal
-from algorithm import ENV_MAP
+from algorithm import ENV_MAP, VIEW_CONTROLLER_MAP
 
 
 def evaluate_policy(env_config,
@@ -170,7 +170,8 @@ def evaluate_network(args):
         algo = ActorCriticRatesFixed(exp_config)
     else:
         algo = ActorImperfectCriticPerfect(exp_config)
-    algo.build_experiment(view_controller_cls=ViewController if algo.env_cls is OrchardBasic else ViewControllerOrchardSelfless)
+    env = ENV_MAP[args.env_cls]
+    algo.build_experiment(view_controller_cls=VIEW_CONTROLLER_MAP[env])
 
     random.seed(1234)
     np.random.seed(1234)

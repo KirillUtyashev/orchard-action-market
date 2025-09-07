@@ -334,22 +334,6 @@ class OrchardMineAllRewards(OrchardWithAppleIDs):
 
 
 class OrchardEuclideanRewards(OrchardBasic):
-    def __init__(self,
-                 length,
-                 width,
-                 num_agents,
-                 agents_list=None,
-                 action_algo=None,
-                 spawn_algo=spawn_apple,
-                 despawn_algo=despawn_apple,
-                 s_target=0.1,
-                 apple_mean_lifetime=None):
-        super().__init__(length, width, num_agents, agents_list, action_algo, spawn_algo, despawn_algo, s_target, apple_mean_lifetime)
-
-        # Scaling factor for Euclidean rewards
-
-        self.scaling_constant = calc_distance(np.array([0, 0]), np.array([self.width - 1, self.length - 1]))
-
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         if self.apples[pos[0], pos[1]] > 0:
             self.apples[pos[0], pos[1]] -= 1
@@ -360,7 +344,7 @@ class OrchardEuclideanRewards(OrchardBasic):
         res = np.zeros(self.n)
         if c.consumed:
             for agent_num in range(len(self.agents_list)):
-                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos) / self.scaling_constant
+                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
             if np.sum(res) == 0:
                 return res
             res = res / np.sum(res)
@@ -385,4 +369,15 @@ class OrchardEuclideanRewards(OrchardBasic):
         )
 
 
-
+class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
+        res = np.zeros(self.n)
+        if c.consumed:
+            for agent_num in range(len(self.agents_list)):
+                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
+            if np.sum(res) == 0:
+                return res
+            res = res / np.sum(res)
+            res = 2 * res
+            res[picker_id] = -1
+        return res
