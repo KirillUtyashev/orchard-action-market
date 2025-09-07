@@ -911,14 +911,14 @@ if __name__ == '__main__':
         "width": 9,
         "dimensions": 4,
         "alpha": 0.000275,
-        "orchard": "OrchardMineNoReward"
+        "orchard": "OrchardEuclideanRewards"
     }
 
     # sweep = {
     #     "alpha": [0.00005, 0.0000316, 0.0001, 0.000275, 0.000316, 0.00063, 0.001]
     # }
     sweep = {
-        "hidden_dimensions": [4, 64, 256]
+        "hidden_dimensions": [8, 64]
     }
     run(base, sweep)
 
