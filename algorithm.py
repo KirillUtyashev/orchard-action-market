@@ -395,15 +395,15 @@ class Algorithm:
         action = self.agent_controller.agent_get_action(self.env, agent_id, self.train_config.epsilon)
         action_result = self.env.process_action(agent_id, self.agents_list[agent_id].position.copy(), action)
 
-        # assert np.sum(action_result.reward_vector) == 1 or np.sum(action_result.reward_vector) == 0, (
-        #     f"[tick={tick}] reward sum must be 0 or 1; got {np.sum(action_result.reward_vector)}; "
-        #     f"agent_id={agent_id}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
-        #
-        # assert action_result.reward_vector[agent_id] == 0, (
-        #     f"[tick={tick}] picker got nonzero reward: rv[{agent_id}]={action_result.reward_vector[agent_id]}; "
-        #     f"sum={np.sum(action_result.reward_vector)}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
+        assert np.isclose(np.sum(action_result.reward_vector), 0) or np.isclose(np.sum(action_result.reward_vector), 1), (
+            f"[tick={tick}] reward sum must be 0 or 1; got {np.sum(action_result.reward_vector)}; "
+            f"agent_id={agent_id}; rv={action_result.reward_vector}; action={action}; positions={positions}"
+        )
+
+        assert np.isclose(action_result.reward_vector[agent_id], 0) or np.isclose(action_result.reward_vector[agent_id], -0.5), (
+            f"[tick={tick}] picker got nonzero reward: rv[{agent_id}]={action_result.reward_vector[agent_id]}; "
+            f"sum={np.sum(action_result.reward_vector)}; rv={action_result.reward_vector}; action={action}; positions={positions}"
+        )
 
         if tick == self.train_config.num_agents - 1:
             self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
