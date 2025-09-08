@@ -379,5 +379,5 @@ class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
                 return res
             res = res / np.sum(res)
             res = 2 * res
-            res[picker_id] = -1
+            res[picker_id] = -0.1
         return res
