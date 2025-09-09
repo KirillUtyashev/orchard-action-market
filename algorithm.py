@@ -549,10 +549,11 @@ class Algorithm:
                 self.env.length, self.env.width, self.train_config.num_agents)
 
             for step in range(self.train_config.timesteps):
-                self.training_step(step)
+                self.training_step(step) # QUESTION: Why on each training iteration we train
+                # num_agent times and each iteration is random agent
 
-                # Log progress and update a learning rate
-                if step % log_constant == 0:
+                # Log progress and update a learning rate 
+                if step % log_constant == 0: 
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     if self.debug:
                         memory_snapshot(label=f"step={step}", show_children=True)
