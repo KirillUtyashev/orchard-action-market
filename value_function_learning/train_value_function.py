@@ -50,7 +50,7 @@ class CentralizedValueFunction(ValueFunction):
         """Collect observations."""
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick)
+                env_step_result = self.env_step(tick) #BUG I get bug here and it goes to except Eception e.
                 processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[env_step_result.acting_agent_id], None)
                 processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[env_step_result.acting_agent_id].position, None)
 

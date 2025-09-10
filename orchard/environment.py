@@ -75,6 +75,7 @@ class Action2D(ActionMixin, Enum):
 @dataclass
 class ProcessAction:
     reward_vector: np.ndarray
+    new_position: Optional[np.ndarray] = None
 
 
 @dataclass

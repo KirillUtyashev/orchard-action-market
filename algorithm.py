@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 from numpy import floating
 
+from agents.actor_critic_agent import ACAgent
 from agents.agent import AgentInfo
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
@@ -20,7 +21,7 @@ import os
 import time
 import psutil
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, List
 
 times = 0
 
@@ -179,7 +180,7 @@ class Algorithm:
 
         self.logger = logging.getLogger(self.name)
 
-        self.agents_list = []
+        self.agents_list: List[ACAgent] = []
 
         self.loss_plot = []
         self.loss_plot5 = []
@@ -549,11 +550,10 @@ class Algorithm:
                 self.env.length, self.env.width, self.train_config.num_agents)
 
             for step in range(self.train_config.timesteps):
-                self.training_step(step) # QUESTION: Why on each training iteration we train
-                # num_agent times and each iteration is random agent
+                self.training_step(step)
 
-                # Log progress and update a learning rate 
-                if step % log_constant == 0: 
+                # Log progress and update a learning rate
+                if step % log_constant == 0:
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     if self.debug:
                         memory_snapshot(label=f"step={step}", show_children=True)
