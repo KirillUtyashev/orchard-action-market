@@ -177,9 +177,7 @@ def pick_experiment(algorithm, exp_config):
         algo = DecentralizedValueFunctionPersonal(exp_config)
     elif algorithm == "ActorCritic":
         algo = ActorCriticPerfect(exp_config)
-    elif (
-        algorithm == "ActorCriticRates"
-    ):  # QUESTION: what are these rates, noadvantage, ratesfixed, etc. A: they are not important mostly.
+    elif algorithm == "ActorCriticRates":  # Lots of these are not that important.
         algo = ActorCriticRates(exp_config)
     elif algorithm == "ActorCriticNoAdvantage":
         algo = ActorCriticPerfectNoAdvantage(exp_config)

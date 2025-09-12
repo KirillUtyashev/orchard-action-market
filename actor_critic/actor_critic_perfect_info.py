@@ -24,13 +24,13 @@ class ActorCriticPerfect(ActorCritic):
     def collect_observation(self, step):
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick) #BUG Also from here it goes into the Exception e block
+                env_step_result = self.env_step(tick)
                 if env_step_result.action is not None:
                     for each_agent in range(len(self.agents_list)):
-                        reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else ( # QUESTION where is picker_reward? I only see that env_step(tick) returns reward, not that EnvStep has reward vector.
+                        reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else ( 
                             env_step_result.apple_owner_reward) if (env_step_result.apple_owner_reward is not None) and (env_step_result.apple_owner_id == (each_agent + 1)) else 0
                         processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[each_agent], each_agent + 1)
-                        processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position, each_agent + 1)# QUESTION what is this part doing?
+                        processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position, each_agent + 1)
                         self.agents_list[each_agent].add_experience(
                             processed_state, processed_new_state, reward)
                         if each_agent == env_step_result.acting_agent_id:
