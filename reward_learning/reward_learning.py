@@ -105,3 +105,12 @@ class RewardLearning(Algorithm, ABC):
             plt.close(fig)
 
         return EvalResult(*results)
+
+    def _evaluate_final(self) -> Tuple[np.floating, ...]:
+        res = super()._evaluate_final()
+        sum_ = 0
+        for agent in self.agents_list:
+            sum_ += agent.prediction_accuracy_history[-1]
+        av = sum_ / len(self.agents_list)
+        self.logger.info(f"Final accuracy: {av}")
+        return res
