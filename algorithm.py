@@ -9,8 +9,12 @@ from agents.actor_critic_agent import ACAgent
 from agents.agent import AgentInfo
 from agents.simple_agent import SimpleAgent
 from config import CHECKPOINT_DIR, DEVICE
-from helpers.controllers import AgentControllerCentralized, ViewController, \
-    ViewControllerOrchardSelfless
+from configs.config import TrainingConfig
+from helpers.controllers import (
+    AgentControllerCentralized,
+    ViewController,
+    ViewControllerOrchardSelfless,
+)
 from main import eval_performance
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
@@ -33,7 +37,7 @@ ENV_MAP = {
     "OrchardMineNoReward": OrchardMineNoReward,
     "OrchardMineAllRewards": OrchardMineAllRewards,
     "OrchardEuclideanRewards": OrchardEuclideanRewards,
-    "OrchardEuclideanNegativeRewards": OrchardEuclideanNegativeRewards
+    "OrchardEuclideanNegativeRewards": OrchardEuclideanNegativeRewards,
 }
 
 
@@ -44,7 +48,7 @@ VIEW_CONTROLLER_MAP = {
     OrchardSelfless: ViewControllerOrchardSelfless,
     OrchardMineAllRewards: ViewControllerOrchardSelfless,
     OrchardEuclideanRewards: ViewController,
-    OrchardEuclideanNegativeRewards: ViewController
+    OrchardEuclideanNegativeRewards: ViewController,
 }
 
 
@@ -60,6 +64,20 @@ class EnvStep:
 
 @dataclass
 class EvalResult:
+    """
+    Evaluation results data structure.
+
+    Attributes:
+    total_apples: Total number of apples that appeared during evaluation.
+    total_picked: Total number of apples picked by all agents.
+    picked_per_agent: Average number of apples picked per agent.
+    per_agent: Ratio of total picked apples to total apples.
+    average_distance: Average distance traveled by agents to pick apples.
+    apple_per_sec: Average number of apples picked per second.
+    nearest_actions: Number of actions where agents moved towards the nearest apple.
+    idle_actions: Number of actions where agents remained idle.
+    """
+
     total_apples: int
     total_picked: int
     picked_per_agent: float
@@ -83,9 +101,16 @@ class EvalResult:
     @property
     def as_tuple(self) -> Tuple:
         """Convert to tuple for backwards compatibility"""
-        return (self.total_apples, self.total_picked, self.picked_per_agent,
-                self.per_agent, self.average_distance, self.apple_per_sec,
-                self.nearest_actions, self.idle_actions)
+        return (
+            self.total_apples,
+            self.total_picked,
+            self.picked_per_agent,
+            self.per_agent,
+            self.average_distance,
+            self.apple_per_sec,
+            self.nearest_actions,
+            self.idle_actions,
+        )
 
 
 def memory_snapshot(label="mem", show_children=False, top_n=5):
@@ -120,7 +145,9 @@ def memory_snapshot(label="mem", show_children=False, top_n=5):
             continue
         rss_children += chi.rss
         if show_children:
-            child_stats.append((chi.rss, ch.pid, " ".join(ch.cmdline()[:3]) or ch.name()))
+            child_stats.append(
+                (chi.rss, ch.pid, " ".join(ch.cmdline()[:3]) or ch.name())
+            )
 
     total_rss = rss + rss_children
 
@@ -148,6 +175,9 @@ class Algorithm:
     - training_step
     - training_loop
     """
+
+    train_config: TrainingConfig
+
     def __init__(self, config, name):
         self.train_config = config.train_config
         self.env_config = config.env_config
@@ -155,7 +185,6 @@ class Algorithm:
         self.name = name
         self.debug = config.debug
         self.rng_state = None
-
 
         log_folder = Path("logs")
         log_folder.mkdir(parents=True, exist_ok=True)
@@ -172,10 +201,10 @@ class Algorithm:
 
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
+            format="%(asctime)s %(levelname)s | %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
             filename=str(filename),
-            filemode='a'
+            filemode="a",
         )
 
         self.logger = logging.getLogger(self.name)
@@ -197,8 +226,7 @@ class Algorithm:
         self.actor_view_controller = None
         self.agent_controller = None
         self.agent_info = AgentInfo(
-            policy=self.train_config.policy,
-            num_agents=self.train_config.num_agents
+            policy=self.train_config.policy, num_agents=self.train_config.num_agents
         )
         self.env_cls = ENV_MAP[self.env_config.env_cls]
 
@@ -206,7 +234,14 @@ class Algorithm:
             self.count_random_actions = 0
 
     def create_env(self, agent_pos, apples, agents_list, env_cls=OrchardBasic):
-        env = env_cls(self.env_config.length, self.env_config.width, self.train_config.num_agents, agents_list, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
+        env = env_cls(
+            self.env_config.length,
+            self.env_config.width,
+            self.train_config.num_agents,
+            agents_list,
+            s_target=self.env_config.s_target,
+            apple_mean_lifetime=self.env_config.apple_mean_lifetime,
+        )
         env.initialize(agents_list, agent_pos=agent_pos, apples=apples)
         return env
 
@@ -217,30 +252,42 @@ class Algorithm:
     def save_rng_state(self):
         """Save all random states"""
         self.rng_state = {
-            'python': random.getstate(),
-            'numpy': np.random.get_state(),
-            'torch': torch.get_rng_state(),
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
         }
 
     def restore_rng_state(self):
         """Restore all random states"""
         if self.rng_state is not None:
-            random.setstate(self.rng_state['python'])
-            np.random.set_state(self.rng_state['numpy'])
-            torch.set_rng_state(self.rng_state['torch'])
+            random.setstate(self.rng_state["python"])
+            np.random.set_state(self.rng_state["numpy"])
+            torch.set_rng_state(self.rng_state["torch"])
 
     def log_progress(self, sample_state, sample_state5, sample_state6):
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state, sample_state["poses"][i], i + 1))
+            agent_obs.append(
+                self.critic_view_controller.process_state(
+                    sample_state, sample_state["poses"][i], i + 1
+                )
+            )
         v_value = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state5, sample_state5["poses"][i], i + 1))
+            agent_obs.append(
+                self.critic_view_controller.process_state(
+                    sample_state5, sample_state5["poses"][i], i + 1
+                )
+            )
         v_value5 = self.agent_controller.get_collective_value(agent_obs, 0)
         agent_obs = []
         for i in range(self.train_config.num_agents):
-            agent_obs.append(self.critic_view_controller.process_state(sample_state6, sample_state6["poses"][i], i + 1))
+            agent_obs.append(
+                self.critic_view_controller.process_state(
+                    sample_state6, sample_state6["poses"][i], i + 1
+                )
+            )
         v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
         add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
@@ -262,9 +309,23 @@ class Algorithm:
         return result
 
     def run_inference(self):
+        """Evaluate how good the current agents are. Meant to be used
+        during training to see how well the agents are doing.
+
+        Returns:
+            Object of type EvalResult, which contains mostly number of apples picked
+            during the simulation but see EvalResult class for details.
+        """
         agents_list, agent_controller = self.init_agents_for_eval()
 
-        env = create_env(self.env_config, self.train_config.num_agents, None, None, agents_list, self.env_cls)
+        env = create_env(
+            self.env_config,
+            self.train_config.num_agents,
+            None,
+            None,
+            agents_list,
+            self.env_cls,
+        )
 
         with torch.no_grad():
             results = eval_performance(
@@ -273,8 +334,8 @@ class Algorithm:
                 env=env,
                 name=self.name,
                 agents_list=agents_list,
-                timesteps=10000,
-                epsilon=self.train_config.epsilon
+                timesteps=self.train_config.eval_timesteps,
+                epsilon=self.train_config.epsilon,
             )
 
         # Create EvalResult from returned tuple
@@ -322,12 +383,16 @@ class Algorithm:
             self.logger.error("No agents to save positions for.")
             return
 
-        positions = np.asarray([a.position for a in self.agents_list], dtype=np.int32)  # shape: [num_agents, 2] (or whatever your position shape is)
+        positions = np.asarray(
+            [a.position for a in self.agents_list], dtype=np.int32
+        )  # shape: [num_agents, 2] (or whatever your position shape is)
         out_dir = Path(CHECKPOINT_DIR) / self.name
         out_dir.mkdir(parents=True, exist_ok=True)
 
         np.save(out_dir / f"agent_positions_{when}.npy", positions)
-        np.savetxt(out_dir / f"agent_positions_{when}.csv", positions, fmt="%d", delimiter=",")
+        np.savetxt(
+            out_dir / f"agent_positions_{when}.csv", positions, fmt="%d", delimiter=","
+        )
 
     def _save_apples(self, when: str = "final") -> None:
         """
@@ -389,12 +454,18 @@ class Algorithm:
 
     def env_step(self, tick):
         agent_id = random.randint(0, self.train_config.num_agents - 1)
-        state = self.env.get_state()  # this is assumed to be a dict with "agents" and "apples"
+        state = (
+            self.env.get_state()
+        )  # this is assumed to be a dict with "agents" and "apples"
         positions = []
         for i in range(self.train_config.num_agents):
             positions.append(self.agents_list[i].position)
-        action = self.agent_controller.agent_get_action(self.env, agent_id, self.train_config.epsilon)
-        action_result = self.env.process_action(agent_id, self.agents_list[agent_id].position.copy(), action)
+        action = self.agent_controller.agent_get_action(
+            self.env, agent_id, self.train_config.epsilon
+        )
+        action_result = self.env.process_action(
+            agent_id, self.agents_list[agent_id].position.copy(), action
+        )
 
         # assert np.isclose(np.sum(action_result.reward_vector), 0) or np.isclose(np.sum(action_result.reward_vector), 1), (
         #     f"[tick={tick}] reward sum must be 0 or 1; got {np.sum(action_result.reward_vector)}; "
@@ -407,16 +478,22 @@ class Algorithm:
         # )
 
         if tick == self.train_config.num_agents - 1:
-            self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
-            self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
-        self.agents_list[agent_id].collected_apples += action_result.reward_vector[agent_id]
+            self.env.apples_despawned += self.env.despawn_algorithm(
+                self.env, self.env.despawn_rate
+            )
+            self.env.total_apples += self.env.spawn_algorithm(
+                self.env, self.env.spawn_rate
+            )
+        self.agents_list[agent_id].collected_apples += action_result.reward_vector[
+            agent_id
+        ]
         return EnvStep(
             old_state=state,
             new_state=self.env.get_state(),
             acting_agent_id=agent_id,
             old_positions=positions,
             action=action,
-            reward_vector=action_result.reward_vector
+            reward_vector=action_result.reward_vector,
         )
 
     @abstractmethod
@@ -433,10 +510,10 @@ class Algorithm:
 
         payload = {
             "step": global_step,
-            "layout": layout,                    # 'centralized' or 'decentralized'
-            "rng_state": self.rng_state,         # <<--- new
-            "critics": [],                       # list of {name, blob}
-            "actors": [],                        # list aligned to agents_list (None if missing)
+            "layout": layout,  # 'centralized' or 'decentralized'
+            "rng_state": self.rng_state,  # <<--- new
+            "critics": [],  # list of {name, blob}
+            "actors": [],  # list aligned to agents_list (None if missing)
         }
 
         # critics (unique, deduped)
@@ -480,7 +557,9 @@ class Algorithm:
 
         # 2) Set global 'times' to the detected step (or ckpt['step'] if present)
         step_in_ckpt = ckpt.get("step")
-        final_step = step_in_ckpt if isinstance(step_in_ckpt, int) else (latest_step or 0)
+        final_step = (
+            step_in_ckpt if isinstance(step_in_ckpt, int) else (latest_step or 0)
+        )
         global times
         times = final_step
 
@@ -502,7 +581,11 @@ class Algorithm:
         # actors (aligned with agents_list)
         act_blobs = ckpt.get("actors", [])
         for agent, blob in zip(self.agents_list, act_blobs):
-            if blob and hasattr(agent, "policy_network") and agent.policy_network is not None:
+            if (
+                blob
+                and hasattr(agent, "policy_network")
+                and agent.policy_network is not None
+            ):
                 pn = agent.policy_network
                 pn.import_net_state(blob, device=DEVICE)
 
@@ -528,12 +611,18 @@ class Algorithm:
         # Train if enough samples collected
         if hasattr(self.agents_list[0], "policy_value"):
             for i in range(self.train_config.num_agents):
-                if len(self.agents_list[i].policy_value.batch_states) >= self.train_config.batch_size:
+                if (
+                    len(self.agents_list[i].policy_value.batch_states)
+                    >= self.train_config.batch_size
+                ):
                     self.agents_list[i].policy_value.train()
 
         if hasattr(self.agents_list[0], "policy_network"):
             for i in range(self.train_config.num_agents):
-                if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
+                if (
+                    len(self.agents_list[i].policy_network.batch_states)
+                    >= self.train_config.batch_size
+                ):
                     self.agents_list[i].policy_network.train()
 
     def training_loop(self) -> Tuple[floating, ...] | None:
@@ -547,7 +636,8 @@ class Algorithm:
                 eval_constant = 0.1 * self.train_config.timesteps
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
-                self.env.length, self.env.width, self.train_config.num_agents)
+                self.env.length, self.env.width, self.train_config.num_agents
+            )
 
             for step in range(self.train_config.timesteps):
                 self.training_step(step)
@@ -561,11 +651,31 @@ class Algorithm:
                 self.update_lr(step)
 
                 # Periodic evaluation
-                if (step % eval_constant == 0) and (step != self.train_config.timesteps - 1):
-                    self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
-                    graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
+                if (step % eval_constant == 0) and (
+                    step != self.train_config.timesteps - 1
+                ):
+                    self.evaluate_checkpoint(step, self.train_config.seed).log(
+                        self.logger
+                    )
+                    graph_plots(
+                        self.name,
+                        self.weights_plot,
+                        self.critic_loss,
+                        self.loss_plot,
+                        self.loss_plot5,
+                        self.loss_plot6,
+                        self.v_weights,
+                    )
             # Final evaluation
-            graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
+            graph_plots(
+                self.name,
+                self.weights_plot,
+                self.critic_loss,
+                self.loss_plot,
+                self.loss_plot5,
+                self.loss_plot6,
+                self.v_weights,
+            )
             return self._evaluate_final()
         except Exception as e:
             self.logger.error(f"Failed during training: {e}")
@@ -574,13 +684,20 @@ class Algorithm:
     def _evaluate_final(self) -> Tuple[floating, ...]:
         """Perform final evaluation."""
         mean_metrics = {
-            'total_apples': [], 'total_picked': [], 'picked_per_agent': [],
-            'per_agent': [], 'average_distance': [], 'apple_per_sec': [],
-            'nearest_actions': [], 'idle_actions': []
+            "total_apples": [],
+            "total_picked": [],
+            "picked_per_agent": [],
+            "per_agent": [],
+            "average_distance": [],
+            "apple_per_sec": [],
+            "nearest_actions": [],
+            "idle_actions": [],
         }
 
         for k in range(3):
-            result = self.evaluate_checkpoint(self.train_config.timesteps - 1, self.train_config.seed + k)
+            result = self.evaluate_checkpoint(
+                self.train_config.timesteps - 1, self.train_config.seed + k
+            )
             for i, key in enumerate(mean_metrics.keys()):
                 mean_metrics[key].append(getattr(result, key))
 
@@ -589,18 +706,41 @@ class Algorithm:
         self.logger.info(f"Mean distance: {np.mean(mean_metrics['average_distance'])}")
         self.logger.info(f"Total apples: {np.mean(mean_metrics['total_apples'])}")
         self.logger.info(f"Total picked: {np.mean(mean_metrics['total_picked'])}")
-        self.logger.info(f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}")
+        self.logger.info(
+            f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}"
+        )
 
         return tuple(np.mean(val) for val in mean_metrics.values())
 
     @abstractmethod
-    def build_experiment(self, view_controller_cls=ViewController, agent_controller_cls=AgentControllerCentralized,
-                         agent_type=SimpleAgent, value_network_cls=VNetwork, actor_network_cls=ActorNetwork):
-        self.critic_view_controller = view_controller_cls(self.train_config.critic_vision)
+    def build_experiment(
+        self,
+        view_controller_cls=ViewController,
+        agent_controller_cls=AgentControllerCentralized,
+        agent_type=SimpleAgent,
+        value_network_cls=VNetwork,
+        actor_network_cls=ActorNetwork,
+    ):
+        """Set Algorithm parameters using given arguments."""
+        self.critic_view_controller = view_controller_cls(
+            self.train_config.critic_vision
+        )
         self.actor_view_controller = view_controller_cls(self.train_config.actor_vision)
-        self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
-        self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls))
-        self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
+        self.agent_controller = agent_controller_cls(
+            self.agents_list, self.critic_view_controller, self.actor_view_controller
+        )
+        self._init_agents_for_training(
+            agent_type,
+            self._init_critic_networks(value_network_cls),
+            self._init_actor_networks(actor_network_cls),
+        )
+        self.env = create_env(
+            self.env_config,
+            self.train_config.num_agents,
+            *self.restore_all() if self.train_config.skip else (None, None),
+            self.agents_list,
+            self.env_cls,
+        )
 
     def _init_agents_for_training(self, agent_cls, value_networks, actor_networks):
         info = self.agent_info
@@ -623,12 +763,21 @@ class Algorithm:
             # Get critic network vision
             if self.train_config.critic_vision != 0:
                 if self.env_config.width != 1:
-                    critic_input_dim = self.train_config.critic_vision ** 2 + 1
+                    critic_input_dim = self.train_config.critic_vision**2 + 1
                 else:
                     critic_input_dim = self.train_config.critic_vision + 1
             else:
                 critic_input_dim = self.env_config.length * self.env_config.width + 1
-            critic_networks.append(value_network_cls(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))
+            critic_networks.append(
+                value_network_cls(
+                    critic_input_dim,
+                    1,
+                    self.train_config.alpha,
+                    self.train_config.discount,
+                    self.train_config.hidden_dimensions,
+                    self.train_config.num_layers,
+                )
+            )
         return critic_networks
 
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
@@ -637,10 +786,19 @@ class Algorithm:
             # Get actor network vision
             if self.train_config.actor_vision != 0:
                 if self.env_config.width != 1:
-                    actor_input_dim = self.train_config.actor_vision ** 2 + 1
+                    actor_input_dim = self.train_config.actor_vision**2 + 1
                 else:
                     actor_input_dim = self.train_config.actor_vision + 1
             else:
                 actor_input_dim = self.env_config.length * self.env_config.width + 1
-            actor_networks.append(actor_network_cls(actor_input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor))
+            actor_networks.append(
+                actor_network_cls(
+                    actor_input_dim,
+                    5 if self.env_config.width > 1 else 3,
+                    self.train_config.actor_alpha,
+                    self.train_config.discount,
+                    self.train_config.hidden_dimensions_actor,
+                    self.train_config.num_layers_actor,
+                )
+            )
         return actor_networks

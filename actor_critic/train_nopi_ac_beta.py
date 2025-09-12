@@ -11,13 +11,19 @@ import random
 from policies.nearest_uniform import replace_agents_1d
 from policies.random_policy import random_policy_1d, random_policy
 from policies.nearest import nearest_policy, nearest
-from metrics.metrics import append_metrics, plot_metrics, append_positional_metrics, plot_agent_specific_metrics
+from metrics.metrics import (
+    append_metrics,
+    plot_metrics,
+    append_positional_metrics,
+    plot_agent_specific_metrics,
+)
 from agents.simple_agent import SimpleAgent
 from models.simple_connected import SimpleConnected
 from models.simple_connected_multiple_dc import SCMNetwork, SimpleConnectedMultiple
 from models.simple_connected_multiple import CNetwork as SCMNetwork_Central
 from models.actor_network import ActorNetwork
-#from models.actor_dc_1d_complex import ActorNetwork
+
+# from models.actor_dc_1d_complex import ActorNetwork
 from orchard.algorithms import single_apple_spawn, single_apple_despawn
 
 from tests.benchmark_loss import estimate_value_function
@@ -25,34 +31,48 @@ from tests.benchmark_loss import estimate_value_function
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 torch.set_default_dtype(torch.float64)
 torch.backends.cudnn.benchmark = True
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print('Using device:', device)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
 
 one_plot = {}
 two_plot = {}
+
+
 def setup_plots(dictn, plot):
     for param_tensor in dictn:
-        #print(dictn[param_tensor].size())
+        # print(dictn[param_tensor].size())
         plot[param_tensor] = []
-        if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
+        if (
+            dictn[param_tensor].dim() > 1 and "weight" in param_tensor
+        ):  # and "1" not in param_tensor:
             for id in range(5):
                 plot[param_tensor + str(id)] = []
+
+
 def add_to_plots(dictn, timestep, plot):
     for param_tensor in dictn:
-        if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
+        if (
+            dictn[param_tensor].dim() > 1 and "weight" in param_tensor
+        ):  # and "1" not in param_tensor:
             for id in range(5):
-                plot[param_tensor + str(id)].append(dictn[param_tensor].cpu().flatten()[id])
-            #else:
+                plot[param_tensor + str(id)].append(
+                    dictn[param_tensor].cpu().flatten()[id]
+                )
+            # else:
             #    plot[param_tensor].append(dictn[param_tensor].cpu().flatten()[0])
+
 
 graph = 0
 loss_plot = []
 loss_plot1 = []
 loss_plot2 = []
-colours = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
+colours = ["b", "g", "r", "c", "m", "y", "k", "b", "g", "r", "c", "m", "y", "k"]
+
+
 def graph_plots(dictn, name, plot):
     global graph
     graph += 1
@@ -62,10 +82,16 @@ def graph_plots(dictn, name, plot):
         num += 1
         if num == 10:
             break
-        if dictn[param_tensor].dim() > 1 and "weight" in param_tensor: # and "1" not in param_tensor:
+        if (
+            dictn[param_tensor].dim() > 1 and "weight" in param_tensor
+        ):  # and "1" not in param_tensor:
             for id in range(5):
                 if id == 0:
-                    plt.plot(plot[param_tensor + str(id)], color=colours[num], label="Tensor " + str(num))
+                    plt.plot(
+                        plot[param_tensor + str(id)],
+                        color=colours[num],
+                        label="Tensor " + str(num),
+                    )
                 else:
                     plt.plot(plot[param_tensor + str(id)], color=colours[num])
         # else:
@@ -78,9 +104,10 @@ def graph_plots(dictn, name, plot):
     plt.plot(loss_plot)
     plt.plot(loss_plot1)
     plt.plot(loss_plot2)
-    #print(loss_plot2)
+    # print(loss_plot2)
     plt.title("Value Function for Sample State, iteration " + str(graph))
     plt.savefig("ValActor_" + name + str(graph) + ".png")
+
 
 # sample_state = {
 #     "agents": np.array([[1], [0], [0], [0], [3], [0], [0], [0], [0], [0]]),
@@ -101,31 +128,51 @@ def graph_plots(dictn, name, plot):
 sample_state = {
     "agents": np.array([[0], [2], [0], [0], [0]]),
     "apples": np.array([[1], [0], [0], [0], [0]]),
-    "pos": [np.array([1, 0]), np.array([1, 0])]
+    "pos": [np.array([1, 0]), np.array([1, 0])],
 }
 sample_state5 = {
     "agents": np.array([[0], [0], [2], [0], [0]]),
     "apples": np.array([[1], [0], [0], [0], [0]]),
-    "pos": [np.array([2, 0]), np.array([2, 0])]
+    "pos": [np.array([2, 0]), np.array([2, 0])],
 }
 sample_state6 = {
     "agents": np.array([[0], [0], [0], [0], [2]]),
     "apples": np.array([[1], [0], [0], [0], [0]]),
-    "pos": [np.array([4, 0]), np.array([4, 0])]
+    "pos": [np.array([4, 0]), np.array([4, 0])],
 }
 
-def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.99, epsilon=0, timesteps=100000, iteration=99, altname=None):
+
+def training_loop(
+    agents_list,
+    orchard_length,
+    S,
+    phi,
+    alpha,
+    name,
+    discount=0.99,
+    epsilon=0,
+    timesteps=100000,
+    iteration=99,
+    altname=None,
+):
     print(orchard_length)
     print(len(agents_list))
-    env = Orchard(orchard_length, len(agents_list), S, phi, one=True, spawn_algo=single_apple_spawn,
-                  despawn_algo=single_apple_despawn)  # initialize env
+    env = Orchard(
+        orchard_length,
+        len(agents_list),
+        S,
+        phi,
+        one=True,
+        spawn_algo=single_apple_spawn,
+        despawn_algo=single_apple_despawn,
+    )  # initialize env
     env.initialize(agents_list)  # attach agents to env
     print("Experiment", name)
     v_network_list = []
     p_network_list = []
 
-    #network1 = SCMNetwork_Central(orchard_length, alpha, discount)
-    #network1.function.load_state_dict(torch.load(name + ".pt"))
+    # network1 = SCMNetwork_Central(orchard_length, alpha, discount)
+    # network1.function.load_state_dict(torch.load(name + ".pt"))
     for agn in range(len(agents_list)):
         network1 = CNetwork(orchard_length, 0.0002, discount)
         agents_list[agn].policy_value = network1
@@ -137,7 +184,6 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         agents_list[agn].policy = "learned_policy"
 
         network2.critic = network1
-
 
         # network2 = ActorNetwork(orchard_length, alpha, discount, num=agn)
         # agents_list[agn].policy_network = network2
@@ -157,7 +203,7 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         old_pos = agents_list[agent].position.copy()  # Get position of this agent
         state = env.get_state()  # Get the current state (a COPY)
 
-        #action = agents_list[agent].get_action(state, discount)
+        # action = agents_list[agent].get_action(state, discount)
 
         epsilon = 0
         chance = random.random()  # Epsilon-greedy policy. Epsilon is zero currently.
@@ -166,8 +212,9 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         else:
             action = agents_list[agent].get_action(state, discount)  # Get action.
 
-        reward, new_position = env.main_step(agents_list[agent].position.copy(),
-                                             action)  # Take the action. Observe reward, and get new position
+        reward, new_position = env.main_step(
+            agents_list[agent].position.copy(), action
+        )  # Take the action. Observe reward, and get new position
         agents_list[agent].position = new_position.copy()  # Save new position.
         total_reward += reward  # Add to reward.
 
@@ -176,15 +223,17 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         sp_state = {
             "agents": state["agents"].copy(),
             "apples": state["apples"].copy(),
-            "pos": old_pos.copy()
+            "pos": old_pos.copy(),
         }
         sp_new_state = {
             "agents": new_state["agents"].copy(),
             "apples": new_state["apples"].copy(),
-            "pos": agents_list[agent].position.copy()
+            "pos": agents_list[agent].position.copy(),
         }
         # p_network_list[agent].training_loop(sp_state, sp_new_state, reward, action, agents_list)
-        p_network_list[agent].add_experience(sp_state, sp_new_state, reward, action, agents_list)
+        p_network_list[agent].add_experience(
+            sp_state, sp_new_state, reward, action, agents_list
+        )
         # if i == 1000:
         #     start = time.time()
         # if i == 2000:
@@ -192,19 +241,28 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         #     print(end - start)
         if i % 1000 == 0:
             add_to_plots(p_network_list[0].function.state_dict(), i, one_plot)
-            v_value = agents_list[1].policy_network.get_function_output(sample_state["agents"], sample_state["apples"], pos=sample_state["pos"][0])
-            v_value1 = agents_list[1].policy_network.get_function_output(sample_state5["agents"], sample_state5["apples"],
-                                                                        pos=sample_state5["pos"][1])
-            v_value2 = agents_list[0].policy_network.get_function_output(sample_state6["agents"],
-                                                                         sample_state6["apples"],
-                                                                         pos=sample_state6["pos"][0])
+            v_value = agents_list[1].policy_network.get_function_output(
+                sample_state["agents"],
+                sample_state["apples"],
+                pos=sample_state["pos"][0],
+            )
+            v_value1 = agents_list[1].policy_network.get_function_output(
+                sample_state5["agents"],
+                sample_state5["apples"],
+                pos=sample_state5["pos"][1],
+            )
+            v_value2 = agents_list[0].policy_network.get_function_output(
+                sample_state6["agents"],
+                sample_state6["apples"],
+                pos=sample_state6["pos"][0],
+            )
             # v_value = agents_list[0].get_comm_value_function(sample_state["agents"], sample_state["apples"], agents_list, debug=True, agent_poses=sample_state["pos"])
             # v_value1 = agents_list[0].get_comm_value_function(sample_state5["agents"], sample_state5["apples"], agents_list, debug=True, agent_poses=sample_state5["pos"])
             # v_value2 = agents_list[0].get_comm_value_function(sample_state6["agents"], sample_state6["apples"], agents_list, debug=True, agent_poses=sample_state6["pos"])
             if i % 20000 == 0:
 
                 print("A", v_value)
-            #add_to_plots(agents_list[1].value.state_dict(), i, two_plot)
+            # add_to_plots(agents_list[1].value.state_dict(), i, two_plot)
             loss_plot.append(v_value[0])
             loss_plot1.append(v_value1[0])
             loss_plot2.append(v_value2[0])
@@ -219,64 +277,64 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
         if i == 50000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.001
+                    g["lr"] = 0.001
         if i == 100000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0005
+                    g["lr"] = 0.0005
         # was: 500000
         if i == 200000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
+                    g["lr"] = 0.0001
         # was: 700000
         if i == 300000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
+                    g["lr"] = 0.00005
         if i == 740000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
+                    g["lr"] = 0.00005
         if i == 860000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00002
+                    g["lr"] = 0.00002
         if i == 1000000:
             for network in p_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
+                    g["lr"] = 0.00001
         """
         Critic LR
         """
         if i == 50000:
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
+                    g["lr"] = 0.0001
         if i == 150000:
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00005
+                    g["lr"] = 0.00005
         if i == 250000:
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
+                    g["lr"] = 0.00001
         if i == 400000:
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.000005
+                    g["lr"] = 0.000005
         if i == 600000:
             for network in v_network_list:
                 for g in network.optimizer.param_groups:
-                    g['lr'] = 0.000002
-        #if i == 800000:
+                    g["lr"] = 0.000002
+        # if i == 800000:
         #    for network in p_network_list:
         #        for g in network.optimizer.param_groups:
         #            g['lr'] = 0.00001
-        #if i == 1000000:
+        # if i == 1000000:
         #    for network in p_network_list:
         #        for g in network.optimizer.param_groups:
-         #           g['lr'] = 0.000005
+        #           g['lr'] = 0.000005
         # if i == 150000:
         #     for network in p_network_list:
         #         for g in network.optimizer.param_groups:
@@ -307,26 +365,54 @@ def training_loop(agents_list, orchard_length, S, phi, alpha, name, discount=0.9
             if altname is not None:
                 fname = altname
             for numbering, network in enumerate(p_network_list):
-                torch.save(network.function.state_dict(), fname + "_Actor3_" + str(numbering) + ".pt")
-                torch.save(network.optimizer.state_dict(), fname + "_Actor3_" + str(numbering) + "_optimizer.pt")
-            maxi = eval_network(fname, discount, maxi, p_network_list, v_network_list, iteration=iteration, num_agents=len(agents_list), side_length=orchard_length)
+                torch.save(
+                    network.function.state_dict(),
+                    fname + "_Actor3_" + str(numbering) + ".pt",
+                )
+                torch.save(
+                    network.optimizer.state_dict(),
+                    fname + "_Actor3_" + str(numbering) + "_optimizer.pt",
+                )
+            maxi = eval_network(
+                fname,
+                discount,
+                maxi,
+                p_network_list,
+                v_network_list,
+                iteration=iteration,
+                num_agents=len(agents_list),
+                side_length=orchard_length,
+            )
             print("=====Completed Evaluation=====")
     fname = name
     if altname is not None:
         fname = altname
     for numbering, network in enumerate(p_network_list):
-        torch.save(network.function.state_dict(), fname + "_Actor3_" + str(numbering) + ".pt")
+        torch.save(
+            network.function.state_dict(), fname + "_Actor3_" + str(numbering) + ".pt"
+        )
     graph_plots(p_network_list[0].function.state_dict(), fname, one_plot)
     print("Total Reward:", total_reward)
     print("Total Apples:", env.total_apples)
 
 
-
 from agents.actor_critic_agent import ACAgent
+
 """
 An evaluation every x steps that saves the checkpoint in case we pass the best performance
 """
-def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agents=4, side_length=10, iteration=99):
+
+
+def eval_network(
+    name,
+    discount,
+    maxi,
+    p_network_list,
+    v_network_list,
+    num_agents=4,
+    side_length=10,
+    iteration=99,
+):
     network_list = []
     a_list = []
 
@@ -336,16 +422,47 @@ def eval_network(name, discount, maxi, p_network_list, v_network_list, num_agent
         trained_agent.policy_network = p_network_list[ii]
         a_list.append(trained_agent)
     with torch.no_grad():
-        val = eval_performance(num_agents, random_policy_1d, side_length, None, None, "AC", "test", agents_list=a_list,
-                               spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn, timesteps=30000)
+        val = eval_performance(
+            num_agents,
+            random_policy_1d,
+            side_length,
+            None,
+            None,
+            "AC",
+            "test",
+            agents_list=a_list,
+            spawn_algo=single_apple_spawn,
+            despawn_algo=single_apple_despawn,
+            timesteps=30000,
+        )
     if val > maxi and iteration != 99:
         print("saving best")
         for nummer, netwk in enumerate(p_network_list):
-            torch.save(netwk.function.state_dict(),
-                       "policyitchk/" + name + "/" + name + "_" + str(nummer) + "_it_" + str(iteration) + ".pt")
+            torch.save(
+                netwk.function.state_dict(),
+                "policyitchk/"
+                + name
+                + "/"
+                + name
+                + "_"
+                + str(nummer)
+                + "_it_"
+                + str(iteration)
+                + ".pt",
+            )
         for nummer, netwk in enumerate(v_network_list):
-            torch.save(netwk.function.state_dict(),
-                       "policyitchk/" + name + "/" + name + "_decen_" + str(nummer) + "_it_" + str(iteration) + ".pt")
+            torch.save(
+                netwk.function.state_dict(),
+                "policyitchk/"
+                + name
+                + "/"
+                + name
+                + "_decen_"
+                + str(nummer)
+                + "_it_"
+                + str(iteration)
+                + ".pt",
+            )
 
     maxi = max(maxi, val)
     return maxi
@@ -360,24 +477,28 @@ if __name__ == "__main__":
 
     agents_list = []
     for i in range(num_agents):
-        agents_list.append(ACAgent(policy=random_policy_1d, num=i, num_agents=num_agents, is_beta_agent=1))
-        #agents_list[i].policy = "learned_policy"
+        agents_list.append(
+            ACAgent(
+                policy=random_policy_1d, num=i, num_agents=num_agents, is_beta_agent=1
+            )
+        )
+        # agents_list[i].policy = "learned_policy"
 
     for i in range(1):
         print("loop", i)
 
-        training_loop(agents_list, side_length, S, phi, 0.0013, "D-2_5_True_Beta", discount=0.99, timesteps=2000000, iteration=25)
+        training_loop(
+            agents_list,
+            side_length,
+            S,
+            phi,
+            0.0013,
+            "D-2_5_True_Beta",
+            discount=0.99,
+            timesteps=2000000,
+            iteration=25,
+        )
 
         if i > 0:
             print("Total Same Actions:", agents_list[0].same_actions)
             agents_list[0].same_actions = 0
-
-
-
-
-
-
-
-
-
-
