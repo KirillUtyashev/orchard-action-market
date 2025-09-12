@@ -86,7 +86,7 @@ class CentralizedValueFunction(ValueFunction):
         # Get critic network vision
         if self.train_config.critic_vision != 0:
             if self.env_config.width != 1:
-                critic_input_dim = self.train_config.critic_vision**2
+                critic_input_dim = self.train_config.critic_vision ** 2
             else:
                 critic_input_dim = self.train_config.critic_vision
         else:

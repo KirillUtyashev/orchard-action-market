@@ -217,10 +217,10 @@ class Orchard(ABC):
         )
 
     @abstractmethod
-    def _consume_apple(self, pos: np.ndarray) -> Optional[int]:
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         """
         Mutate self.apples to reflect consumption.
-        Return owner_id if applicable, else None.
+        Return a ConsumeResult object.
         """
 
     @abstractmethod
