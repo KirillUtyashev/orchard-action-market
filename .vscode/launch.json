@@ -7,7 +7,7 @@
         {
             "name": "Python Debugger: Run Experiments",
             "args": [
-                "--algorithm", "Centralized",
+                "--algorithm", "Decentralized",
                 "--width", "9",
                 "--length", "9",
                 "--num_agents", "4",

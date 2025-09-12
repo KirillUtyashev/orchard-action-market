@@ -24,25 +24,35 @@ class VNetwork(NetworkWrapper):
     def get_input_dim(self):
         return self._input_dim
 
-    def train(self):
+    def train(self) -> float:
+        """Train value function using TD(0). This is not tabular, and instead uses a neural network to
+        approximate the value function because the state space is too large.
+
+        Returns:
+            float: The Mean Squared Error loss computed for the training batch.
+        """
         states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
-        approx = self.function(states)  # shape [B]
-        approx = approx.squeeze(1)
-        # 2) Build TD‐target: y = r + γ·V_target(s')·(1 – done)
+        value_of_this_state_prediction: torch.Tensor = self.function(
+            states
+        )  # shape [B]
+        value_of_this_state_prediction = value_of_this_state_prediction.squeeze(1)
         with torch.no_grad():
             next_states = ten(np.stack(self.batch_new_states, axis=0).squeeze(), DEVICE)
             next_states = next_states.view(next_states.size(0), -1)
-            target = self.function(next_states)  # [B]
-            y = ten(
-                np.array(self.batch_rewards), DEVICE
-            ) + self.discount * target.squeeze(1)
+            value_of_next_state_prediction = self.function(next_states)
+            rewards_tensor = ten(np.array(self.batch_rewards), DEVICE)
+            td_target = (
+                rewards_tensor
+                + self.discount * value_of_next_state_prediction.squeeze(1)
+            )
 
         # 3) Compute MSE loss & backpropagate
         criterion = torch.nn.MSELoss(reduction="mean")
         self.optimizer.zero_grad()
-        loss = criterion(approx, y)
+        loss: torch.Tensor = criterion(value_of_this_state_prediction, td_target)
         loss.backward()
+        # this moves a little towards td_target, just like tabular td(0)
         self.optimizer.step()
 
         # self.optimizer.zero_grad()
