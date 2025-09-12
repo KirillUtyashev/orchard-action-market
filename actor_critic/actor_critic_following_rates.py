@@ -15,7 +15,7 @@ from helpers.controllers import AgentControllerActorCriticRates, \
     AgentControllerActorCriticRatesAdvantage, \
     AgentControllerActorCriticRatesFixed, AgentControllerCentralized, \
     ViewController
-from main import plot_smoothed
+from plots import plot_smoothed
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 

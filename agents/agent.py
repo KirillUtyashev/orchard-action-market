@@ -19,10 +19,3 @@ class Agent:
         self.policy = agent_info.policy
         self.id = agent_info.agent_id
         self.collected_apples = 0
-
-    @abstractmethod
-    def get_value_function(self, state):
-        raise NotImplementedError
-
-
-

@@ -1,7 +1,7 @@
 import os
 
 from matplotlib import pyplot as plt
-
+from helpers.helpers import step
 from config import get_config
 from orchard.environment import *
 import numpy as np
@@ -15,67 +15,12 @@ from metrics.metrics import PositionRecorder, append_positional_metrics, \
 adv_plot = []
 
 
-def step(agents_list, environment: Orchard, agent_controller, epsilon, inference=False):
-    agent = random.randint(0, environment.n - 1)
-    if agents_list[agent].policy is not random_policy:
-        action = agent_controller.agent_get_action(environment, agent, epsilon)
-    else:
-        action = random_policy(environment.available_actions)
-    environment.process_action_eval(agent, agents_list[agent].position.copy(), action)
-    # if inference:
-    #     # Update personal Q-value from given action
-    #     for agent_num in range(len(agents_list)):
-    #         if agent_num == agent:
-    #             reward = action_result.picker_reward
-    #         elif (agent_num + 1) == action_result.owner_id:
-    #             reward = action_result.owner_reward
-    #         else:
-    #             reward = 0
-    #
-    #         q_value = reward + get_config()["discount"] * agents_list[agent_num].get_value_function(agent_controller.critic_view_controller.process_state(environment.get_state(), agents_list[agent_num].position, agent_num + 1))
-    #         agents_list[agent_num].personal_q_value = q_value
-
-
 def add_distances(agent_i, agents_list):
     stack = []
     for id_, agent in enumerate(agents_list):
         distance = np.linalg.norm(agent.position - agents_list[agent_i].position)
         stack.append(distance)
     return stack
-
-
-def plot_smoothed(series_list, labels=None, title="", xlabel="Step", ylabel="Value", num_points=40):
-    """
-    Plot one or more time series averaged into ~num_points bins and return the Figure.
-    """
-    if labels is None:
-        labels = [f"Series {i}" for i in range(len(series_list))]
-
-    # Guard: empty or length-0 series
-    if not series_list or min(len(s) for s in series_list) == 0:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        return fig
-
-    T = min(len(s) for s in series_list)
-    win = max(1, T // max(1, num_points))
-    nwin = max(1, T // win)  # ensure at least one bin
-    x = (np.arange(nwin) * win + win / 2)
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-    for s, lab in zip(series_list, labels):
-        s = np.asarray(s)[:nwin * win]
-        s_avg = s.reshape(nwin, win).mean(axis=1)
-        ax.plot(x, s_avg, label=lab)
-
-    ax.legend()
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    fig.tight_layout()
-    return fig
 
 
 def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
@@ -105,7 +50,7 @@ def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
     # plt.show()
 
 
-def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, agents_list=None, epsilon=0.1, inference=False):
+def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, agents_list=None, epsilon=0.1, inference=False, env_step=step):
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
     if inference:
@@ -150,12 +95,9 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
             apples_per_second = 0
             for tick in range(num_agents):
                 apples_before = env.get_sum_apples()
-                step(agents_list, env, agent_controller, epsilon, inference)
+                env_step(agents_list, env, agent_controller, epsilon, inference)
                 change = apples_before - env.get_sum_apples()
                 reward += change
-                if tick == num_agents - 1:
-                    env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
-                    env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
                 rec.log(agents_list)
                 if name != "test":
                     agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
@@ -200,6 +142,8 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
             nearest_neighbour_mean_distance.append(np.mean(timestep_distances))
             if i % 1000 == 0:
                 print(i)
+            env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
+            env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
     print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
     print("Average distance:", np.mean(nearest_neighbour_mean_distance))
     print("Number of nearest actions: ", nearest_apple_actions)

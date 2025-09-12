@@ -3,6 +3,7 @@ import logging
 import re
 from pathlib import Path
 import torch
+from matplotlib import pyplot as plt
 from numpy import floating
 
 from agents.agent import AgentInfo
@@ -12,6 +13,7 @@ from helpers.controllers import AgentControllerCentralized, ViewController, \
     ViewControllerOrchardSelfless
 from main import eval_performance
 from models.actor_network import ActorNetwork
+from models.reward_network import RewardNetwork
 from models.value_function import VNetwork
 from plots import add_to_plots, graph_plots
 from orchard.environment import *
@@ -21,6 +23,7 @@ import time
 import psutil
 from dataclasses import dataclass
 from typing import Tuple
+
 
 times = 0
 
@@ -35,10 +38,19 @@ ENV_MAP = {
     "OrchardEuclideanNegativeRewards": OrchardEuclideanNegativeRewards
 }
 
+ENV_MAP_NEW_DYNAMIC = {
+    "OrchardBasic": OrchardBasicNewDynamic,
+    "OrchardEuclideanRewards": OrchardEuclideanRewardsNewDynamic,
+    "OrchardEuclideanNegativeRewards": OrchardEuclideanNegativeRewardsNewDynamic
+}
+
 
 VIEW_CONTROLLER_MAP = {
     OrchardBasic: ViewController,
+    OrchardBasicNewDynamic: ViewController,
+    OrchardEuclideanRewardsNewDynamic: ViewController,
     OrchardIDs: ViewController,
+    OrchardEuclideanNegativeRewardsNewDynamic: ViewController,
     OrchardMineNoReward: ViewControllerOrchardSelfless,
     OrchardSelfless: ViewControllerOrchardSelfless,
     OrchardMineAllRewards: ViewControllerOrchardSelfless,
@@ -199,7 +211,7 @@ class Algorithm:
             policy=self.train_config.policy,
             num_agents=self.train_config.num_agents
         )
-        self.env_cls = ENV_MAP[self.env_config.env_cls]
+        self.env_cls = ENV_MAP[self.env_config.env_cls] if self.train_config.new_dynamic is False else ENV_MAP_NEW_DYNAMIC[self.env_config.env_cls]
 
         if self.train_config.test:
             self.count_random_actions = 0
@@ -404,10 +416,6 @@ class Algorithm:
         #     f"[tick={tick}] picker got nonzero reward: rv[{agent_id}]={action_result.reward_vector[agent_id]}; "
         #     f"sum={np.sum(action_result.reward_vector)}; rv={action_result.reward_vector}; action={action}; positions={positions}"
         # )
-
-        if tick == self.train_config.num_agents - 1:
-            self.env.apples_despawned += self.env.despawn_algorithm(self.env, self.env.despawn_rate)
-            self.env.total_apples += self.env.spawn_algorithm(self.env, self.env.spawn_rate)
         self.agents_list[agent_id].collected_apples += action_result.reward_vector[agent_id]
         return EnvStep(
             old_state=state,
@@ -415,7 +423,7 @@ class Algorithm:
             acting_agent_id=agent_id,
             old_positions=positions,
             action=action,
-            reward_vector=action_result.reward_vector
+            reward_vector=action_result.reward_vector,
         )
 
     @abstractmethod
@@ -524,6 +532,8 @@ class Algorithm:
         # Collect and process observations
         self.collect_observation(step)
 
+        self.env.spawn_despawn()
+
         # Train if enough samples collected
         if hasattr(self.agents_list[0], "policy_value"):
             for i in range(self.train_config.num_agents):
@@ -535,15 +545,20 @@ class Algorithm:
                 if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
                     self.agents_list[i].policy_network.train()
 
+        if hasattr(self.agents_list[0], "reward_network"):
+            for i in range(self.train_config.num_agents):
+                if len(self.agents_list[i].reward_network.batch_states) >= self.train_config.batch_size:
+                    self.agents_list[i].reward_network.train()
+
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            if self.train_config.timesteps < 1000000:
-                log_constant = 0.02 * 1000000
-                eval_constant = 0.1 * 1000000
-            else:
-                log_constant = 0.02 * self.train_config.timesteps
-                eval_constant = 0.1 * self.train_config.timesteps
+            # if self.train_config.timesteps < 1000000:
+            #     log_constant = 0.02 * 1000000
+            #     eval_constant = 0.1 * 1000000
+            # else:
+            log_constant = 0.02 * self.train_config.timesteps
+            eval_constant = 0.1 * self.train_config.timesteps
 
             sample_state, sample_state5, sample_state6 = generate_sample_states(
                 self.env.length, self.env.width, self.train_config.num_agents)
@@ -595,13 +610,13 @@ class Algorithm:
     @abstractmethod
     def build_experiment(self, view_controller_cls=ViewController, agent_controller_cls=AgentControllerCentralized,
                          agent_type=SimpleAgent, value_network_cls=VNetwork, actor_network_cls=ActorNetwork):
-        self.critic_view_controller = view_controller_cls(self.train_config.critic_vision)
-        self.actor_view_controller = view_controller_cls(self.train_config.actor_vision)
+        self.critic_view_controller = view_controller_cls(self.train_config.critic_vision, self.train_config.new_input)
+        self.actor_view_controller = view_controller_cls(self.train_config.actor_vision, self.train_config.new_input)
         self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
-        self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls))
+        self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls), self._init_reward_networks())
         self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
 
-    def _init_agents_for_training(self, agent_cls, value_networks, actor_networks):
+    def _init_agents_for_training(self, agent_cls, value_networks, actor_networks, reward_networks):
         info = self.agent_info
         for num in range(self.train_config.num_agents):
             info.agent_id = num
@@ -610,6 +625,8 @@ class Algorithm:
                 agent.policy_value = value_networks[num]
             if hasattr(agent, "policy_network"):
                 agent.policy_network = actor_networks[num]
+            if hasattr(agent, "reward_network"):
+                agent.reward_network = reward_networks[num]
             self.agents_list.append(agent)
 
     def train(self):
@@ -617,20 +634,26 @@ class Algorithm:
         self.training_loop()
 
     def _init_critic_networks(self, value_network_cls=VNetwork):
+        if value_network_cls is None:
+            return []
         critic_networks = []
         for _ in range(self.train_config.num_agents):
             # Get critic network vision
             if self.train_config.critic_vision != 0:
                 if self.env_config.width != 1:
-                    critic_input_dim = self.train_config.critic_vision ** 2 + 1
+                    critic_input_dim = 2 * self.train_config.critic_vision ** 2 + 2
                 else:
-                    critic_input_dim = self.train_config.critic_vision + 1
+                    critic_input_dim = 2 * self.train_config.critic_vision + 1
+            elif self.train_config.new_input:
+                critic_input_dim = 3 * self.env_config.length * self.env_config.width
             else:
-                critic_input_dim = self.env_config.length * self.env_config.width + 1
+                critic_input_dim = 2 * self.env_config.length * self.env_config.width + 2
             critic_networks.append(value_network_cls(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))
         return critic_networks
 
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
+        if actor_network_cls is None:
+            return []
         actor_networks = []
         for _ in range(self.train_config.num_agents):
             # Get actor network vision
@@ -643,3 +666,19 @@ class Algorithm:
                 actor_input_dim = self.env_config.length * self.env_config.width + 1
             actor_networks.append(actor_network_cls(actor_input_dim, 5 if self.env_config.width > 1 else 3, self.train_config.actor_alpha, self.train_config.discount, self.train_config.hidden_dimensions_actor, self.train_config.num_layers_actor))
         return actor_networks
+
+    def _init_reward_networks(self, reward_network_cls=RewardNetwork):
+        reward_networks = []
+        for _ in range(self.train_config.num_agents):
+            # Get actor network vision
+            if self.train_config.critic_vision != 0:
+                if self.env_config.width != 1:
+                    critic_input_dim = 2 * self.train_config.critic_vision ** 2 + 2
+                else:
+                    critic_input_dim = 2 * self.train_config.critic_vision + 1
+            elif self.train_config.new_input:
+                critic_input_dim = 3 * self.env_config.length * self.env_config.width
+            else:
+                critic_input_dim = 2 * self.env_config.length * self.env_config.width + 2
+            reward_networks.append(reward_network_cls(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers))
+        return reward_networks
