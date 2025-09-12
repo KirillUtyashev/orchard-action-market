@@ -135,3 +135,36 @@ def graph_plots(name, plot, critic_loss, loss_plot, loss_plot1, loss_plot2, v_we
         plt.savefig(name_folder / f"Value_{name}_{graph}.png")
         plt.close()
 
+
+def plot_smoothed(series_list, labels=None, title="", xlabel="Step", ylabel="Value", num_points=40):
+    """
+    Plot one or more time series averaged into ~num_points bins and return the Figure.
+    """
+    if labels is None:
+        labels = [f"Series {i}" for i in range(len(series_list))]
+
+    # Guard: empty or length-0 series
+    if not series_list or min(len(s) for s in series_list) == 0:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        return fig
+
+    T = min(len(s) for s in series_list)
+    win = max(1, T // max(1, num_points))
+    nwin = max(1, T // win)  # ensure at least one bin
+    x = (np.arange(nwin) * win + win / 2)
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for s, lab in zip(series_list, labels):
+        s = np.asarray(s)[:nwin * win]
+        s_avg = s.reshape(nwin, win).mean(axis=1)
+        ax.plot(x, s_avg, label=lab)
+
+    ax.legend()
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    fig.tight_layout()
+    return fig

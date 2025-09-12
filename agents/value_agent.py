@@ -10,4 +10,4 @@ class ValueAgent(Agent):
 
     @abstractmethod
     def get_value_function(self, state):
-        pass
+        raise NotImplementedError

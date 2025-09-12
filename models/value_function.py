@@ -26,7 +26,7 @@ class VNetwork(Network):
         states = states.view(states.size(0), -1)
         approx = self.function(states)               # shape [B]
         approx = approx.squeeze(1)
-        # 2) Build TD‐target: y = r + γ·V_target(s')·(1 – done)
+        # 2) Build TD‐target: y = r + γ·V_target(s')
         with torch.no_grad():
             next_states = ten(np.stack(self.batch_new_states, axis=0).squeeze(), DEVICE)
             next_states = next_states.view(next_states.size(0), -1)

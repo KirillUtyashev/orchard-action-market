@@ -67,9 +67,9 @@ class MainNet(nn.Module):
         self.layers_list = nn.ModuleList()
 
         if num_layers == 1:
-            self.layers_list.append(nn.Linear(input_dim * 2, output_dim))
+            self.layers_list.append(nn.Linear(input_dim, output_dim))
         else:
-            self.layers_list.append(nn.Linear(input_dim * 2, hidden_dim))
+            self.layers_list.append(nn.Linear(input_dim, hidden_dim))
             for _ in range(num_layers - 2):
                 self.layers_list.append(nn.Linear(hidden_dim, hidden_dim))
             self.layers_list.append(nn.Linear(hidden_dim, output_dim))

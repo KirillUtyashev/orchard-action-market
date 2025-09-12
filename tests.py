@@ -76,7 +76,7 @@ class TestOrchard:
         self.orchard.initialize(self.agents_list, [np.array([0, 3]), np.array([0, 8])])
         action = 0
         action_result = self.orchard.process_action(0, self.agents_list[0].position, action)
-        assert int(action_result.new_position[1]) == 2
+        assert int(self.agents_list[0].position[1]) == 2
         assert self.orchard.total_apples == 0
 
     def test_process_action_apple(self, env_cls):
@@ -85,20 +85,17 @@ class TestOrchard:
         self.orchard.apples[0][2] += 2
         action = 0
         action_result = self.orchard.process_action(0, self.agents_list[0].position, action)
-        assert int(action_result.new_position[1]) == 2
+        assert int(self.agents_list[0].position[1]) == 2
         assert self.orchard.total_apples == 0
         if env_cls is OrchardBasic:
-            assert action_result.picker_reward == 1
-        else:
-            assert action_result.owner_reward == 1
-            assert action_result.owner_id == 2
+            assert action_result.reward_vector[0] == 1
 
     def test_actions_2d(self, env_cls):
         self.setup_orchard(10, 2, env_cls)
         self.orchard.initialize(self.agents_list, [np.array([0, 3]), np.array([1, 8])])
         action = 2
         action_result = self.orchard.process_action(0, self.agents_list[1].position, action)
-        assert (int(action_result.new_position[0]) == 1) & (int(action_result.new_position[1]) == 8)
+        assert (int(self.agents_list[1].position[0]) == 1) & (int(self.agents_list[1].position[1]) == 8)
         assert self.orchard.total_apples == 0
         assert action_result.picker_reward == 0
 
@@ -125,60 +122,6 @@ class TestOrchard:
         self.orchard.apples[0][7] += 1
         assert self.agents_list[1].policy(self.orchard.get_state(), np.array([1, 8])) == 0
         self.orchard.apples[0][7] -= 1
-
-    def test_process_action(self, env_cls):
-        self.setup_orchard(6, 6, env_cls)
-        self.orchard.initialize(self.agents_list, [np.array([0, 3]), np.array([1, 1])])
-        action = 2
-
-        # Apple in the same field
-        self.orchard.apples[0][3] = 2
-        result = self.orchard.process_action(0, self.agents_list[0].position, action)
-
-        assert result.new_position[0] == 0 and result.new_position[1] == 3
-
-        if env_cls is OrchardBasic:
-            assert result.picker_reward == 1
-            assert result.owner_reward is None
-            assert result.owner_id is None
-            assert int(self.orchard.apples[0][3]) == 1
-        elif env_cls is OrchardSelfless:
-            assert result.picker_reward == 0
-            assert result.owner_reward == 1
-            assert result.owner_id == 2
-            assert int(self.orchard.apples[0][3]) == 0
-        elif env_cls is OrchardIDs or env_cls is OrchardMineNoReward:
-            assert result.picker_reward == 0
-            assert result.owner_reward == 1
-            assert result.owner_id == 2
-            assert int(self.orchard.apples[0][3]) == 0
-        elif env_cls is OrchardMineAllRewards:
-            assert result.picker_reward == 1
-            assert result.owner_reward == 1
-            assert result.owner_id == 2
-            assert int(self.orchard.apples[0][3]) == 0
-
-        # Agent picks up its own apple
-        self.orchard.apples[0][3] = 1
-        result = self.orchard.process_action(0, self.agents_list[0].position, action)
-
-        if env_cls is OrchardBasic:
-            assert result.picker_reward == 1
-            assert result.owner_reward is None
-            assert result.owner_id is None
-        elif env_cls is OrchardSelfless:
-            assert result.picker_reward == 1
-            assert result.owner_reward == 1
-            assert result.owner_id == 1
-        elif env_cls is OrchardIDs or env_cls is OrchardMineNoReward:
-            assert result.picker_reward == 0
-            assert result.owner_reward == 0
-            assert result.owner_id == 1
-        elif env_cls is OrchardMineAllRewards:
-            assert result.picker_reward == 1
-            assert result.owner_reward == 1
-            assert result.owner_id == 1
-        assert int(self.orchard.apples[0][3]) == 0
 
 
 @pytest.mark.parametrize("env_cls", [OrchardBasic])
@@ -218,6 +161,13 @@ class TestViewController:
         view_controller = ViewController(0)
         result = view_controller.process_state(orchard.get_state(), agents_list[1].position)
         expected = np.array([1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]).reshape(-1, 1)
+        assert np.array_equal(result, expected)
+
+    def test_new_input(self, env_cls):
+        agents_list, orchard = self.setup_tests(5, 2, CommAgent, positions=[np.array([0, 0]), np.array([1, 1])], env_cls=env_cls)
+        view_controller = ViewController(0, True)
+        result = view_controller.process_state(orchard.get_state(), agents_list[1].position)
+        expected = np.array([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0]).reshape(-1, 1)
         assert np.array_equal(result, expected)
 
 
@@ -340,7 +290,7 @@ class TestCentralizedLearning:
         assert self.algo.env.despawn_algorithm is despawn_apple or self.algo.env.despawn_algorithm is despawn_apple_selfless_orchard
 
     def test_create_env(self, env_cls):
-        self.algo._init_agents_for_training(SimpleAgent, self.algo._init_critic_networks(VNetwork), self.algo._init_actor_networks(ActorNetwork))
+        self.algo._init_agents_for_training(SimpleAgent, self.algo._init_critic_networks(VNetwork), self.algo._init_actor_networks(ActorNetwork), None)
 
         assert self.algo.agents_list[0].policy_value == self.algo.agents_list[1].policy_value
 
@@ -402,19 +352,20 @@ class TestCentralizedLearning:
         assert self.algo.agents_list[0].policy_value.batch_rewards == []
 
     def test_env_step_2(self, env_cls):
-        if env_cls is OrchardEuclideanRewards or env_cls is OrchardEuclideanNegativeRewards:
-            self.algo.build_experiment()
-            self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
-            action = 2  # Stay
-            res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+        self.algo.build_experiment()
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        action = 2  # Stay
+        res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
+        assert np.sum(res.reward_vector) == 1
         if env_cls is OrchardEuclideanRewards:
-            assert np.sum(res.reward_vector) == 1
             assert res.reward_vector[0] == 0
             assert res.reward_vector[1] == 1
         elif env_cls is OrchardEuclideanNegativeRewards:
-            assert np.sum(res.reward_vector) == 1
             assert res.reward_vector[0] == -1
             assert res.reward_vector[1] == 2
+        elif env_cls is OrchardBasic:
+            assert res.reward_vector[0] == 1
+            assert res.reward_vector[1] == 0
 
     def test_env_step_3(self, env_cls):
         self.algo.build_experiment()
@@ -423,12 +374,11 @@ class TestCentralizedLearning:
         self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
         action = 1  # Right
         res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
-        if env_cls is OrchardEuclideanRewards or env_cls is OrchardEuclideanNegativeRewards:
-            assert np.sum(res.reward_vector) == 0
-            assert res.reward_vector[0] == 0
-            assert res.reward_vector[1] == 0
-            assert self.algo.agents_list[0].position[0] == prev[0]
-            assert self.algo.agents_list[0].position[1] == prev[1] + 1
+        assert np.sum(res.reward_vector) == 0
+        assert res.reward_vector[0] == 0
+        assert res.reward_vector[1] == 0
+        assert self.algo.agents_list[0].position[0] == prev[0]
+        assert self.algo.agents_list[0].position[1] == prev[1] + 1
 
 
 @pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless])

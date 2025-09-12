@@ -131,8 +131,6 @@ class Orchard(ABC):
         self._rendering_initialized = False
         self.render_mode = None
 
-
-    # ---------- your existing helpers (unchanged) ----------
     def initialize(self, agents_list, agent_pos=None, apples=None):
         self.agents = np.zeros((self.width, self.length), dtype=int)
         self.apples = np.zeros((self.width, self.length), dtype=int) if apples is None else apples
@@ -166,7 +164,7 @@ class Orchard(ABC):
         """
 
     @abstractmethod
-    def _route_rewards(self, picker_id: int, owner_id: Optional[int]) -> Tuple[int, Optional[int], int]:
+    def _route_rewards(self, picker_id: int, owner_id: Optional[int]) -> np.ndarray:
         """
         Return (picker_reward, owner_id_to_credit_or_None).
         """
@@ -178,9 +176,7 @@ class Orchard(ABC):
         self.agents[position[0], position[1]] -= 1
         return new_pos
 
-    # ---------- Shared movement and action orchestration ----------
     def process_action(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]) -> ProcessAction:
-        # move
         if action_idx is not None:
             new_pos = self._apply_move(position, action_idx)
         else:
@@ -191,18 +187,19 @@ class Orchard(ABC):
         # consume (subclass defines semantics)
         c = self._consume_apple(new_pos)
 
-        picker_r, owner_id, owner_r = self._route_rewards(agent_id, c)
-
-        # TODO - finish reward vector
+        reward_vector = self._route_rewards(agent_id, c)
 
         return ProcessAction(
-            new_position=new_pos,
-            reward_vector={}
+            reward_vector=reward_vector
         )
 
     @abstractmethod
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         raise NotImplementedError
+
+    def spawn_despawn(self):
+        self.despawn_algorithm(self, self.despawn_rate)
+        self.spawn_algorithm(self, self.spawn_rate)
 
     @abstractmethod
     def get_sum_apples(self):
@@ -227,10 +224,11 @@ class OrchardBasic(Orchard):
             return ConsumeResult(consumed=True)
         return ConsumeResult(consumed=False)
 
-    def _route_rewards(self, picker_id: int, c: ConsumeResult):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
+        res = np.zeros(self.n)
         if c.consumed:
-            return 1, None, None   # picker gets 1, no owner
-        return 0, None, None
+            res[picker_id] = 1
+        return res
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
@@ -351,23 +349,6 @@ class OrchardEuclideanRewards(OrchardBasic):
             res = 1 * res
         return res
 
-    def process_action(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]) -> ProcessAction:
-        if action_idx is not None:
-            new_pos = self._apply_move(position, action_idx)
-        else:
-            new_pos = position
-
-        self.agents_list[agent_id].position = new_pos
-
-        # consume (subclass defines semantics)
-        c = self._consume_apple(new_pos)
-
-        reward_vector = self._route_rewards(agent_id, c)
-
-        return ProcessAction(
-            reward_vector=reward_vector
-        )
-
 
 class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
     def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
@@ -379,5 +360,62 @@ class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
                 return res
             res = res / np.sum(res)
             res = 2 * res
-            res[picker_id] = -0.1
+            res[picker_id] = -1
+        return res
+
+
+class OrchardBasicNewDynamic(OrchardBasic):
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
+        if self.apples[pos[0], pos[1]] > 0:
+            return ConsumeResult(consumed=True)
+        return ConsumeResult(consumed=False)
+
+    def remove_apple(self, pos: np.ndarray):
+        if self.apples[pos[0], pos[1]] > 0:
+            self.apples[pos[0], pos[1]] -= 1
+
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        agents = self.agents.copy()
+        apples = self.apples.copy()
+        agents[new_position[0], new_position[1]] += 1
+        agents[position[0], position[1]] -= 1
+        if apples[new_position[0], new_position[1]] > 0:
+            apple_id = apples[new_position[0], new_position[1]]
+            if communal or ((not communal) and (agent_id + 1) == apple_id):
+                return 1, agents, apples, new_position
+            else:
+                return 0, agents, apples, new_position
+        else:
+            return 0, agents, apples, new_position
+
+
+class OrchardEuclideanRewardsNewDynamic(OrchardBasicNewDynamic):
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
+        if self.apples[pos[0], pos[1]] > 0:
+            return ConsumeResult(consumed=True, apple_pos=pos)
+        return ConsumeResult(consumed=False)
+
+    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
+        res = np.zeros(self.n)
+        if c.consumed:
+            for agent_num in range(len(self.agents_list)):
+                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
+            if np.sum(res) == 0:
+                return res
+            res = res / np.sum(res)
+            res = 1 * res
+        return res
+
+class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanRewardsNewDynamic):
+    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
+        res = np.zeros(self.n)
+        if c.consumed:
+            for agent_num in range(len(self.agents_list)):
+                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
+            if np.sum(res) == 0:
+                return res
+            res = res / np.sum(res)
+            res = 2 * res
+            res[picker_id] = -1
         return res

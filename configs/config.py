@@ -32,6 +32,8 @@ class TrainingConfig:
     seed: int = 1234
     beta_rate: float = 0.0
     budget: float = 0.0
+    new_input: bool = False
+    new_dynamic: bool = False
 
 
 @dataclass

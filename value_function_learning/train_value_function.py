@@ -84,7 +84,7 @@ class DecentralizedValueFunction(ValueFunction):
     def __init__(self, config: ExperimentConfig, name=None):
         """Initialize the value function algorithm."""
         if name is None:
-            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
+            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
         else:
             super().__init__(config, name)
         self.network_list = []
@@ -120,6 +120,8 @@ class DecentralizedValueFunction(ValueFunction):
 
                     self.agents_list[each_agent].add_experience(
                         processed_state, processed_new_state, reward)
+                    self.agents_list[each_agent].reward_network.add_experience(
+                        processed_state, reward)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise

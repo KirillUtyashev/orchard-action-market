@@ -2,7 +2,7 @@ import random
 from abc import abstractmethod
 
 import torch
-
+from policies.random_policy import random_policy
 from config import get_config
 from helpers.helpers import get_discounted_value, unwrap_state, convert_position
 import numpy as np
@@ -36,6 +36,17 @@ class AgentController:
     @abstractmethod
     def agent_get_action(self, env, agent_id, epsilon=None):
         raise NotImplementedError
+
+
+class AgentControllerRandom(AgentController):
+    def get_best_action(self, env, agent_id):
+        return random_policy(env.available_actions)
+
+    def get_collective_value(self, states, agent_id):
+        pass
+
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        return self.get_best_action(env, agent_id)
 
 
 class AgentControllerValue(AgentController):
@@ -217,13 +228,14 @@ class AgentControllerActorCriticRatesAdvantage(AgentControllerActorCriticRates):
 
 
 class ViewController:
-    def __init__(self, vision=None):
+    def __init__(self, vision=None, new_input=False):
         if vision == 0:
             self.perfect_info = True
             self.vision = vision
         else:
             self.perfect_info = False
             self.vision = vision
+        self.new_input = new_input
 
     def process_state(self, state, agent_pos, agent_id=None):
         agents, apples = unwrap_state(state)
@@ -237,13 +249,38 @@ class ViewController:
             return np.concatenate((vec, pos), axis=0)
 
         if self.perfect_info:
-            # Flatten once; no per-row concatenation
-            res = np.concatenate(
-                (agents.ravel()[:, None],
-                 apples.ravel()[:, None]),
-                axis=0
-            )
-            return append_pos(res)
+            if not self.new_input:
+                # Flatten once; no per-row concatenation
+                res = np.concatenate(
+                    (agents.ravel()[:, None],
+                     apples.ravel()[:, None]),
+                    axis=0
+                )
+                return append_pos(res)
+            else:
+                # new_input = True
+                # 1) agents grid without the acting agent
+                agents_wo = agents.astype(np.float32).copy()
+                if agent_pos is not None:
+                    r, c = agent_pos
+                    agents_wo[r, c] = max(0.0, agents_wo[r, c] - 1.0)
+
+                agents_col = agents_wo.ravel()[:, None]          # (H*W, 1)
+
+                # 2) full apples vector (same as non-new_input branch)
+                apples_col = apples.ravel().astype(np.float32)[:, None]
+
+                # 3) one-hot vector for the acting agent's position (same length as agents vector)
+                pos_onehot = np.zeros((H, W), dtype=np.float32)
+                if agent_pos is not None:
+                    r, c = agent_pos
+                    pos_onehot[r, c] = 1.0
+                pos_col = pos_onehot.ravel()[:, None]
+
+                # Concatenate: [agents_wo_self, apples_full, onehot_pos]
+                res = np.concatenate((agents_col, apples_col, pos_col), axis=0)
+
+                return res
 
         # Partial info path
         half = self.vision // 2
@@ -281,29 +318,30 @@ class ViewController:
 class ViewControllerOrchardSelfless(ViewController):
     def process_state(self, state, agent_pos, agent_id=None):
         if self.perfect_info:
-            agents, apples = unwrap_state(state)
+            if not self.new_input:
+                agents, apples = unwrap_state(state)
 
-            # Helper to append agent_pos if provided
-            def append_pos(vec):
-                if agent_pos is None:
-                    return vec
-                pos = convert_position(agent_pos)
-                pos = np.asarray(pos, dtype=np.float32).ravel()[:, None]  # (k,1)
-                return np.concatenate((vec, pos), axis=0)
+                # Helper to append agent_pos if provided
+                def append_pos(vec):
+                    if agent_pos is None:
+                        return vec
+                    pos = convert_position(agent_pos)
+                    pos = np.asarray(pos, dtype=np.float32).ravel()[:, None]  # (k,1)
+                    return np.concatenate((vec, pos), axis=0)
 
-            if agent_id is None:
-                # Centralized value function - call parent class
-                apple_grid = (apples != 0).astype(np.float32)           # collapse all IDs to 1
-                apples_col = apple_grid.ravel()[:, None]
-            else:
-                # Decentralized value function - return only agent's apples
-                # Only keep apples belonging to this agent
-                my_apples = (apples == agent_id).astype(np.float32)
-                # Flatten into column vectors (N,1)
-                apples_col = my_apples.ravel()[:, None]
+                if agent_id is None:
+                    # Centralized value function - call parent class
+                    apple_grid = (apples != 0).astype(np.float32)           # collapse all IDs to 1
+                    apples_col = apple_grid.ravel()[:, None]
+                else:
+                    # Decentralized value function - return only agent's apples
+                    # Only keep apples belonging to this agent
+                    my_apples = (apples == agent_id).astype(np.float32)
+                    # Flatten into column vectors (N,1)
+                    apples_col = my_apples.ravel()[:, None]
 
-            agents_col = agents.ravel().astype(np.float32)[:, None]
-            # Concatenate along the first axis
-            res = np.concatenate((agents_col, apples_col), axis=0)
-            return append_pos(res)
+                agents_col = agents.ravel().astype(np.float32)[:, None]
+                # Concatenate along the first axis
+                res = np.concatenate((agents_col, apples_col), axis=0)
+                return append_pos(res)
         return None

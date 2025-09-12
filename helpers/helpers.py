@@ -1,6 +1,9 @@
+import random
+
 import numpy as np
 import torch
-from orchard.environment import OrchardBasic
+from orchard.environment import Orchard, OrchardBasic, OrchardBasicNewDynamic
+from policies.random_policy import random_policy
 
 
 def create_env(env_config, num_agents, agent_pos, apples, agents_list, env_cls=OrchardBasic):
@@ -54,4 +57,48 @@ def get_discounted_value(old, new, discount_factor=0.05):
     return old * (1 - discount_factor) + new * discount_factor
 
 
+def step(agents_list, environment: Orchard, agent_controller, epsilon, inference=False):
+    agent = random.randint(0, environment.n - 1)
+    if agents_list[agent].policy is not random_policy:
+        action = agent_controller.agent_get_action(environment, agent, epsilon)
+    else:
+        action = random_policy(environment.available_actions)
+    environment.process_action_eval(agent, agents_list[agent].position.copy(), action)
+    # if inference:
+    #     # Update personal Q-value from given action
+    #     for agent_num in range(len(agents_list)):
+    #         if agent_num == agent:
+    #             reward = action_result.picker_reward
+    #         elif (agent_num + 1) == action_result.owner_id:
+    #             reward = action_result.owner_reward
+    #         else:
+    #             reward = 0
+    #
+    #         q_value = reward + get_config()["discount"] * agents_list[agent_num].get_value_function(agent_controller.critic_view_controller.process_state(environment.get_state(), agents_list[agent_num].position, agent_num + 1))
+    #         agents_list[agent_num].personal_q_value = q_value
 
+
+def step_reward_learning(agents_list, environment, agent_controller, epsilon,
+                         inference=False, tol=1e-2):
+    agent_idx = random.randint(0, environment.n - 1)
+    action = random_policy(environment.available_actions)
+
+    # Step env and labels
+    result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
+    labels = result.reward_vector
+
+    reward_predictions = []
+    for ag in agents_list:
+        s = agent_controller.critic_view_controller.process_state(environment.get_state(), ag.position, ag)
+        reward_predictions.append(float(ag.reward_network.get_value_function(s)))
+
+    # Tolerance-based correctness
+    correct_predictions = [1 if abs(p - y) <= tol else 0 for p, y in zip(reward_predictions, labels)]
+
+    # Update counters
+    for ag, c in zip(agents_list, correct_predictions):
+        ag.correct_predictions += c
+        ag.total_predictions += 1
+
+    if (isinstance(environment, OrchardBasicNewDynamic)) and np.sum(result.reward_vector) > 0:
+        environment.remove_apple(agents_list[agent_idx].position.copy())
