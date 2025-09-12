@@ -27,7 +27,7 @@ class ActorCriticPerfect(ActorCritic):
                 env_step_result = self.env_step(tick)
                 if env_step_result.action is not None:
                     for each_agent in range(len(self.agents_list)):
-                        reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else (
+                        reward = env_step_result.picker_reward if each_agent == env_step_result.acting_agent_id else ( 
                             env_step_result.apple_owner_reward) if (env_step_result.apple_owner_reward is not None) and (env_step_result.apple_owner_id == (each_agent + 1)) else 0
                         processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[each_agent], each_agent + 1)
                         processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[each_agent].position, each_agent + 1)

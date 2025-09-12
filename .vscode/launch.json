@@ -1,0 +1,35 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Run Experiments",
+            "args": [
+                "--algorithm", "Centralized",
+                "--width", "9",
+                "--length", "9",
+                "--num_agents", "4",
+                "--hidden_dim", "64",
+                "--seed", "42069",
+                "--timesteps", "100",
+                "--eval_timesteps", "50",
+                "--apple_life", "5",
+                "--s_target", "0.16",
+                "--batch_size", "4",
+                "--critic_vision", "1",
+                "--actor_vision", "0",
+                "--alpha", "0.000275",
+                "--num_layers", "4",
+                "--skip", "1",
+                "--epsilon", "0.1",
+                "--env_cls", "OrchardEuclideanRewards"
+            ],
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run_experiments.py",
+            "console": "integratedTerminal",
+        }
+    ],
+}

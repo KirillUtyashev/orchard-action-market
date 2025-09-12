@@ -3,12 +3,15 @@ import torch
 import torch.nn.functional as F
 from helpers.helpers import ten
 from config import DEVICE
-from models.network import Network
+from models.network import NetworkWrapper
+
 torch.set_default_dtype(torch.float64)
 
 
-class ActorNetworkBase(Network):
-    def __init__(self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4):
+class ActorNetworkBase(NetworkWrapper):
+    def __init__(
+        self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4
+    ):
         super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
         self.batch_actions = []
         self.batch_adv_values = []
@@ -44,12 +47,12 @@ class ActorNetworkBase(Network):
         actions_tensor = ten(np.array(self.batch_actions), DEVICE)
 
         # (d) get a tensor of log-probs, one per batch element
-        log_probs = dist.log_prob(actions_tensor)      # shape [B]
+        log_probs = dist.log_prob(actions_tensor)  # shape [B]
 
         adv_values = ten(np.array(self.batch_adv_values), DEVICE)
 
         # policy loss + entropy bonus
-        loss = - (adv_values * log_probs).mean()
+        loss = -(adv_values * log_probs).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -63,7 +66,9 @@ class ActorNetworkBase(Network):
 
 
 class ActorNetwork(ActorNetworkBase):
-    def __init__(self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4):
+    def __init__(
+        self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4
+    ):
         super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
 
 
@@ -71,7 +76,9 @@ class ActorNetworkWithBeta(ActorNetworkBase):
     def __init__(self, oned_size, agents_list, alpha, discount):
         super().__init__(oned_size, agents_list, alpha, discount)
 
-    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+    def get_adv_value(
+        self, state, positions, reward, new_state, new_positions, agent=None
+    ):
         q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
         beta = self.agents_list[agent].beta
         res = q_value - beta
@@ -82,14 +89,40 @@ class ActorNetworkWithRates(ActorNetworkBase):
     def __init__(self, oned_size, agents_list, alpha, discount):
         super().__init__(oned_size, agents_list, alpha, discount)
 
-    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
-        super().add_experience(state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent)
+    def add_experience(
+        self,
+        state,
+        old_pos,
+        new_state,
+        new_pos,
+        reward,
+        action,
+        positions,
+        new_positions,
+        agent=None,
+    ):
+        super().add_experience(
+            state,
+            old_pos,
+            new_state,
+            new_pos,
+            reward,
+            action,
+            positions,
+            new_positions,
+            agent,
+        )
 
-    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+    def get_adv_value(
+        self, state, positions, reward, new_state, new_positions, agent=None
+    ):
         q_value = reward
         for each_agent in self.agents_list:
-            q_value += self.discount * each_agent.get_q_value(
-                new_state["agents"].copy())[0] * (1 - np.exp(-each_agent.agent_rates[agent]))
+            q_value += (
+                self.discount
+                * each_agent.get_q_value(new_state["agents"].copy())[0]
+                * (1 - np.exp(-each_agent.agent_rates[agent]))
+            )
         beta = self.agents_list[agent].beta
         res = q_value - beta
         return res
@@ -99,13 +132,38 @@ class ActorNetworkCounterfactual(ActorNetworkBase):
     def __init__(self, oned_size, agents_list, alpha, discount):
         super().__init__(oned_size, agents_list, alpha, discount)
 
-    def add_experience(self, state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent=None):
-        super().add_experience(state, old_pos, new_state, new_pos, reward, action, positions, new_positions, agent)
+    def add_experience(
+        self,
+        state,
+        old_pos,
+        new_state,
+        new_pos,
+        reward,
+        action,
+        positions,
+        new_positions,
+        agent=None,
+    ):
+        super().add_experience(
+            state,
+            old_pos,
+            new_state,
+            new_pos,
+            reward,
+            action,
+            positions,
+            new_positions,
+            agent,
+        )
 
-    def get_adv_value(self, state, positions, reward, new_state, new_positions, agent=None):
+    def get_adv_value(
+        self, state, positions, reward, new_state, new_positions, agent=None
+    ):
         q_value = reward + self.discount * self.get_sum_value(new_state, new_positions)
 
-        probs = self.get_function_output(state["agents"], state["apples"], positions[agent])
+        probs = self.get_function_output(
+            state["agents"], state["apples"], positions[agent]
+        )
         counterfactual = 0
         for num, action in enumerate([0, 1, 4]):
             r = 0
@@ -120,8 +178,13 @@ class ActorNetworkCounterfactual(ActorNetworkBase):
                 apples[new_pos[0], new_pos[1]] -= 1
             test_positions = positions.copy()
             test_positions[agent] = new_pos
-            sum_ = 0.99 * self.get_sum_value({"agents": agents, "apples": apples}, test_positions) + r
+            sum_ = (
+                0.99
+                * self.get_sum_value(
+                    {"agents": agents, "apples": apples}, test_positions
+                )
+                + r
+            )
             counterfactual += sum_ * probs[num]
 
         return q_value - counterfactual
-

@@ -1,0 +1,54 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Virtual environment
+venv/
+env/
+.venv/
+.env/
+
+# IDE and editor configuration
+.idea/
+# .vscode/
+
+# Build and distribution artifacts
+build/
+dist/
+*.egg-info/
+wheels/
+
+# Logs and generated data
+logs/
+*.log
+
+# Graphs and plots
+graphs/
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+
+# Model checkpoints and saved data
+checkpoints/
+*.pt
+*.pth
+*.onnx
+
+# Data files generated during runs
+positions/
+*.npy
+*.csv
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
