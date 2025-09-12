@@ -83,14 +83,20 @@ def step_reward_learning(agents_list, environment, agent_controller, epsilon,
     agent_idx = random.randint(0, environment.n - 1)
     action = random_policy(environment.available_actions)
 
-    # Step env and labels
-    result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
-    labels = result.reward_vector
+    if isinstance(environment, OrchardBasicNewDynamic):
+        # Step env and labels
+        result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
+        labels = result.reward_vector
 
     reward_predictions = []
     for ag in agents_list:
         s = agent_controller.critic_view_controller.process_state(environment.get_state(), ag.position, ag)
         reward_predictions.append(float(ag.reward_network.get_value_function(s)))
+
+    if not isinstance(environment, OrchardBasicNewDynamic):
+        # Step env and labels
+        result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
+        labels = result.reward_vector
 
     # Tolerance-based correctness
     correct_predictions = [1 if abs(p - y) <= tol else 0 for p, y in zip(reward_predictions, labels)]
