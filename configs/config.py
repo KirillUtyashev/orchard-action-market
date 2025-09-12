@@ -9,7 +9,8 @@ class TrainingConfig:
     """Configuration for training parameters.
 
     Attributes:
-        batch_size (int): Number of samples per training batch.
+        batch_size (int): Number of samples needed before feading it into the neural net.
+            Like each agent needs to perform actions batch_size times before we feed to the net.
         alpha (float): Learning rate for the critic network.
         actor_alpha (float): Learning rate for the actor network.
         lr_schedule (dict): Learning rate schedule over training progress.

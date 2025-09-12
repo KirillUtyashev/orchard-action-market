@@ -174,6 +174,34 @@ class Algorithm:
     - env_step
     - training_step
     - training_loop
+
+    Description:
+        Contains a list of agent and each agent has 2 neural nets (actor and critic).
+        The algorithm class is responsible for collecting observations from the environment,
+        storing them in each agent's replay buffer, and training the neural nets when enough
+        samples have been collected.
+
+    Attributes:
+        env_config: Environment configuration parameters.
+        train_config: Training configuration parameters.
+        env: The environment instance.
+        name: Name of the experiment.
+        debug: Debug flag.
+        rng_state: Random number generator state for reproducibility.
+        logger: Logger instance for logging information.
+        agents_list: List of agents in the environment. For each agent i in the list,
+            agent i has an actor and a critic neural net.
+        loss_plot: List to track loss values over time.
+        weights_plot: Dictionary to track weights over time.
+        max_ratio: Maximum ratio of picked apples to total apples observed during training.
+        network_for_eval: List of networks used for evaluation during training.
+        v_weights: Dictionary to track value network weights over time.
+        critic_view_controller: View controller for the critic network.
+        actor_view_controller: View controller for the actor network.
+        agent_controller: Controller managing agent actions and interactions.
+        agent_info: Information about the agents, such as policy type and number of agents.
+        env_cls: Class of the environment being used (e.g., OrchardBasic).
+        count_random_actions: Counter for random actions taken by agents (used in testing).
     """
 
     train_config: TrainingConfig
@@ -342,7 +370,14 @@ class Algorithm:
         return EvalResult(*results)
 
     def eval_network(self, seed: int) -> EvalResult:
-        """Run network evaluation"""
+        """Evaluate how good the current agents are.
+
+        Args:
+            seed: Random seed for reproducibility.
+
+        Returns:
+            EvalResult: Evaluation results containing metrics such as number of apples picked.
+        """
 
         self.save_rng_state()
         print("Before eval: ", random.getstate()[1][0])
@@ -452,7 +487,21 @@ class Algorithm:
         layout = "centralized" if len(critics) == 1 else "decentralized"
         return layout, critics
 
-    def env_step(self, tick):
+    def env_step(self, tick: int) -> EnvStep:
+        """Simulates one agent taking a single step in the environment, and returns
+        the resulting transition information.
+
+        Args:
+            tick: A counter within a larger timestep, used to trigger periodic
+                environment updates (e.g., after N ticks, where N is the
+                number of agents).
+
+        Returns:
+            An EnvStep object containing the complete transition information,
+            including the state before and after the action, the acting
+            agent's ID, the action taken, and the resulting reward vector.
+        """
+
         agent_id = random.randint(0, self.train_config.num_agents - 1)
         state = (
             self.env.get_state()
@@ -466,16 +515,6 @@ class Algorithm:
         action_result = self.env.process_action(
             agent_id, self.agents_list[agent_id].position.copy(), action
         )
-
-        # assert np.isclose(np.sum(action_result.reward_vector), 0) or np.isclose(np.sum(action_result.reward_vector), 1), (
-        #     f"[tick={tick}] reward sum must be 0 or 1; got {np.sum(action_result.reward_vector)}; "
-        #     f"agent_id={agent_id}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
-
-        # assert np.isclose(action_result.reward_vector[agent_id], 0) or np.isclose(action_result.reward_vector[agent_id], -0.5), (
-        #     f"[tick={tick}] picker got nonzero reward: rv[{agent_id}]={action_result.reward_vector[agent_id]}; "
-        #     f"sum={np.sum(action_result.reward_vector)}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
 
         if tick == self.train_config.num_agents - 1:
             self.env.apples_despawned += self.env.despawn_algorithm(
@@ -604,12 +643,18 @@ class Algorithm:
         agent_pos, apples = self._load_env_state()
         return agent_pos, apples
 
-    def training_step(self, step):
+    def training_step(self, step: int) -> None:
+        """For this step/second, collect observations on a random subset of agents.
+        Then for all agents i, if agent i has observed enough samples, train it.
+
+        Args:
+            step: The current training step.
+        """
         # Collect and process observations
         self.collect_observation(step)
 
         # Train if enough samples collected
-        if hasattr(self.agents_list[0], "policy_value"):
+        if hasattr(self.agents_list[0], "policy_value"):  # the critic
             for i in range(self.train_config.num_agents):
                 if (
                     len(self.agents_list[i].policy_value.batch_states)
@@ -617,7 +662,7 @@ class Algorithm:
                 ):
                     self.agents_list[i].policy_value.train()
 
-        if hasattr(self.agents_list[0], "policy_network"):
+        if hasattr(self.agents_list[0], "policy_network"):  # the actor
             for i in range(self.train_config.num_agents):
                 if (
                     len(self.agents_list[i].policy_network.batch_states)
@@ -654,7 +699,7 @@ class Algorithm:
                 if (step % eval_constant == 0) and (
                     step != self.train_config.timesteps - 1
                 ):
-                    self.evaluate_checkpoint(step, self.train_config.seed).log(
+                    self.evaluate_checkpoint(step, self.train_config.seed).log( # note this may take a while since it is a we are running inference
                         self.logger
                     )
                     graph_plots(

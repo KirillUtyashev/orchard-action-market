@@ -136,6 +136,7 @@ def set_config(args):
         alpha=args.alpha,
         actor_alpha=args.actor_alpha,
         timesteps=args.timesteps,
+        eval_timesteps=args.eval_timesteps,
         num_agents=args.num_agents,
         hidden_dimensions=args.hidden_dim,
         hidden_dimensions_actor=args.hidden_dim_actor,

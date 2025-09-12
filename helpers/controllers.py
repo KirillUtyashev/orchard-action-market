@@ -36,6 +36,16 @@ class AgentController:
         raise NotImplementedError
 
     def get_agent_obs(self, state, agent_pos, agent_id=None):
+        """Returns flattened observation of a specific agent.
+
+        Args:
+            state: The current state of the environment.
+            agent_pos: The position of the agent in the environment.
+            agent_id: The ID of the agent. Defaults to None.
+
+        Returns:
+            A flattened observation vector for the agent.
+        """
         return self.critic_view_controller.process_state(state, agent_pos, agent_id)
 
     def get_all_agent_obs(self, state, positions):
@@ -292,7 +302,22 @@ class ViewController:
             self.perfect_info = False
             self.vision = vision
 
-    def process_state(self, state, agent_pos, agent_id=None):
+    def process_state(self, state: dict, agent_pos, agent_id=None) -> np.ndarray:
+        """Flattens environment state for into 1D array for input into agents.
+
+        - If perfect_info is True, the entire flattened state is returned
+        - If perfect_info is False, a square window of size (vision x vision) is extracted
+          around the agent's position. If the environment height is 1, a 1D window of length
+          vision is extracted instead.
+
+        Args:
+            state: A dictionary containing thet 'agents' and 'apple' grids
+            agent_pos: 2d array of agent position
+            agent_id: agent's id
+
+        Returns:
+            A 1D array representing the processed state.
+        """
         agents, apples = unwrap_state(state)
         H, W = agents.shape
 
