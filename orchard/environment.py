@@ -106,6 +106,8 @@ class Orchard(ABC):
         # state grids
         self.agents = np.zeros((self.width, self.length), dtype=int)
         self.apples = np.zeros((self.width, self.length), dtype=int)
+        # initialize dirt as an array of zeros
+        self.dirt = np.zeros((self.width, self.length), dtype=int)
 
         # plug-ins
         self.spawn_algorithm = spawn_algo
@@ -115,6 +117,7 @@ class Orchard(ABC):
         # stats
         self.total_apples = 0
         self.apples_despawned = 0
+        self.total_dirt = 0
 
         # spawn/despawn rates (unchanged logic)
         self.spawn_rate = (self.n / (self.length * self.width)) * s_target
@@ -200,6 +203,8 @@ class Orchard(ABC):
     def spawn_despawn(self):
         self.despawn_algorithm(self, self.despawn_rate)
         self.spawn_algorithm(self, self.spawn_rate)
+
+
 
     @abstractmethod
     def get_sum_apples(self):
