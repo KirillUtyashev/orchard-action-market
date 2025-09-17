@@ -67,6 +67,7 @@ class EnvStep:
     old_positions: list
     action: int
     reward_vector: np.ndarray
+    picked: bool
 
 
 @dataclass
@@ -215,11 +216,6 @@ class Algorithm:
 
         if self.train_config.test:
             self.count_random_actions = 0
-
-    def create_env(self, agent_pos, apples, agents_list, env_cls=OrchardBasic):
-        env = env_cls(self.env_config.length, self.env_config.width, self.train_config.num_agents, agents_list, s_target=self.env_config.s_target, apple_mean_lifetime=self.env_config.apple_mean_lifetime)
-        env.initialize(agents_list, agent_pos=agent_pos, apples=apples)
-        return env
 
     @abstractmethod
     def collect_observation(self, step):
@@ -407,15 +403,6 @@ class Algorithm:
         action = self.agent_controller.agent_get_action(self.env, agent_id, self.train_config.epsilon)
         action_result = self.env.process_action(agent_id, self.agents_list[agent_id].position.copy(), action)
 
-        # assert np.isclose(np.sum(action_result.reward_vector), 0) or np.isclose(np.sum(action_result.reward_vector), 1), (
-        #     f"[tick={tick}] reward sum must be 0 or 1; got {np.sum(action_result.reward_vector)}; "
-        #     f"agent_id={agent_id}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
-
-        # assert np.isclose(action_result.reward_vector[agent_id], 0) or np.isclose(action_result.reward_vector[agent_id], -0.5), (
-        #     f"[tick={tick}] picker got nonzero reward: rv[{agent_id}]={action_result.reward_vector[agent_id]}; "
-        #     f"sum={np.sum(action_result.reward_vector)}; rv={action_result.reward_vector}; action={action}; positions={positions}"
-        # )
         self.agents_list[agent_id].collected_apples += action_result.reward_vector[agent_id]
         return EnvStep(
             old_state=state,
@@ -424,6 +411,7 @@ class Algorithm:
             old_positions=positions,
             action=action,
             reward_vector=action_result.reward_vector,
+            picked=action_result.picked
         )
 
     @abstractmethod
@@ -534,21 +522,22 @@ class Algorithm:
 
         self.env.spawn_despawn()
 
-        # Train if enough samples collected
-        if hasattr(self.agents_list[0], "policy_value"):
-            for i in range(self.train_config.num_agents):
-                if len(self.agents_list[i].policy_value.batch_states) >= self.train_config.batch_size:
-                    self.agents_list[i].policy_value.train()
+        if not self.debug:
+            # Train if enough samples collected
+            if hasattr(self.agents_list[0], "policy_value"):
+                for i in range(self.train_config.num_agents):
+                    if len(self.agents_list[i].policy_value.batch_states) >= self.train_config.batch_size:
+                        self.agents_list[i].policy_value.train()
 
-        if hasattr(self.agents_list[0], "policy_network"):
-            for i in range(self.train_config.num_agents):
-                if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
-                    self.agents_list[i].policy_network.train()
+            if hasattr(self.agents_list[0], "policy_network"):
+                for i in range(self.train_config.num_agents):
+                    if len(self.agents_list[i].policy_network.batch_states) >= self.train_config.batch_size:
+                        self.agents_list[i].policy_network.train()
 
-        if hasattr(self.agents_list[0], "reward_network"):
-            for i in range(self.train_config.num_agents):
-                if len(self.agents_list[i].reward_network.batch_states) >= self.train_config.batch_size:
-                    self.agents_list[i].reward_network.train()
+            if hasattr(self.agents_list[0], "reward_network"):
+                for i in range(self.train_config.num_agents):
+                    if len(self.agents_list[i].reward_network.batch_states) >= self.train_config.batch_size:
+                        self.agents_list[i].reward_network.train()
 
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
@@ -558,29 +547,32 @@ class Algorithm:
             #     eval_constant = 0.1 * 1000000
             # else:
             log_constant = 0.02 * self.train_config.timesteps
-            eval_constant = 0.1 * self.train_config.timesteps
+            eval_constant = self.train_config.eval_interval * self.train_config.timesteps
 
-            sample_state, sample_state5, sample_state6 = generate_sample_states(
-                self.env.length, self.env.width, self.train_config.num_agents)
+            # sample_state, sample_state5, sample_state6 = generate_sample_states(
+            #     self.env.length, self.env.width, self.train_config.num_agents)
 
             for step in range(self.train_config.timesteps):
                 self.training_step(step)
 
                 # Log progress and update a learning rate
                 if step % log_constant == 0:
-                    self.log_progress(sample_state, sample_state5, sample_state6)
-                    if self.debug:
-                        memory_snapshot(label=f"step={step}", show_children=True)
+                    # self.log_progress(sample_state, sample_state5, sample_state6)
+                    memory_snapshot(label=f"step={step}", show_children=True)
                     # self._save_best_networks()
                 self.update_lr(step)
 
                 # Periodic evaluation
-                if (step % eval_constant == 0) and (step != self.train_config.timesteps - 1):
-                    self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
-                    graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
+                if eval_constant > 0:
+                    if (step % eval_constant == 0) and (step != self.train_config.timesteps - 1):
+                        self.evaluate_checkpoint(step, self.train_config.seed).log(self.logger)
+                        graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
             # Final evaluation
             graph_plots(self.name, self.weights_plot, self.critic_loss, self.loss_plot, self.loss_plot5, self.loss_plot6, self.v_weights)
-            return self._evaluate_final()
+            if not self.debug:
+                return self._evaluate_final()
+            else:
+                return None
         except Exception as e:
             self.logger.error(f"Failed during training: {e}")
             return None
@@ -614,7 +606,7 @@ class Algorithm:
         self.actor_view_controller = view_controller_cls(self.train_config.actor_vision, self.train_config.new_input)
         self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
         self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls), self._init_reward_networks())
-        self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls)
+        self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls, debug=self.debug)
 
     def _init_agents_for_training(self, agent_cls, value_networks, actor_networks, reward_networks):
         info = self.agent_info

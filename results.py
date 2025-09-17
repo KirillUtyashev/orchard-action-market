@@ -905,20 +905,135 @@ def plot_diffs(filepaths, agent_counts):
 
 
 if __name__ == '__main__':
-    base = {
-        "length": 9,
-        "num_agents": 4,
-        "width": 9,
-        "dimensions": 4,
-        "alpha": 0.000275,
-        "orchard": "OrchardEuclideanRewards"
-    }
-
-    # sweep = {
-    #     "alpha": [0.00005, 0.0000316, 0.0001, 0.000275, 0.000316, 0.00063, 0.001]
+    # base = {
+    #     "length": 9,
+    #     "num_agents": 4,
+    #     "width": 9,
+    #     "dimensions": 4,
+    #     "alpha": 0.000275,
+    #     "orchard": "OrchardEuclideanRewards"
     # }
-    sweep = {
-        "hidden_dimensions": [8, 64]
-    }
-    run(base, sweep)
+    #
+    # # sweep = {
+    # #     "alpha": [0.00005, 0.0000316, 0.0001, 0.000275, 0.000316, 0.00063, 0.001]
+    # # }
+    # sweep = {
+    #     "hidden_dimensions": [8, 64]
+    # }
+    # run(base, sweep)
+
+    hidden = [4, 16, 64, 128]
+
+    dc_baseline = [0.690225, 0.7746, 0.8375999999999999, 0.826375]
+    c_baseline = [0.42, 0.47, 0.58, 0.68]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(hidden, dc_baseline, marker='o', label="Decentralized", color="orange")
+    plt.plot(hidden, c_baseline, marker='o', label="Centralized", color="blue")
+
+    # ✅ axis labels, title, ticks, legend all go before plt.show()
+    plt.xlabel("Hidden dimension")
+    plt.ylabel("Prediction Accuracy")
+    plt.title("Immediate Reward Prediction by Environment")
+    plt.xticks(hidden)
+    plt.grid(True, alpha=0.6)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+    dc_new_input = [0.739175, 0.804975, 0.8375999999999999, 0.83935]
+    c_new_input = [0.42, 0.47, 0.58, 0.68]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(hidden, dc_new_input, marker='o', label="Decentralized", color="orange")
+    plt.plot(hidden, c_new_input, marker='o', label="Centralized", color="blue")
+
+    # ✅ axis labels, title, ticks, legend all go before plt.show()
+    plt.xlabel("Hidden dimension")
+    plt.ylabel("Prediction Accuracy")
+    plt.title("Immediate Reward Prediction by Environment")
+    plt.xticks(hidden)
+    plt.grid(True, alpha=0.6)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(hidden, dc_baseline, marker='o', label="Decentralized, Old Input", color="green")
+    plt.plot(hidden, dc_new_input, marker='o', label="Decentralized, New Input", color="purple")
+
+    # ✅ axis labels, title, ticks, legend all go before plt.show()
+    plt.xlabel("Hidden dimension")
+    plt.ylabel("Prediction Accuracy")
+    plt.title("Immediate Reward Prediction by Environment")
+    plt.xticks(hidden)
+    plt.grid(True, alpha=0.6)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+    dc_new_dynamic = [0.859425, 0.94705, 0.97985, 0.987625]
+    c_new_dynamic = [0.66, 0.86, 0.975, 0.98]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(hidden, dc_new_dynamic, marker='o', label="Decentralized", color="orange")
+    plt.plot(hidden, c_new_dynamic, marker='o', label="Centralized", color="blue")
+
+    # ✅ axis labels, title, ticks, legend all go before plt.show()
+    plt.xlabel("Hidden dimension")
+    plt.ylabel("Prediction Accuracy")
+    plt.title("Immediate Reward Prediction by Environment")
+    plt.xticks(hidden)
+    plt.grid(True, alpha=0.6)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+    # euclidean_old = [0.204, 0.5651999999999999, 0.6792, 0.7211]
+    # euclidean_new = [0.274025, 0.933075, 0.926275, 0.9175]
+    #
+    # euclidean_negative_old = [0, 0.57465, 0.605, 0.61]
+    # euclidean_negative_new = [0, 0.68, 0.71, 0.73]
+    #
+    # # --- First graph: old vs new ---
+    # plt.figure(figsize=(6, 4))
+    # plt.plot(hidden, euclidean_old, marker='o', label="Old")
+    # plt.plot(hidden, euclidean_new, marker='o', label="New")
+    # plt.xlabel("Hidden dimension")
+    # plt.ylabel("Prediction Accuracy")
+    # plt.title("Immediate Reward Prediction By Environment")
+    # plt.legend()
+    #
+    # # ✅ only show your hidden dimensions
+    # plt.xticks(hidden)
+    #
+    # # ✅ remove the grid
+    # plt.grid(True)
+    #
+    # plt.show()
+    #
+    # # --- Second graph: negative old vs new ---
+    # plt.figure(figsize=(6, 4))
+    # plt.plot(hidden, euclidean_negative_old, marker='o', label="Old")
+    # plt.plot(hidden, euclidean_negative_new, marker='o', label="New")
+    # plt.xlabel("Hidden dimension")
+    # plt.ylabel("Prediction Accuracy")
+    # plt.title("Immediate Reward Prediction By Environment")
+    # plt.legend()
+    #
+    # # ✅ only show your hidden dimensions
+    # plt.xticks(hidden)
+    #
+    # # ✅ remove the grid
+    # plt.grid(True)
+    #
+    # plt.show()
+
 

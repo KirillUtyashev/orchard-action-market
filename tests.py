@@ -1,14 +1,20 @@
+import itertools
+import random
 from typing import Optional
+
+import torch
 
 from agents.agent import AgentInfo
 from agents.communicating_agent import CommAgent
+from helpers.helpers import create_env
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 from policies.nearest import nearest_policy
 from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController, ViewControllerOrchardSelfless
 from orchard.environment import Orchard, OrchardBasic, \
-    OrchardEuclideanNegativeRewards, OrchardEuclideanRewards, \
+    OrchardBasicNewDynamic, OrchardEuclideanNegativeRewards, \
+    OrchardEuclideanRewards, \
     OrchardIDs, \
     OrchardMineAllRewards, OrchardMineNoReward, OrchardSelfless
 from agents.simple_agent import SimpleAgent
@@ -21,11 +27,13 @@ from configs.config import EnvironmentConfig
 from configs.config import TrainingConfig
 from configs.config import ExperimentConfig
 import pytest
+
+from reward_learning.reward_learning import RewardLearningDecentralized
 from value_function_learning.train_value_function import \
     CentralizedValueFunction, DecentralizedValueFunction
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless, OrchardIDs, OrchardMineAllRewards, OrchardMineNoReward])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardEuclideanRewards, OrchardEuclideanNegativeRewards])
 class TestOrchard:
     def setup_orchard(self, length, width, env_cls, policy=random_policy):
         self.agents_list = []
@@ -42,16 +50,6 @@ class TestOrchard:
         self.orchard.spawn_algorithm(self.orchard, 1)
         self.orchard.spawn_algorithm(self.orchard, 1)
         assert (self.orchard.apples <= 2).all(), "Not all cells contain apples"
-
-        if env_cls is OrchardSelfless:
-            max_tries = 100
-            for _ in range(max_tries):
-                self.orchard.despawn_algorithm(self.orchard, 1)
-                self.orchard.spawn_algorithm(self.orchard, 1)
-                if np.any(self.orchard.apples == 2):
-                    break
-            else:
-                raise AssertionError("No apple with id=2 after spawning attempts")
 
     def test_despawn(self, env_cls):
         self.setup_orchard(10, 1, env_cls)
@@ -82,11 +80,17 @@ class TestOrchard:
     def test_process_action_apple(self, env_cls):
         self.setup_orchard(10, 1, env_cls)
         self.orchard.initialize(self.agents_list, [np.array([0, 3]), np.array([0, 8])])
-        self.orchard.apples[0][2] += 2
+        self.orchard.apples[0][2] += 1
         action = 0
         action_result = self.orchard.process_action(0, self.agents_list[0].position, action)
         assert int(self.agents_list[0].position[1]) == 2
-        assert self.orchard.total_apples == 0
+        assert (action_result.picked is True)
+        if not isinstance(self.orchard, OrchardBasicNewDynamic):
+            assert self.orchard.total_apples == 0
+        else:
+            assert self.orchard.total_apples == 1
+            self.orchard.remove_apple(self.agents_list[0].position)
+            assert self.orchard.total_apples == 0
         if env_cls is OrchardBasic:
             assert action_result.reward_vector[0] == 1
 
@@ -97,7 +101,8 @@ class TestOrchard:
         action_result = self.orchard.process_action(0, self.agents_list[1].position, action)
         assert (int(self.agents_list[1].position[0]) == 1) & (int(self.agents_list[1].position[1]) == 8)
         assert self.orchard.total_apples == 0
-        assert action_result.picker_reward == 0
+        assert np.sum(action_result.reward_vector) == 0
+        assert action_result.picked is False
 
     def test_nearest_2d(self, env_cls):
         self.setup_orchard(10, 2, env_cls, nearest_policy)
@@ -171,60 +176,6 @@ class TestViewController:
         assert np.array_equal(result, expected)
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic])
-class TestViewControllerOrchardSelfless:
-    def setup_tests(self, length, width, agent_cls, positions, env_cls):
-        agents_list = [agent_cls(AgentInfo(
-            policy=random_policy,
-            agent_id=i
-        )) for i in range(2)]
-        orchard = env_cls(length, width, 2, agents_list, spawn_algo=spawn_apple, despawn_algo=despawn_apple)
-        orchard.initialize(agents_list, positions)
-        return agents_list, orchard
-
-    def test_no_apples(self, env_cls):
-        agents_list, orchard = self.setup_tests(10, 1, CommAgent, positions=[np.array([0, 3]), np.array([0, 8])], env_cls=env_cls)
-        view_controller = ViewControllerOrchardSelfless(0)
-        result = view_controller.process_state(orchard.get_state(), agents_list[0].position, 1)
-        expected = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
-        assert np.array_equal(result, expected)
-
-    def test_one_agent_apple(self, env_cls):
-        agents_list, orchard = self.setup_tests(10, 1, CommAgent, positions=[np.array([0, 3]), np.array([0, 8])], env_cls=env_cls)
-        view_controller = ViewControllerOrchardSelfless(0)
-        orchard.apples[0][1] = 1
-        result_1 = view_controller.process_state(orchard.get_state(), agents_list[0].position, 1)
-        result_2 = view_controller.process_state(orchard.get_state(), agents_list[1].position, 2)
-        expected_1 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
-        expected_2 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8]).reshape(-1, 1)
-        assert np.array_equal(result_1, expected_1)
-        assert np.array_equal(result_2, expected_2)
-
-    def test_two_agent_apples(self, env_cls):
-        agents_list, orchard = self.setup_tests(10, 1, CommAgent, positions=[np.array([0, 3]), np.array([0, 8])], env_cls=env_cls)
-        view_controller = ViewControllerOrchardSelfless(0)
-        orchard.apples[0][1] = 1
-        orchard.apples[0][2] = 2
-        result_1 = view_controller.process_state(orchard.get_state(), agents_list[0].position, 1)
-        result_2 = view_controller.process_state(orchard.get_state(), agents_list[1].position, 2)
-        expected_1 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
-        expected_2 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 8]).reshape(-1, 1)
-        assert np.array_equal(result_1, expected_1)
-        assert np.array_equal(result_2, expected_2)
-
-    def test_simple_agent(self, env_cls):
-        agents_list, orchard = self.setup_tests(10, 1, SimpleAgent, positions=[np.array([0, 3]), np.array([0, 8])], env_cls=env_cls)
-        view_controller = ViewControllerOrchardSelfless(0)
-        orchard.apples[0][1] = 1
-        orchard.apples[0][2] = 2
-        result_1 = view_controller.process_state(orchard.get_state(), agents_list[0].position, None)
-        result_2 = view_controller.process_state(orchard.get_state(), agents_list[1].position, None)
-        expected_1 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 3]).reshape(-1, 1)
-        expected_2 = np.array([0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 8]).reshape(-1, 1)
-        assert np.array_equal(result_1, expected_1)
-        assert np.array_equal(result_2, expected_2)
-
-
 class TestCentralizedController:
     pass
 
@@ -233,7 +184,7 @@ class TestDecentralizedController:
     pass
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless, OrchardEuclideanRewards])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardEuclideanRewards])
 class TestCentralizedLearning:
     algo: Optional[CentralizedValueFunction] = None
 
@@ -286,22 +237,17 @@ class TestCentralizedLearning:
 
         # Test environment
         assert self.algo.env is not None
-        assert self.algo.env.spawn_algorithm is spawn_apple or self.algo.env.spawn_algorithm is spawn_apple_selfless_orchard
-        assert self.algo.env.despawn_algorithm is despawn_apple or self.algo.env.despawn_algorithm is despawn_apple_selfless_orchard
+        assert self.algo.env.spawn_algorithm is spawn_apple
+        assert self.algo.env.despawn_algorithm is despawn_apple
 
     def test_create_env(self, env_cls):
         self.algo._init_agents_for_training(SimpleAgent, self.algo._init_critic_networks(VNetwork), self.algo._init_actor_networks(ActorNetwork), None)
 
         assert self.algo.agents_list[0].policy_value == self.algo.agents_list[1].policy_value
+        self.algo.env = create_env(self.algo.env_config, 2, [np.array([0, 0]), np.array([1, 1])], None, self.algo.agents_list, self.algo.env_cls)
 
-        self.algo.env = self.algo.create_env([np.array([0, 0]), np.array([1, 1])], None, self.algo.agents_list, self.algo.env_cls)
-
-        if type(self.algo.env) is OrchardBasic:
-            assert self.algo.env.spawn_algorithm is spawn_apple
-            assert self.algo.env.despawn_algorithm is despawn_apple
-        else:
-            assert self.algo.env.spawn_algorithm is spawn_apple_selfless_orchard
-            assert self.algo.env.despawn_algorithm is despawn_apple_selfless_orchard
+        assert self.algo.env.spawn_algorithm is spawn_apple
+        assert self.algo.env.despawn_algorithm is despawn_apple
 
         assert self.algo.agents_list[0].position[0] == 0
         assert self.algo.agents_list[1].position[0] == 1
@@ -328,10 +274,7 @@ class TestCentralizedLearning:
         env_step_result = self.algo.env_step(0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
-        if env_cls is OrchardBasic:
-            assert (env_step_result.apple_owner_id is None) and (env_step_result.apple_owner_reward is None)
-        else:
-            assert env_step_result.apple_owner_reward is not None
+        assert (env_step_result.picked is False)
 
         assert old_positions[0][0] == env_step_result.old_positions[0][0]
         assert old_positions[0][1] == env_step_result.old_positions[0][1]
@@ -438,18 +381,14 @@ class TestDecentralizedLearning:
         assert self.algo.env.despawn_algorithm is despawn_apple or self.algo.env.despawn_algorithm is despawn_apple_selfless_orchard
 
     def test_create_env(self, env_cls):
-        self.algo._init_agents_for_training(CommAgent, self.algo._init_critic_networks(VNetwork), self.algo._init_actor_networks(ActorNetwork))
+        self.algo._init_agents_for_training(CommAgent, self.algo._init_critic_networks(VNetwork), self.algo._init_actor_networks(ActorNetwork), None)
 
         assert self.algo.agents_list[0].policy_value != self.algo.agents_list[1].policy_value
 
-        self.algo.env = self.algo.create_env([np.array([0, 0]), np.array([1, 1])], None, self.algo.agents_list, self.algo.env_cls)
+        self.algo.env = create_env(self.algo.env_config, 2,[np.array([0, 0]), np.array([1, 1])], None, self.algo.agents_list, self.algo.env_cls)
 
-        if type(self.algo.env) is OrchardBasic:
-            assert self.algo.env.spawn_algorithm is spawn_apple
-            assert self.algo.env.despawn_algorithm is despawn_apple
-        else:
-            assert self.algo.env.spawn_algorithm is spawn_apple_selfless_orchard
-            assert self.algo.env.despawn_algorithm is despawn_apple_selfless_orchard
+        assert self.algo.env.spawn_algorithm is spawn_apple
+        assert self.algo.env.despawn_algorithm is despawn_apple
 
         assert self.algo.agents_list[0].position[0] == 0
         assert self.algo.agents_list[1].position[0] == 1
@@ -476,10 +415,7 @@ class TestDecentralizedLearning:
         env_step_result = self.algo.env_step(0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
-        if env_cls is OrchardBasic:
-            assert (env_step_result.apple_owner_id is None) and (env_step_result.apple_owner_reward is None)
-        else:
-            assert env_step_result.apple_owner_reward is not None
+        assert (env_step_result.picked is False)
 
         assert old_positions[0][0] == env_step_result.old_positions[0][0]
         assert old_positions[0][1] == env_step_result.old_positions[0][1]
@@ -500,47 +436,58 @@ class TestDecentralizedLearning:
         assert self.algo.agents_list[0].policy_value.batch_rewards == []
 
 
-# class TestVLearning:
-#     def test_setup(self):
-#         env_config = EnvironmentConfig(
-#             length=6,
-#             width=6,
-#             apple_mean_lifetime=5,
-#             s_target=0.16,
-#         )
-#         train_config = TrainingConfig(
-#             num_agents=2,
-#             hidden_dimensions=16,
-#             num_layers=4,
-#             batch_size=256,
-#             alpha=0.0005,
-#             critic_vision=0,
-#             timesteps=10000,
-#             eval_interval=1,
-#             test=True
-#         )
-#
-#         experiment_config = ExperimentConfig(
-#             env_config=env_config,
-#             train_config=train_config
-#         )
-#
-#         test_algo = DecentralizedValueFunction(experiment_config)
-#         test_algo.run()
-#
-#         assert (test_algo.count_random_actions / (10000 * 2)) <= 0.11
-#         assert 0.9 <= (test_algo.count_random_actions / (10000 * 2))
+class TestDecentralizedRewardLearning:
+    algo: Optional[DecentralizedValueFunction] = None
 
-# class TestGraphPlots:
-#     def test_no_erros(self):
-#         plot1 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-#         plot2 = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-#         plot3 = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-#
-#         eval_x = [0, 10000, 100000, 500000, 1000000]
-#         eval_y = [0, 100, 200, 300, 310]
-#
-#         graph_plots("Test", plot1, plot2, plot3, eval_x, eval_y)
+    def _build_algo(self, env_cls, new_dynamic):
+        # build env_config with the current env_cls
+        env_config = EnvironmentConfig(
+            length=6,
+            width=6,
+            apple_mean_lifetime=50,
+            s_target=0.16,
+            env_cls=env_cls.__name__,   # or pass the class itself if your code supports it
+        )
+
+        train_config = TrainingConfig(
+            num_agents=2,
+            hidden_dimensions=64,
+            num_layers=4,
+            batch_size=2,
+            alpha=0.0005,
+            critic_vision=0,
+            timesteps=10000,
+            eval_interval=0,
+            new_dynamic=new_dynamic,
+        )
+
+        experiment_config = ExperimentConfig(
+            env_config=env_config,
+            train_config=train_config,
+            debug=True
+        )
+
+        # attach to the test instance so tests can use self.algo
+        return RewardLearningDecentralized(experiment_config)
+
+    def test_identical_orchard(self):
+
+        algos_dict = {}
+
+        for orchard in [OrchardEuclideanRewards, OrchardBasic]:
+            for new_dynamic in [True, False]:
+                np.random.seed(1234)
+                torch.manual_seed(1234)
+                random.seed(1234)
+                algo = self._build_algo(orchard, new_dynamic)
+                algo.train()
+                algos_dict[(orchard, new_dynamic)] = algo
+
+        for (orchard1, algo1), (orchard2, algo2) in itertools.combinations(algos_dict.items(), 2):
+            assert np.array_equal(algo1.env.state_history, algo2.env.state_history)
+
+            if isinstance(algo1.env, OrchardBasicNewDynamic) and isinstance(algo2.env, OrchardBasicNewDynamic):
+                assert algo1.env.total_picked == algo2.env.total_picked
 
 
 if __name__ == '__main__':
