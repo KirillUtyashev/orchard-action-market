@@ -120,8 +120,6 @@ class DecentralizedValueFunction(ValueFunction):
 
                     self.agents_list[each_agent].add_experience(
                         processed_state, processed_new_state, reward)
-                    self.agents_list[each_agent].reward_network.add_experience(
-                        processed_state, reward)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise

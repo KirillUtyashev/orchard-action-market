@@ -15,7 +15,7 @@ class TrainingConfig:
     )
     timesteps: int = 1000000
     num_agents: int = 4
-    eval_interval: float = 0.2
+    eval_interval: float = 0.1
     checkpoint_dir: str = "checkpoints"
     log_dir: str = "logs"
     discount: float = 0.99
@@ -34,6 +34,7 @@ class TrainingConfig:
     budget: float = 0.0
     new_input: bool = False
     new_dynamic: bool = False
+    debug: bool = False
 
 
 @dataclass

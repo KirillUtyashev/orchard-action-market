@@ -2,6 +2,8 @@ import random
 from abc import abstractmethod
 
 import torch
+
+from policies.nearest import nearest_policy
 from policies.random_policy import random_policy
 from config import get_config
 from helpers.helpers import get_discounted_value, unwrap_state, convert_position
@@ -40,7 +42,8 @@ class AgentController:
 
 class AgentControllerRandom(AgentController):
     def get_best_action(self, env, agent_id):
-        return random_policy(env.available_actions)
+        return nearest_policy(env.get_state(), self.agents_list[agent_id].position)
+        # return random_policy(env.available_actions)
 
     def get_collective_value(self, states, agent_id):
         pass
@@ -249,7 +252,7 @@ class ViewController:
             return np.concatenate((vec, pos), axis=0)
 
         if self.perfect_info:
-            if not self.new_input:
+            if not self.new_input or agent_pos is None:
                 # Flatten once; no per-row concatenation
                 res = np.concatenate(
                     (agents.ravel()[:, None],

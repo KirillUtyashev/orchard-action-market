@@ -4,13 +4,15 @@ import numpy as np
 import random
 import torch
 from policies.random_policy import random_policy
+from policies.nearest import nearest_policy
 from actor_critic.actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed, ActorCriticRatesAdvantage
 from actor_critic.actor_critic_perfect_info import ActorCriticPerfect, \
     ActorCriticPerfectNoAdvantage
 from actor_critic.actor_imperfect_critic_perfect import \
     ActorImperfectCriticPerfect
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
-from reward_learning.reward_learning import RewardLearning
+from reward_learning.reward_learning import RewardLearning, \
+    RewardLearningCentralized, RewardLearningDecentralized
 from value_function_learning.train_value_function import (
     CentralizedValueFunction, DecentralizedValueFunction,
     DecentralizedValueFunctionPersonal
@@ -23,7 +25,8 @@ POLICY_MAP = {
     "Centralized": "value_function",
     "Decentralized": "value_function",
     "DecentralizedPersonal": "value_function",
-    "RewardLearning": random_policy
+    "RewardLearningDecentralized": nearest_policy,
+    "RewardLearningCentralized": nearest_policy
 }
 
 
@@ -45,9 +48,9 @@ def parse_args(args):
     parser.add_argument("--hidden_dim_actor", type=int, default=64, help="Hidden layer size of actor network.")
     parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for critic network.")
     parser.add_argument("--num_layers_actor", type=int, default=4, help="Number of layers for actor network.")
-    parser.add_argument("--debug", type=bool, default=True, help="Debug.")
+    parser.add_argument("--debug", type=bool, default=False, help="Debug.")
     parser.add_argument("--critic_vision", type=int, default=0, help="Critic Vision.")
-    parser.add_argument("--new_input", type=bool, default=0, help="New Input.")
+    parser.add_argument("--new_input", type=int, default=0, help="New Input.")
     parser.add_argument("--actor_vision", type=int, default=0, help="Actor Vision.")
     parser.add_argument("--skip", type=int, default=1, help="Skip training time.")
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
@@ -125,8 +128,10 @@ def pick_experiment(algorithm, exp_config):
         algo = ActorCriticRatesAdvantage(exp_config)
     elif algorithm == "ActorImperfectCriticPerfect":
         algo = ActorImperfectCriticPerfect(exp_config)
-    elif algorithm == "RewardLearning":
-        algo = RewardLearning(exp_config)
+    elif algorithm == "RewardLearningDecentralized":
+        algo = RewardLearningDecentralized(exp_config)
+    elif algorithm == "RewardLearningCentralized":
+        algo = RewardLearningCentralized(exp_config)
     else:
         algo = None
     return algo

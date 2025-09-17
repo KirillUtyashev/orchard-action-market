@@ -16,6 +16,28 @@ The Orchard environment. Includes provisions for transition actions, spawning, a
 action_algo: an algorithm that is used to process actions (agent movements). Defaults to just updating the environment from the singular agent action.
 """
 
+#
+# class EuclideanRewardsMixin:
+#     """
+#     Expects:
+#       - self.n : int
+#       - self.agents_list : iterable with .position
+#       - calc_distance : function in scope
+#     """
+#     def _route_rewards(self, picker_id: int, c) -> np.ndarray:
+#         res = np.zeros(self.n)
+#         if c.consumed:
+#             for agent_num in range(len(self.agents_list)):
+#                 res[agent_num] = calc_distance(
+#                     self.agents_list[agent_num].position, c.apple_pos
+#                 )
+#             if np.sum(res) == 0:
+#                 return res
+#             res = res / np.sum(res)
+#             res = 2 * res
+#             res[picker_id] = -1
+#         return res
+
 
 def calc_distance(pos1, pos2):
     return np.linalg.norm(pos1 - pos2)
@@ -75,6 +97,7 @@ class Action2D(ActionMixin, Enum):
 @dataclass
 class ProcessAction:
     reward_vector: np.ndarray
+    picked: bool
 
 
 @dataclass
@@ -94,7 +117,8 @@ class Orchard(ABC):
                  spawn_algo=spawn_apple,
                  despawn_algo=despawn_apple,
                  s_target=0.1,
-                 apple_mean_lifetime=None):
+                 apple_mean_lifetime=None,
+                 debug=False):
         self.length = length
         self.width = width
         self.available_actions = Action1D if width == 1 else Action2D
@@ -115,6 +139,7 @@ class Orchard(ABC):
         # stats
         self.total_apples = 0
         self.apples_despawned = 0
+        self.total_picked = 0
 
         # spawn/despawn rates (unchanged logic)
         self.spawn_rate = (self.n / (self.length * self.width)) * s_target
@@ -130,6 +155,10 @@ class Orchard(ABC):
         # rendering flags
         self._rendering_initialized = False
         self.render_mode = None
+
+        self.debug = debug
+        if self.debug:
+            self.state_history = []
 
     def initialize(self, agents_list, agent_pos=None, apples=None):
         self.agents = np.zeros((self.width, self.length), dtype=int)
@@ -157,7 +186,7 @@ class Orchard(ABC):
         return self.viewer.render(self, return_rgb_array=self.render_mode == "rgb_array")
 
     @abstractmethod
-    def _consume_apple(self, pos: np.ndarray) -> Optional[int]:
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         """
         Mutate self.apples to reflect consumption.
         Return owner_id if applicable, else None.
@@ -177,6 +206,11 @@ class Orchard(ABC):
         return new_pos
 
     def process_action(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]) -> ProcessAction:
+        if self.debug:
+            self.state_history.append(
+                np.concatenate([self.get_state()["agents"], self.get_state()["apples"]])
+            )
+
         if action_idx is not None:
             new_pos = self._apply_move(position, action_idx)
         else:
@@ -190,7 +224,8 @@ class Orchard(ABC):
         reward_vector = self._route_rewards(agent_id, c)
 
         return ProcessAction(
-            reward_vector=reward_vector
+            reward_vector=reward_vector,
+            picked=c.consumed
         )
 
     @abstractmethod
@@ -349,6 +384,9 @@ class OrchardEuclideanRewards(OrchardBasic):
             res = 1 * res
         return res
 
+    def remove_apple(self, pos: np.ndarray):
+        pass
+
 
 class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
     def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
@@ -373,6 +411,7 @@ class OrchardBasicNewDynamic(OrchardBasic):
     def remove_apple(self, pos: np.ndarray):
         if self.apples[pos[0], pos[1]] > 0:
             self.apples[pos[0], pos[1]] -= 1
+            self.total_picked += 1
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
         new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
@@ -406,6 +445,7 @@ class OrchardEuclideanRewardsNewDynamic(OrchardBasicNewDynamic):
             res = res / np.sum(res)
             res = 1 * res
         return res
+
 
 class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanRewardsNewDynamic):
     def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
