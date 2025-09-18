@@ -62,6 +62,7 @@ def spawn_apple(env, p_cell, total_dirt) :
     env.apples[spawn_positions] += 1
     return total_spawned
 
+#P_cell is dirt spawn rate
 def spawn_dirt(env, p_cell):
     L, W = env.apples.shape  # ★ rows = Length, cols = Width
 

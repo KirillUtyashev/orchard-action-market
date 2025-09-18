@@ -8,7 +8,7 @@ import random
 from enum import Enum, auto
 from orchard.algorithms import despawn_apple, despawn_apple_selfless_orchard, \
     spawn_apple, \
-    spawn_apple_selfless_orchard
+    spawn_apple_selfless_orchard, spawn_dirt
 
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
@@ -93,6 +93,7 @@ class Orchard(ABC):
                  action_algo=None,
                  spawn_algo=spawn_apple,
                  despawn_algo=despawn_apple,
+                 spawn_dirt_algo=spawn_dirt,
                  s_target=0.1,
                  apple_mean_lifetime=None):
         self.length = length
@@ -112,6 +113,7 @@ class Orchard(ABC):
         # plug-ins
         self.spawn_algorithm = spawn_algo
         self.despawn_algorithm = despawn_algo
+        self.spawn_dirt_algorithm = spawn_dirt_algo
         self.action_algorithm = action_algo or self.process_action
 
         # stats
@@ -120,6 +122,8 @@ class Orchard(ABC):
         self.total_dirt = 0
 
         # spawn/despawn rates (unchanged logic)
+        #dirt spawn rate would be a bit slower to spawn rate
+        self.dirt_spawn_rate = (self.n / (self.length * self.width)) * s_target * 0.8
         self.spawn_rate = (self.n / (self.length * self.width)) * s_target
         if apple_mean_lifetime is None:
             self.despawn_rate = min(
@@ -201,6 +205,7 @@ class Orchard(ABC):
         raise NotImplementedError
 
     def spawn_despawn(self):
+        self.spawn_dirt_algorithm(self, self.dirt_spawn_rate)
         self.despawn_algorithm(self, self.despawn_rate)
         self.spawn_algorithm(self, self.spawn_rate)
 
