@@ -18,7 +18,7 @@ class Network:
         self.batch_states = []
         self.batch_new_states = []
 
-        self._input_dim = input_dim * 2
+        self._input_dim = input_dim
 
     def get_input_dim(self):
         return self._input_dim

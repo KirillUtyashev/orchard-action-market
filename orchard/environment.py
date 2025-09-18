@@ -160,6 +160,8 @@ class Orchard(ABC):
         if self.debug:
             self.state_history = []
 
+        self.dummy_counter = 0
+
     def initialize(self, agents_list, agent_pos=None, apples=None):
         self.agents = np.zeros((self.width, self.length), dtype=int)
         self.apples = np.zeros((self.width, self.length), dtype=int) if apples is None else apples
@@ -251,6 +253,9 @@ class Orchard(ABC):
         # consume (subclass defines semantics)
         self._consume_apple(new_pos)
 
+    def remove_apple(self, pos: np.ndarray):
+        pass
+
 
 class OrchardBasic(Orchard):
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
@@ -266,7 +271,7 @@ class OrchardBasic(Orchard):
         return res
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape-np.array([1, 1]))
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
@@ -384,9 +389,6 @@ class OrchardEuclideanRewards(OrchardBasic):
             res = 1 * res
         return res
 
-    def remove_apple(self, pos: np.ndarray):
-        pass
-
 
 class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
     def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
@@ -429,33 +431,55 @@ class OrchardBasicNewDynamic(OrchardBasic):
             return 0, agents, apples, new_position
 
 
-class OrchardEuclideanRewardsNewDynamic(OrchardBasicNewDynamic):
+class OrchardEuclideanRewardsNewDynamic(OrchardEuclideanRewards):
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         if self.apples[pos[0], pos[1]] > 0:
             return ConsumeResult(consumed=True, apple_pos=pos)
         return ConsumeResult(consumed=False)
 
-    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
-        res = np.zeros(self.n)
-        if c.consumed:
-            for agent_num in range(len(self.agents_list)):
-                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
-            if np.sum(res) == 0:
-                return res
-            res = res / np.sum(res)
-            res = 1 * res
-        return res
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        agents = self.agents.copy()
+        apples = self.apples.copy()
+        agents[new_position[0], new_position[1]] += 1
+        agents[position[0], position[1]] -= 1
+        if apples[new_position[0], new_position[1]] > 0:
+            apple_id = apples[new_position[0], new_position[1]]
+            if communal or ((not communal) and (agent_id + 1) == apple_id):
+                return 1, agents, apples, new_position
+            else:
+                return 0, agents, apples, new_position
+        else:
+            return 0, agents, apples, new_position
+
+    def remove_apple(self, pos: np.ndarray):
+        if self.apples[pos[0], pos[1]] > 0:
+            self.apples[pos[0], pos[1]] -= 1
+            self.total_picked += 1
 
 
-class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanRewardsNewDynamic):
-    def _route_rewards(self, picker_id: int, c: ConsumeResult) -> np.ndarray:
-        res = np.zeros(self.n)
-        if c.consumed:
-            for agent_num in range(len(self.agents_list)):
-                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
-            if np.sum(res) == 0:
-                return res
-            res = res / np.sum(res)
-            res = 2 * res
-            res[picker_id] = -1
-        return res
+class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanNegativeRewards):
+    def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
+        if self.apples[pos[0], pos[1]] > 0:
+            return ConsumeResult(consumed=True, apple_pos=pos)
+        return ConsumeResult(consumed=False)
+
+    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        agents = self.agents.copy()
+        apples = self.apples.copy()
+        agents[new_position[0], new_position[1]] += 1
+        agents[position[0], position[1]] -= 1
+        if apples[new_position[0], new_position[1]] > 0:
+            apple_id = apples[new_position[0], new_position[1]]
+            if communal or ((not communal) and (agent_id + 1) == apple_id):
+                return 1, agents, apples, new_position
+            else:
+                return 0, agents, apples, new_position
+        else:
+            return 0, agents, apples, new_position
+
+    def remove_apple(self, pos: np.ndarray):
+        if self.apples[pos[0], pos[1]] > 0:
+            self.apples[pos[0], pos[1]] -= 1
+            self.total_picked += 1

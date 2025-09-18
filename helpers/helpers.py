@@ -93,6 +93,9 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon, inference
     else:
         action = random_policy(environment.available_actions)
     environment.process_action_eval(agent, agents_list[agent].position.copy(), action)
+
+    if isinstance(environment, OrchardBasicNewDynamic):
+        environment.remove_apple(agents_list[agent].position.copy())
     # if inference:
     #     # Update personal Q-value from given action
     #     for agent_num in range(len(agents_list)):
@@ -158,7 +161,7 @@ def step_reward_learning_decentralized(agents_list, environment, agent_controlle
     # if count % 1000 == 0:
     #     print(same_cell_no_reward)
 
-    if (isinstance(environment, OrchardBasicNewDynamic)) and result.picked:
+    if isinstance(environment, OrchardBasicNewDynamic):
         environment.remove_apple(agents_list[agent_idx].position.copy())
 
 
@@ -181,12 +184,13 @@ def step_reward_learning_centralized(agents_list, environment, agent_controller,
         labels = result.reward_vector
 
     # Tolerance-based correctness
-    correct_predictions = [1 if abs(reward_prediction - np.sum(labels)) <= tol else 0]
+    correct_prediction = 1 if abs(reward_prediction - np.sum(labels)) <= tol else 0
+    agents_list[0].correct_predictions += correct_prediction
+    agents_list[0].total_predictions += 1
 
-    # Update counters
-    for ag, c in zip(agents_list, correct_predictions):
-        ag.correct_predictions += c
-        ag.total_predictions += 1
+    key = float(int(np.round(np.sum(labels))))
+    agents_list[0].correct_predictions_by_reward[str(key)] += correct_prediction
+    agents_list[0].total_predictions_by_reward[str(key)] += 1
 
     if (isinstance(environment, OrchardBasicNewDynamic)) and np.sum(result.reward_vector) > 0:
         environment.remove_apple(agents_list[agent_idx].position.copy())

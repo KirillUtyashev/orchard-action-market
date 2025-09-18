@@ -101,7 +101,7 @@ class AgentControllerCentralized(AgentControllerValue):
     def get_all_agent_obs(self, state, positions):
         obs = []
         for agent in range(len(self.agents_list)):
-            obs.append(self.get_agent_obs(state, positions[agent], None))
+            obs.append(self.get_agent_obs(state, None, None))
         return obs
 
 
