@@ -14,8 +14,8 @@ from helpers.controllers import AgentControllerCentralized, \
     AgentControllerDecentralized, ViewController, ViewControllerOrchardSelfless
 from orchard.environment import Orchard, OrchardBasic, \
     OrchardBasicNewDynamic, OrchardEuclideanNegativeRewards, \
-    OrchardEuclideanRewards, \
-    OrchardIDs, \
+    OrchardEuclideanNegativeRewardsNewDynamic, OrchardEuclideanRewards, \
+    OrchardEuclideanRewardsNewDynamic, OrchardIDs, \
     OrchardMineAllRewards, OrchardMineNoReward, OrchardSelfless
 from agents.simple_agent import SimpleAgent
 from orchard.algorithms import despawn_apple_selfless_orchard, spawn_apple, \
@@ -176,20 +176,13 @@ class TestViewController:
         assert np.array_equal(result, expected)
 
 
-class TestCentralizedController:
-    pass
-
-
-class TestDecentralizedController:
-    pass
-
-
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardEuclideanRewards])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardEuclideanRewards, OrchardEuclideanNegativeRewards])
+@pytest.mark.parametrize("new_dynamic", [True, False])
 class TestCentralizedLearning:
     algo: Optional[CentralizedValueFunction] = None
 
     @pytest.fixture(autouse=True)
-    def _build_algo(self, request, env_cls):
+    def _build_algo(self, request, env_cls, new_dynamic):
         # build env_config with the current env_cls
         env_config = EnvironmentConfig(
             length=6,
@@ -209,6 +202,7 @@ class TestCentralizedLearning:
             timesteps=10000,
             eval_interval=1,
             test=True,
+            new_dynamic=new_dynamic,
         )
 
         experiment_config = ExperimentConfig(
@@ -267,6 +261,24 @@ class TestCentralizedLearning:
         assert agents[0] is not self.algo.agents_list[0]
         assert agents[1] is not self.algo.agents_list[1]
 
+    def test_controller(self):
+        self.algo.build_experiment()
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+
+        apples_before = self.algo.env.apples.copy()
+        ir, agents, apples, new_pos = self.algo.env.calculate_ir(self.algo.agents_list[0].position, [0, 0])
+        if isinstance(self.algo.env, OrchardBasicNewDynamic) or isinstance(self.algo.env, OrchardEuclideanRewardsNewDynamic) or isinstance(self.algo.env, OrchardEuclideanNegativeRewardsNewDynamic):
+            assert new_pos[0] == self.algo.agents_list[0].position[0]
+            assert new_pos[1] == self.algo.agents_list[0].position[1]
+            assert ir == 1
+            assert np.sum(apples) == 1
+            assert np.equal(apples_before, apples).all()
+        else:
+            assert new_pos[0] == self.algo.agents_list[0].position[0]
+            assert new_pos[1] == self.algo.agents_list[0].position[1]
+            assert ir == 1
+            assert np.sum(apples) == 0
+
     def test_env_step(self, env_cls):
         self.algo.build_experiment()
         old_state = self.algo.env.get_state()
@@ -285,6 +297,48 @@ class TestCentralizedLearning:
 
         non_acting_agent = 0 if env_step_result.acting_agent_id == 1 else 1
         assert self.algo.agents_list[non_acting_agent].position[0] == old_positions[non_acting_agent][0]
+
+    def test_env_step_pick_apple(self, env_cls):
+        np.random.seed(1234)
+        torch.manual_seed(1234)
+        random.seed(1234)
+
+        self.algo.build_experiment()
+        self.algo.env = create_env(self.algo.env_config, self.algo.train_config.num_agents, [np.array([1, 1]), np.array([4, 4])], None, self.algo.agents_list, self.algo.env_cls, debug=self.algo.debug)
+
+        old_state = self.algo.env.get_state()
+        old_positions = [self.algo.agents_list[0].position, self.algo.agents_list[1].position]
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        if isinstance(self.algo.env, OrchardBasic):
+            print(1)
+        env_step_result = self.algo.env_step(0, agent_id=0)
+        assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
+        assert env_step_result.new_state is not None
+
+        assert (env_step_result.action == 2)
+        assert (env_step_result.picked is True)
+
+        assert old_positions[0][0] == env_step_result.old_positions[0][0]
+        assert old_positions[0][1] == env_step_result.old_positions[0][1]
+        assert old_positions[1][0] == env_step_result.old_positions[1][0]
+        assert old_positions[1][1] == env_step_result.old_positions[1][1]
+
+        assert self.algo.agents_list[1].position[0] == old_positions[1][0]
+        assert np.sum(env_step_result.reward_vector) == 1
+        if isinstance(self.algo.env, OrchardBasicNewDynamic) or isinstance(self.algo.env, OrchardEuclideanRewardsNewDynamic) or isinstance(self.algo.env, OrchardEuclideanNegativeRewardsNewDynamic):
+            assert self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] == 1
+        else:
+            assert self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] == 0
+
+        if isinstance(self.algo.env, OrchardEuclideanNegativeRewards):
+            assert env_step_result.reward_vector[0] == -1
+            assert env_step_result.reward_vector[1] == 2
+        elif isinstance(self.algo.env, OrchardEuclideanRewards):
+            assert env_step_result.reward_vector[0] == 0
+            assert env_step_result.reward_vector[1] == 1
+        else:
+            assert env_step_result.reward_vector[0] == 1
+            assert env_step_result.reward_vector[1] == 0
 
     def test_training_step(self):
         self.algo.build_experiment()
@@ -315,21 +369,38 @@ class TestCentralizedLearning:
         self.algo.env.apples = np.zeros((self.algo.env.width, self.algo.env.length), dtype=int)
         prev = self.algo.agents_list[0].position
         self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
-        action = 1  # Right
+        action = 2  # Stay
         res = self.algo.env.process_action(0, self.algo.agents_list[0].position, action)
-        assert np.sum(res.reward_vector) == 0
-        assert res.reward_vector[0] == 0
-        assert res.reward_vector[1] == 0
+        assert np.sum(res.reward_vector) == 1
+
+        if isinstance(self.algo.env, OrchardEuclideanNegativeRewards):
+            assert res.reward_vector[0] == -1
+            assert res.reward_vector[1] == 2
+        elif isinstance(self.algo.env, OrchardEuclideanRewards):
+            assert res.reward_vector[0] == 0
+            assert res.reward_vector[1] == 1
+        else:
+            assert res.reward_vector[0] == 1
+            assert res.reward_vector[1] == 0
         assert self.algo.agents_list[0].position[0] == prev[0]
-        assert self.algo.agents_list[0].position[1] == prev[1] + 1
+        assert self.algo.agents_list[0].position[1] == prev[1]
+
+    def test_remove_apple(self, env_cls):
+        self.algo.build_experiment()
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        self.algo.env._consume_apple(self.algo.agents_list[0].position)
+        self.algo.env.remove_apple(self.algo.agents_list[0].position)
+        assert np.sum(self.algo.env.apples) == 0
 
 
-@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardSelfless])
+@pytest.mark.parametrize("env_cls", [OrchardBasic, OrchardEuclideanRewards, OrchardEuclideanNegativeRewards])
+@pytest.mark.parametrize("new_dynamic", [True, False])
+@pytest.mark.parametrize("new_input", [True, False])
 class TestDecentralizedLearning:
     algo: Optional[DecentralizedValueFunction] = None
 
     @pytest.fixture(autouse=True)
-    def _build_algo(self, request, env_cls):
+    def _build_algo(self, request, env_cls, new_dynamic, new_input):
         # build env_config with the current env_cls
         env_config = EnvironmentConfig(
             length=6,
@@ -349,6 +420,8 @@ class TestDecentralizedLearning:
             timesteps=10000,
             eval_interval=1,
             test=True,
+            new_dynamic=new_dynamic,
+            new_input=new_input
         )
 
         experiment_config = ExperimentConfig(
@@ -372,7 +445,10 @@ class TestDecentralizedLearning:
         assert len(self.algo.agents_list) == 2
         assert self.algo.agents_list[0].policy_value != self.algo.agents_list[1].policy_value
         assert not hasattr(self.algo.agents_list[0], "policy_network")
-        assert self.algo.agents_list[0].policy_value.get_input_dim() == 74
+        if not self.algo.train_config.new_input:
+            assert self.algo.agents_list[0].policy_value.get_input_dim() == 74
+        else:
+            assert self.algo.agents_list[0].policy_value.get_input_dim() == 108
         assert self.algo.agents_list[0].position is not None
 
         # Test environment
@@ -434,6 +510,55 @@ class TestDecentralizedLearning:
         assert self.algo.agents_list[1].policy_value.batch_states == []
 
         assert self.algo.agents_list[0].policy_value.batch_rewards == []
+
+    def test_remove_apple(self, env_cls):
+        self.algo.build_experiment()
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        self.algo.env._consume_apple(self.algo.agents_list[0].position)
+        self.algo.env.remove_apple(self.algo.agents_list[0].position)
+        assert np.sum(self.algo.env.apples) == 0
+
+    def test_env_step_pick_apple(self, env_cls):
+        np.random.seed(1234)
+        torch.manual_seed(1234)
+        random.seed(1234)
+
+        self.algo.build_experiment()
+        self.algo.env = create_env(self.algo.env_config, self.algo.train_config.num_agents, [np.array([1, 1]), np.array([4, 4])], None, self.algo.agents_list, self.algo.env_cls, debug=self.algo.debug)
+
+        old_state = self.algo.env.get_state()
+        old_positions = [self.algo.agents_list[0].position, self.algo.agents_list[1].position]
+        self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] = 1
+        if isinstance(self.algo.env, OrchardBasic):
+            print(1)
+        env_step_result = self.algo.env_step(0, agent_id=0)
+        assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
+        assert env_step_result.new_state is not None
+
+        assert (env_step_result.action == 2)
+        assert (env_step_result.picked is True)
+
+        assert old_positions[0][0] == env_step_result.old_positions[0][0]
+        assert old_positions[0][1] == env_step_result.old_positions[0][1]
+        assert old_positions[1][0] == env_step_result.old_positions[1][0]
+        assert old_positions[1][1] == env_step_result.old_positions[1][1]
+
+        assert self.algo.agents_list[1].position[0] == old_positions[1][0]
+        assert np.sum(env_step_result.reward_vector) == 1
+        if isinstance(self.algo.env, OrchardBasicNewDynamic) or isinstance(self.algo.env, OrchardEuclideanRewardsNewDynamic) or isinstance(self.algo.env, OrchardEuclideanNegativeRewardsNewDynamic):
+            assert self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] == 1
+        else:
+            assert self.algo.env.apples[self.algo.agents_list[0].position[0]][self.algo.agents_list[0].position[1]] == 0
+
+        if isinstance(self.algo.env, OrchardEuclideanNegativeRewards):
+            assert env_step_result.reward_vector[0] == -1
+            assert env_step_result.reward_vector[1] == 2
+        elif isinstance(self.algo.env, OrchardEuclideanRewards):
+            assert env_step_result.reward_vector[0] == 0
+            assert env_step_result.reward_vector[1] == 1
+        else:
+            assert env_step_result.reward_vector[0] == 1
+            assert env_step_result.reward_vector[1] == 0
 
 
 class TestDecentralizedRewardLearning:

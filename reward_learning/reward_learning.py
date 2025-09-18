@@ -58,7 +58,7 @@ class RewardLearning(Algorithm, ABC):
         self.network_for_eval = [agent.reward_network for agent in self.agents_list]
 
     def log_progress(self, sample_state, sample_state5, sample_state6):
-        pass
+        print(self.env.dummy_counter)
 
     @abstractmethod
     def process_accuracy(self, agents_list):
@@ -100,6 +100,12 @@ class RewardLearningCentralized(RewardLearning):
     def process_accuracy(self, agents_list):
         self.agents_list[0].prediction_accuracy_history.append(agents_list[0].correct_predictions / agents_list[0].total_predictions)
 
+        for key in self.agents_list[0].prediction_accuracy_by_reward.keys():
+            if agents_list[0].total_predictions_by_reward[key] != 0:
+                self.agents_list[0].prediction_accuracy_by_reward[key].append(agents_list[0].correct_predictions_by_reward[key] / agents_list[0].total_predictions_by_reward[key])
+            else:
+                self.agents_list[0].prediction_accuracy_by_reward[key].append(0)
+
         fig = plot_smoothed(
             [self.agents_list[0].prediction_accuracy_history],
             labels=[f"Centralized"],
@@ -109,6 +115,28 @@ class RewardLearningCentralized(RewardLearning):
             num_points=50  # this controls smoothing granularity
         )
         fig.savefig(self.graphs_out_path / f"reward_loss.png")
+        plt.close(fig)
+
+        fig = plot_smoothed(
+            [self.agents_list[0].prediction_accuracy_by_reward["1.0"]],
+            labels=[f"Centralized"],
+            title=f"Immediate Reward Prediction Accuracy",
+            xlabel="Training step",
+            ylabel="Reward Prediction Accuracy",
+            num_points=50  # this controls smoothing granularity
+        )
+        fig.savefig(self.graphs_out_path / f"reward_loss_1.png")
+        plt.close(fig)
+
+        fig = plot_smoothed(
+            [self.agents_list[0].prediction_accuracy_by_reward["0.0"]],
+            labels=[f"Centralized"],
+            title=f"Immediate Reward Prediction Accuracy",
+            xlabel="Training step",
+            ylabel="Reward Prediction Accuracy",
+            num_points=50  # this controls smoothing granularity
+        )
+        fig.savefig(self.graphs_out_path / f"reward_loss_0.png")
         plt.close(fig)
 
     def run_inference(self):
@@ -128,15 +156,25 @@ class RewardLearningCentralized(RewardLearning):
                 env_step=step_reward_learning_centralized
             )
         self.process_accuracy(agents_list)
+        print(env.dummy_counter)
 
         return EvalResult(*results)
 
     def _evaluate_final(self) -> Tuple[np.floating, ...]:
         res = super()._evaluate_final()
-        sum_ = 0
-        sum_ += self.agents_list[0].prediction_accuracy_history[-1]
-        av = sum_ / len(self.agents_list)
-        self.logger.info(f"Final accuracy: {av}")
+        self.logger.info(f"Final accuracy: {self.agents_list[0].prediction_accuracy_history[-1]}")
+
+        # Average accuracy over rewards
+        avg_acc_by_reward = {
+            "-1.0": 0,
+            "0.0": 0,
+            "1.0": 0,
+            "other": 0
+        }
+        for key in self.agents_list[0].prediction_accuracy_by_reward.keys():
+            avg_acc_by_reward[key] = self.agents_list[0].prediction_accuracy_by_reward[key][-1]
+        self.logger.info(f"Average accuracy by reward: {avg_acc_by_reward}")
+
         return res
 
 
@@ -169,7 +207,7 @@ class RewardLearningDecentralized(RewardLearning):
                 if len(self.same_cell_no_reward) == (step + 1) * (tick + 1):
                     self.same_cell_no_reward.append(self.same_cell_no_reward[-1])
 
-                if self.train_config.new_dynamic and env_step_result.picked:
+                if self.train_config.new_dynamic:
                     self.env.remove_apple(self.agents_list[env_step_result.acting_agent_id].position)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
@@ -277,4 +315,19 @@ class RewardLearningDecentralized(RewardLearning):
             sum_ += agent.prediction_accuracy_history[-1]
         av = sum_ / len(self.agents_list)
         self.logger.info(f"Final accuracy: {av}")
+
+        # Average accuracy over rewards
+        avg_acc_by_reward = {
+            "-1.0": 0,
+            "0.0": 0,
+            "1.0": 0,
+            "other": 0
+        }
+        for agent in self.agents_list:
+            for key in agent.prediction_accuracy_by_reward.keys():
+                avg_acc_by_reward[key] += agent.prediction_accuracy_by_reward[key][-1]
+        for key in avg_acc_by_reward.keys():
+            avg_acc_by_reward[key] /= len(self.agents_list)
+        self.logger.info(f"Average accuracy by reward: {avg_acc_by_reward}")
+
         return res

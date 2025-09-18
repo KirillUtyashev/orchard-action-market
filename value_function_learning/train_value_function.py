@@ -51,12 +51,15 @@ class CentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.env_step(tick)
-                processed_state = self.critic_view_controller.process_state(env_step_result.old_state, env_step_result.old_positions[env_step_result.acting_agent_id], None)
-                processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, self.agents_list[env_step_result.acting_agent_id].position, None)
+                processed_state = self.critic_view_controller.process_state(env_step_result.old_state, None, None)
+                processed_new_state = self.critic_view_controller.process_state(env_step_result.new_state, None, None)
 
                 # Add rewards here
                 rewards_sum = np.sum(env_step_result.reward_vector)
                 self.agents_list[env_step_result.acting_agent_id].add_experience(processed_state[:self.network_for_eval[0].get_input_dim()], processed_new_state[:self.network_for_eval[0].get_input_dim()], rewards_sum)
+
+                if self.train_config.new_dynamic:
+                    self.env.remove_apple(self.agents_list[env_step_result.acting_agent_id].position)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise
@@ -69,7 +72,7 @@ class CentralizedValueFunction(ValueFunction):
             else:
                 critic_input_dim = self.train_config.critic_vision
         else:
-            critic_input_dim = self.env_config.length * self.env_config.width
+            critic_input_dim = 2 * self.env_config.length * self.env_config.width
         network = value_network_cls(critic_input_dim, 1, self.train_config.alpha, self.train_config.discount, self.train_config.hidden_dimensions, self.train_config.num_layers)
         return [network for _ in range(self.train_config.num_agents)]
 
@@ -84,7 +87,7 @@ class DecentralizedValueFunction(ValueFunction):
     def __init__(self, config: ExperimentConfig, name=None):
         """Initialize the value function algorithm."""
         if name is None:
-            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>")
+            super().__init__(config, f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>-<{config.train_config.new_dynamic}>")
         else:
             super().__init__(config, name)
         self.network_list = []
@@ -120,6 +123,9 @@ class DecentralizedValueFunction(ValueFunction):
 
                     self.agents_list[each_agent].add_experience(
                         processed_state, processed_new_state, reward)
+
+                if self.train_config.new_dynamic:
+                    self.env.remove_apple(self.agents_list[env_step_result.acting_agent_id].position)
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise

@@ -394,8 +394,9 @@ class Algorithm:
         layout = "centralized" if len(critics) == 1 else "decentralized"
         return layout, critics
 
-    def env_step(self, tick):
-        agent_id = random.randint(0, self.train_config.num_agents - 1)
+    def env_step(self, tick, agent_id=None):
+        if agent_id is None:
+            agent_id = random.randint(0, self.train_config.num_agents - 1)
         state = self.env.get_state()  # this is assumed to be a dict with "agents" and "apples"
         positions = []
         for i in range(self.train_config.num_agents):
@@ -542,24 +543,20 @@ class Algorithm:
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
         try:
-            # if self.train_config.timesteps < 1000000:
-            #     log_constant = 0.02 * 1000000
-            #     eval_constant = 0.1 * 1000000
-            # else:
             log_constant = 0.02 * self.train_config.timesteps
             eval_constant = self.train_config.eval_interval * self.train_config.timesteps
 
-            # sample_state, sample_state5, sample_state6 = generate_sample_states(
-            #     self.env.length, self.env.width, self.train_config.num_agents)
+            sample_state, sample_state5, sample_state6 = generate_sample_states(
+                self.env.length, self.env.width, self.train_config.num_agents)
 
             for step in range(self.train_config.timesteps):
                 self.training_step(step)
 
                 # Log progress and update a learning rate
                 if step % log_constant == 0:
-                    # self.log_progress(sample_state, sample_state5, sample_state6)
+                    self.log_progress(sample_state, sample_state5, sample_state6)
                     memory_snapshot(label=f"step={step}", show_children=True)
-                    # self._save_best_networks()
+                    self._save_best_networks()
                 self.update_lr(step)
 
                 # Periodic evaluation
@@ -601,12 +598,13 @@ class Algorithm:
 
     @abstractmethod
     def build_experiment(self, view_controller_cls=ViewController, agent_controller_cls=AgentControllerCentralized,
-                         agent_type=SimpleAgent, value_network_cls=VNetwork, actor_network_cls=ActorNetwork):
+                         agent_type=SimpleAgent, value_network_cls=VNetwork, actor_network_cls=ActorNetwork, test=False):
         self.critic_view_controller = view_controller_cls(self.train_config.critic_vision, self.train_config.new_input)
         self.actor_view_controller = view_controller_cls(self.train_config.actor_vision, self.train_config.new_input)
         self.agent_controller = agent_controller_cls(self.agents_list, self.critic_view_controller, self.actor_view_controller)
         self._init_agents_for_training(agent_type, self._init_critic_networks(value_network_cls), self._init_actor_networks(actor_network_cls), self._init_reward_networks())
-        self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls, debug=self.debug)
+        if not test:
+            self.env = create_env(self.env_config, self.train_config.num_agents, *self.restore_all() if self.train_config.skip else (None, None), self.agents_list, self.env_cls, debug=self.debug)
 
     def _init_agents_for_training(self, agent_cls, value_networks, actor_networks, reward_networks):
         info = self.agent_info
