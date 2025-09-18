@@ -2,7 +2,8 @@ import random
 
 import numpy as np
 import torch
-from orchard.environment import Orchard, OrchardBasic, OrchardBasicNewDynamic
+from orchard.environment import Orchard, OrchardBasic, OrchardBasicNewDynamic, \
+    OrchardEuclideanNegativeRewardsNewDynamic, OrchardEuclideanRewardsNewDynamic
 from policies.random_policy import random_policy
 
 same_cell_no_reward = 0
@@ -94,7 +95,7 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon, inference
         action = random_policy(environment.available_actions)
     environment.process_action_eval(agent, agents_list[agent].position.copy(), action)
 
-    if isinstance(environment, OrchardBasicNewDynamic):
+    if isinstance(environment, OrchardBasicNewDynamic) or isinstance(environment, OrchardEuclideanRewardsNewDynamic) or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic):
         environment.remove_apple(agents_list[agent].position.copy())
     # if inference:
     #     # Update personal Q-value from given action
