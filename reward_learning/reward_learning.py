@@ -28,14 +28,7 @@ class RewardLearning(Algorithm, ABC):
 
     def update_lr(self, step: int) -> None:
         """Update a learning rate based on training progress."""
-        if step == 1000000:
-            for network in self.network_for_eval:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.0001
-        if step == 1500000:
-            for network in self.network_for_eval:
-                for g in network.optimizer.param_groups:
-                    g['lr'] = 0.00001
+        pass
 
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
         return []
