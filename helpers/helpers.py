@@ -116,7 +116,7 @@ def step_reward_learning_decentralized(agents_list, environment, agent_controlle
     agent_idx = random.randint(0, environment.n - 1)
     action = agent_controller.agent_get_action(environment, agent_idx, None)
 
-    if isinstance(environment, OrchardBasicNewDynamic):
+    if isinstance(environment, OrchardBasicNewDynamic) or isinstance(environment, OrchardEuclideanRewardsNewDynamic) or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic):
         # Step env and labels
         result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
         labels = result.reward_vector
@@ -126,7 +126,7 @@ def step_reward_learning_decentralized(agents_list, environment, agent_controlle
         s = agent_controller.critic_view_controller.process_state(environment.get_state(), ag.position, ag)
         reward_predictions.append(float(ag.reward_network.get_value_function(s)))
 
-    if not isinstance(environment, OrchardBasicNewDynamic):
+    if isinstance(environment, OrchardBasicNewDynamic) or isinstance(environment, OrchardEuclideanRewardsNewDynamic) or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic):
         # Step env and labels
         result = environment.process_action(agent_idx, agents_list[agent_idx].position.copy(), action)
         labels = result.reward_vector
@@ -162,7 +162,7 @@ def step_reward_learning_decentralized(agents_list, environment, agent_controlle
     # if count % 1000 == 0:
     #     print(same_cell_no_reward)
 
-    if isinstance(environment, OrchardBasicNewDynamic):
+    if isinstance(environment, OrchardBasicNewDynamic) or isinstance(environment, OrchardEuclideanRewardsNewDynamic) or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic) or result.picked is True:
         environment.remove_apple(agents_list[agent_idx].position.copy())
 
 
@@ -193,5 +193,5 @@ def step_reward_learning_centralized(agents_list, environment, agent_controller,
     agents_list[0].correct_predictions_by_reward[str(key)] += correct_prediction
     agents_list[0].total_predictions_by_reward[str(key)] += 1
 
-    if (isinstance(environment, OrchardBasicNewDynamic)) and np.sum(result.reward_vector) > 0:
+    if (isinstance(environment, OrchardBasicNewDynamic)) or result.picked is True:
         environment.remove_apple(agents_list[agent_idx].position.copy())
