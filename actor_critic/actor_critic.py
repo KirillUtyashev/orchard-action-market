@@ -18,8 +18,10 @@ class ActorCritic(Algorithm, ABC):
     def log_progress(self, sample_state, sample_state5, sample_state6):
         super().log_progress(sample_state, sample_state5, sample_state6)
 
-        observation = self.actor_view_controller.process_state(sample_state, sample_state["poses"][0])
-        res = self.agents_list[0].policy_network.get_function_output(observation)
+        observation = self.actor_view_controller.state_to_nn_input(
+            sample_state, sample_state["poses"][0]
+        )
+        res = self._agents_list[0].policy_network.get_function_output(observation)
 
         self.prob_sample_action_0.append(res[0])
         self.prob_sample_action_1.append(res[1])

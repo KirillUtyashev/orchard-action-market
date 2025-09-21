@@ -1,0 +1,29 @@
+# Python bytecode and cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE and editor configuration folders
+.vscode/
+.idea/
+
+# Virtual environment folders
+venv/
+env/
+.venv/
+.env/
+
+# Project-specific generated output - DO NOT TRACK
+logs/
+graphs/
+policyitchk/
+positions/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment variables file
+.env
+
+notebooks/

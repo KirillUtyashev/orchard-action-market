@@ -11,7 +11,11 @@ from agents.communicating_agent import CommAgent
 from main import step
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
-from orchard.algorithms import single_apple_despawn, single_apple_spawn, spawn_apple_same_pos_once_every_4_steps
+from orchard.algorithms import (
+    single_apple_despawn,
+    single_apple_spawn,
+    spawn_apple_same_pos_once_every_4_steps,
+)
 from orchard.environment import Orchard
 from policies.random_policy import random_policy_1d
 
@@ -62,11 +66,27 @@ def initialize_game(num_ag, orch_length, is_1d):
     for i in range(num_ag):
         trained_agent = ACAgent(policy=random_policy_1d, num="f")
         trained_agent.policy_value = VNetwork(orch_length + 1, 0.0002, 0.99)
-        trained_agent.policy_value.function.load_state_dict(torch.load(f"/Users/utya.kirill/Desktop/orchard-action-market/policyitchk/DC-RANDOM_2_10/DC-RANDOM_2_10_decen_{i}_it_99.pt"))
+        trained_agent.policy_value.model.load_state_dict(
+            torch.load(
+                f"/Users/utya.kirill/Desktop/orchard-action-market/policyitchk/DC-RANDOM_2_10/DC-RANDOM_2_10_decen_{i}_it_99.pt"
+            )
+        )
         trained_agent.policy_value = ActorNetwork(orch_length + 1, None, 0.00005, None)
-        trained_agent.policy_value.function.load_state_dict(torch.load(f"/Users/utya.kirill/Desktop/orchard-action-market/policyitchk/AC-2_10_value/AC-2_10_value_{i}_it_0.pt"))
+        trained_agent.policy_value.model.load_state_dict(
+            torch.load(
+                f"/Users/utya.kirill/Desktop/orchard-action-market/policyitchk/AC-2_10_value/AC-2_10_value_{i}_it_0.pt"
+            )
+        )
         agents_list.append(trained_agent)
-    env = Orchard(orch_length, num_ag, S, phi, one=is_1d, spawn_algo=single_apple_spawn, despawn_algo=single_apple_despawn)
+    env = Orchard(
+        orch_length,
+        num_ag,
+        S,
+        phi,
+        one=is_1d,
+        spawn_algo=single_apple_spawn,
+        despawn_algo=single_apple_despawn,
+    )
     env.initialize(agents_list)
     return env
 

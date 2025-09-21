@@ -4,6 +4,10 @@ from typing import Optional
 import numpy as np
 from abc import abstractmethod
 
+from models.actor_network import ActorNetwork
+from models.reward_network import RewardNetwork
+from models.value_function import VNetwork
+
 
 @dataclass
 class AgentInfo:
@@ -14,6 +18,10 @@ class AgentInfo:
 
 
 class Agent:
+    policy_network: Optional[ActorNetwork]
+    policy_value: Optional[VNetwork]
+    reward_network: Optional[RewardNetwork]
+
     def __init__(self, agent_info: AgentInfo):
         self.position = np.array([0, 0])
         self.policy = agent_info.policy

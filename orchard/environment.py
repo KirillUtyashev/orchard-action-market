@@ -6,9 +6,12 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import random
 from enum import Enum, auto
-from orchard.algorithms import despawn_apple, despawn_apple_selfless_orchard, \
-    spawn_apple, \
-    spawn_apple_selfless_orchard
+from orchard.algorithms import (
+    despawn_apple,
+    despawn_apple_selfless_orchard,
+    spawn_apple,
+    spawn_apple_selfless_orchard,
+)
 
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.
@@ -45,6 +48,7 @@ def calc_distance(pos1, pos2):
 
 class ActionMixin:
     """Mixin providing common methods for action enums."""
+
     @property
     def vector(self):
         """Return the action vector as a NumPy array."""
@@ -73,9 +77,9 @@ class ActionMixin:
 
 
 class Action1D(ActionMixin, Enum):
-    LEFT = (0, [0,  -1])
-    RIGHT = (1, [0,  1])
-    STAY = (2, [0,  0])
+    LEFT = (0, [0, -1])
+    RIGHT = (1, [0, 1])
+    STAY = (2, [0, 0])
 
     def __init__(self, idx, vector):
         self._idx = idx
@@ -83,10 +87,10 @@ class Action1D(ActionMixin, Enum):
 
 
 class Action2D(ActionMixin, Enum):
-    LEFT = (0, [0,  -1])
-    RIGHT = (1, [0,  1])
-    STAY = (2, [0,  0])
-    UP = (3, [-1,  0])
+    LEFT = (0, [0, -1])
+    RIGHT = (1, [0, 1])
+    STAY = (2, [0, 0])
+    UP = (3, [-1, 0])
     DOWN = (4, [1, 0])
 
     def __init__(self, idx, vector):
@@ -108,17 +112,19 @@ class ConsumeResult:
 
 
 class Orchard(ABC):
-    def __init__(self,
-                 length,
-                 width,
-                 num_agents,
-                 agents_list=None,
-                 action_algo=None,
-                 spawn_algo=spawn_apple,
-                 despawn_algo=despawn_apple,
-                 s_target=0.1,
-                 apple_mean_lifetime=None,
-                 debug=False):
+    def __init__(
+        self,
+        length,
+        width,
+        num_agents,
+        agents_list=None,
+        action_algo=None,
+        spawn_algo=spawn_apple,
+        despawn_algo=despawn_apple,
+        s_target=0.1,
+        apple_mean_lifetime=None,
+        debug=False,
+    ):
         self.length = length
         self.width = width
         self.available_actions = Action1D if width == 1 else Action2D
@@ -146,8 +152,17 @@ class Orchard(ABC):
         if apple_mean_lifetime is None:
             self.despawn_rate = min(
                 1.0,
-                1.0 / ((math.ceil(1 / (2 * math.sqrt((self.n / (self.length * self.width))))) + 1)
-                       if self.width > 1 else (1 / (2 * (self.n / (self.length * self.width))) + 1))
+                1.0
+                / (
+                    (
+                        math.ceil(
+                            1 / (2 * math.sqrt((self.n / (self.length * self.width))))
+                        )
+                        + 1
+                    )
+                    if self.width > 1
+                    else (1 / (2 * (self.n / (self.length * self.width))) + 1)
+                ),
             )
         else:
             self.despawn_rate = 1 / apple_mean_lifetime
@@ -164,13 +179,19 @@ class Orchard(ABC):
 
     def initialize(self, agents_list, agent_pos=None, apples=None):
         self.agents = np.zeros((self.width, self.length), dtype=int)
-        self.apples = np.zeros((self.width, self.length), dtype=int) if apples is None else apples
+        self.apples = (
+            np.zeros((self.width, self.length), dtype=int) if apples is None else apples
+        )
         self.agents_list = agents_list
         self.set_positions(agent_pos)
 
     def set_positions(self, agent_pos=None):
         for i in range(self.n):
-            position = agent_pos[i] if agent_pos is not None else np.random.randint(0, [self.width, self.length])
+            position = (
+                agent_pos[i]
+                if agent_pos is not None
+                else np.random.randint(0, [self.width, self.length])
+            )
             self.agents_list[i].position = position
             self.agents[position[0], position[1]] += 1
 
@@ -179,13 +200,16 @@ class Orchard(ABC):
 
     def _init_render(self):
         from rendering import Viewer
+
         self.viewer = Viewer((self.width, self.length))
         self._rendering_initialized = True
 
     def render(self):
         if not self._rendering_initialized:
             self._init_render()
-        return self.viewer.render(self, return_rgb_array=self.render_mode == "rgb_array")
+        return self.viewer.render(
+            self, return_rgb_array=self.render_mode == "rgb_array"
+        )
 
     @abstractmethod
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
@@ -207,7 +231,9 @@ class Orchard(ABC):
         self.agents[position[0], position[1]] -= 1
         return new_pos
 
-    def process_action(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]) -> ProcessAction:
+    def process_action(
+        self, agent_id: int, position: np.ndarray, action_idx: Optional[int]
+    ) -> ProcessAction:
         if self.debug:
             self.state_history.append(
                 np.concatenate([self.get_state()["agents"], self.get_state()["apples"]])
@@ -225,10 +251,7 @@ class Orchard(ABC):
 
         reward_vector = self._route_rewards(agent_id, c)
 
-        return ProcessAction(
-            reward_vector=reward_vector,
-            picked=c.consumed
-        )
+        return ProcessAction(reward_vector=reward_vector, picked=c.consumed)
 
     @abstractmethod
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
@@ -242,7 +265,9 @@ class Orchard(ABC):
     def get_sum_apples(self):
         raise NotImplementedError
 
-    def process_action_eval(self, agent_id: int, position: np.ndarray, action_idx: Optional[int]):
+    def process_action_eval(
+        self, agent_id: int, position: np.ndarray, action_idx: Optional[int]
+    ):
         if action_idx is not None:
             new_pos = self._apply_move(position, action_idx)
         else:
@@ -271,7 +296,9 @@ class OrchardBasic(Orchard):
         return res
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        new_position = np.clip(
+            position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
+        )
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
@@ -287,17 +314,29 @@ class OrchardBasic(Orchard):
 
 
 class OrchardWithAppleIDs(Orchard):
-    def __init__(self,
-                 length,
-                 width,
-                 num_agents,
-                 agents_list=None,
-                 action_algo=None,
-                 spawn_algo=spawn_apple_selfless_orchard,
-                 despawn_algo=despawn_apple_selfless_orchard,
-                 s_target=0.1,
-                 apple_mean_lifetime=None):
-        super().__init__(length, width, num_agents, agents_list, action_algo, spawn_algo, despawn_algo, s_target, apple_mean_lifetime)
+    def __init__(
+        self,
+        length,
+        width,
+        num_agents,
+        agents_list=None,
+        action_algo=None,
+        spawn_algo=spawn_apple_selfless_orchard,
+        despawn_algo=despawn_apple_selfless_orchard,
+        s_target=0.1,
+        apple_mean_lifetime=None,
+    ):
+        super().__init__(
+            length,
+            width,
+            num_agents,
+            agents_list,
+            action_algo,
+            spawn_algo,
+            despawn_algo,
+            s_target,
+            apple_mean_lifetime,
+        )
 
     def _consume_apple(self, pos: np.ndarray) -> ConsumeResult:
         owner_plus1 = self.apples[pos[0], pos[1]]
@@ -307,7 +346,9 @@ class OrchardWithAppleIDs(Orchard):
         return ConsumeResult(consumed=False)
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        new_position = np.clip(
+            position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
+        )
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
@@ -382,7 +423,9 @@ class OrchardEuclideanRewards(OrchardBasic):
         res = np.zeros(self.n)
         if c.consumed:
             for agent_num in range(len(self.agents_list)):
-                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
+                res[agent_num] = calc_distance(
+                    self.agents_list[agent_num].position, c.apple_pos
+                )
             if np.sum(res) == 0:
                 return res
             res = res / np.sum(res)
@@ -395,7 +438,9 @@ class OrchardEuclideanNegativeRewards(OrchardEuclideanRewards):
         res = np.zeros(self.n)
         if c.consumed:
             for agent_num in range(len(self.agents_list)):
-                res[agent_num] = calc_distance(self.agents_list[agent_num].position, c.apple_pos)
+                res[agent_num] = calc_distance(
+                    self.agents_list[agent_num].position, c.apple_pos
+                )
             if np.sum(res) == 0:
                 return res
             res = res / np.sum(res)
@@ -416,7 +461,9 @@ class OrchardBasicNewDynamic(OrchardBasic):
             self.total_picked += 1
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        new_position = np.clip(
+            position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
+        )
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
@@ -438,7 +485,9 @@ class OrchardEuclideanRewardsNewDynamic(OrchardEuclideanRewards):
         return ConsumeResult(consumed=False)
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        new_position = np.clip(
+            position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
+        )
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1
@@ -465,7 +514,9 @@ class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanNegativeRewards)
         return ConsumeResult(consumed=False)
 
     def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
-        new_position = np.clip(position + action_vector, [0, 0], self.agents.shape - np.array([1, 1]))
+        new_position = np.clip(
+            position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
+        )
         agents = self.agents.copy()
         apples = self.apples.copy()
         agents[new_position[0], new_position[1]] += 1

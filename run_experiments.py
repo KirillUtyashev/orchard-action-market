@@ -5,17 +5,26 @@ import random
 import torch
 from policies.random_policy import random_policy
 from policies.nearest import nearest_policy
-from actor_critic.actor_critic_following_rates import ActorCriticRates, ActorCriticRatesFixed, ActorCriticRatesAdvantage
-from actor_critic.actor_critic_perfect_info import ActorCriticPerfect, \
-    ActorCriticPerfectNoAdvantage
-from actor_critic.actor_imperfect_critic_perfect import \
-    ActorImperfectCriticPerfect
+from actor_critic.actor_critic_following_rates import (
+    ActorCriticRates,
+    ActorCriticRatesFixed,
+    ActorCriticRatesAdvantage,
+)
+from actor_critic.actor_critic_perfect_info import (
+    ActorCriticPerfect,
+    ActorCriticPerfectNoAdvantage,
+)
+from actor_critic.actor_imperfect_critic_perfect import ActorImperfectCriticPerfect
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
-from reward_learning.reward_learning import RewardLearning, \
-    RewardLearningCentralized, RewardLearningDecentralized
+from reward_learning.reward_learning import (
+    RewardLearning,
+    RewardLearningCentralized,
+    RewardLearningDecentralized,
+)
 from value_function_learning.train_value_function import (
-    CentralizedValueFunction, DecentralizedValueFunction,
-    DecentralizedValueFunctionPersonal
+    CentralizedValueFunction,
+    DecentralizedValueFunction,
+    DecentralizedValueFunctionPersonal,
 )
 
 POLICY_MAP = {
@@ -26,28 +35,62 @@ POLICY_MAP = {
     "Decentralized": "value_function",
     "DecentralizedPersonal": "value_function",
     "RewardLearningDecentralized": nearest_policy,
-    "RewardLearningCentralized": nearest_policy
+    "RewardLearningCentralized": nearest_policy,
 }
 
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--algorithm", type=str, default="Centralized", help="Algorithm.")
+    parser.add_argument(
+        "--algorithm", type=str, default="Centralized", help="Algorithm."
+    )
     parser.add_argument("--width", type=int, default=1, help="Width of the orchard.")
     parser.add_argument("--length", type=int, default=20, help="Length of the orchard.")
     parser.add_argument("--num_agents", type=int, default=2, help="Number of agents.")
     parser.add_argument("--seed", type=int, default=42069, help="Random seed.")
-    parser.add_argument("--timesteps", type=int, default=1000000, help="Number of timesteps.")
-    parser.add_argument("--apple_life", type=float, default=3, help="Apple mean lifetime.")
-    parser.add_argument("--s_target", type=float, default=0.1, help="Expected number of apples spawned per agent per second.")
-    parser.add_argument("--batch_size", type=int, default=256, help="Batch size for training.")
-    parser.add_argument("--alpha", type=float, default=0.000275, help="Learning rate for critic.")
-    parser.add_argument("--actor_alpha", type=float, default=0.00005, help="Learning rate.")
-    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden layer size of critic network.")
-    parser.add_argument("--hidden_dim_actor", type=int, default=64, help="Hidden layer size of actor network.")
-    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers for critic network.")
-    parser.add_argument("--num_layers_actor", type=int, default=4, help="Number of layers for actor network.")
+    parser.add_argument(
+        "--timesteps", type=int, default=1000000, help="Number of timesteps."
+    )
+    parser.add_argument(
+        "--apple_life", type=float, default=3, help="Apple mean lifetime."
+    )
+    parser.add_argument(
+        "--s_target",
+        type=float,
+        default=0.1,
+        help="Expected number of apples spawned per agent per second.",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=256, help="Batch size for training."
+    )
+    parser.add_argument(
+        "--alpha", type=float, default=0.000275, help="Learning rate for critic."
+    )
+    parser.add_argument(
+        "--actor_alpha", type=float, default=0.00005, help="Learning rate."
+    )
+    parser.add_argument(
+        "--hidden_dim",
+        type=int,
+        default=64,
+        help="Hidden layer size of critic network.",
+    )
+    parser.add_argument(
+        "--hidden_dim_actor",
+        type=int,
+        default=64,
+        help="Hidden layer size of actor network.",
+    )
+    parser.add_argument(
+        "--num_layers", type=int, default=4, help="Number of layers for critic network."
+    )
+    parser.add_argument(
+        "--num_layers_actor",
+        type=int,
+        default=4,
+        help="Number of layers for actor network.",
+    )
     parser.add_argument("--debug", type=bool, default=False, help="Debug.")
     parser.add_argument("--critic_vision", type=int, default=0, help="Critic Vision.")
     parser.add_argument("--new_input", type=int, default=0, help="New Input.")
@@ -56,7 +99,9 @@ def parse_args(args):
     parser.add_argument("--epsilon", type=float, default=0.1, help="Random exploration")
     parser.add_argument("--beta_rate", type=float, default=0.99, help="Beta Rate")
     parser.add_argument("--budget", type=float, default=4.0, help="Budget")
-    parser.add_argument("--env_cls", type=str, default="OrchardBasic", help="Environment Class")
+    parser.add_argument(
+        "--env_cls", type=str, default="OrchardBasic", help="Environment Class"
+    )
     parser.add_argument("--new_dynamic", type=int, default=0, help="New Dynamic Flag")
 
     return parser.parse_args(args)
@@ -68,7 +113,7 @@ def set_config(args):
         apple_mean_lifetime=args.apple_life,
         length=args.length,
         width=args.width,
-        env_cls=args.env_cls
+        env_cls=args.env_cls,
     ), TrainingConfig(
         batch_size=args.batch_size,
         alpha=args.alpha,
@@ -88,7 +133,7 @@ def set_config(args):
         beta_rate=args.beta_rate,
         budget=args.budget,
         new_input=True if args.new_input == 1 else False,
-        new_dynamic=True if args.new_dynamic == 1 else False
+        new_dynamic=True if args.new_dynamic == 1 else False,
     )
 
 
@@ -96,9 +141,7 @@ def main(args):
     args = parse_args(args)
     env_config, train_config = set_config(args)
     exp_config = ExperimentConfig(
-        env_config=env_config,
-        train_config=train_config,
-        debug=args.debug
+        env_config=env_config, train_config=train_config, debug=args.debug
     )
     algo = pick_experiment(args.algorithm, exp_config)
     if algo is None:
@@ -118,16 +161,16 @@ def pick_experiment(algorithm, exp_config):
         algo = DecentralizedValueFunctionPersonal(exp_config)
     elif algorithm == "ActorCritic":
         algo = ActorCriticPerfect(exp_config)
-    elif algorithm == "ActorCriticRates":
-        algo = ActorCriticRates(exp_config)
-    elif algorithm == "ActorCriticNoAdvantage":
-        algo = ActorCriticPerfectNoAdvantage(exp_config)
-    elif algorithm == "ActorCriticRatesFixed":
-        algo = ActorCriticRatesFixed(exp_config)
-    elif algorithm == "ActorCriticRatesAdvantage":
-        algo = ActorCriticRatesAdvantage(exp_config)
-    elif algorithm == "ActorImperfectCriticPerfect":
-        algo = ActorImperfectCriticPerfect(exp_config)
+    # elif algorithm == "ActorCriticRates":
+    #     algo = ActorCriticRates(exp_config)
+    # elif algorithm == "ActorCriticNoAdvantage":
+    #     algo = ActorCriticPerfectNoAdvantage(exp_config)
+    # elif algorithm == "ActorCriticRatesFixed":
+    #     algo = ActorCriticRatesFixed(exp_config)
+    # elif algorithm == "ActorCriticRatesAdvantage":
+    #     algo = ActorCriticRatesAdvantage(exp_config)
+    # elif algorithm == "ActorImperfectCriticPerfect":
+    #     algo = ActorImperfectCriticPerfect(exp_config)
     elif algorithm == "RewardLearningDecentralized":
         algo = RewardLearningDecentralized(exp_config)
     elif algorithm == "RewardLearningCentralized":

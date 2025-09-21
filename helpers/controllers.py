@@ -53,7 +53,9 @@ class AgentControllerRandom(AgentController):
 
 
 class AgentControllerValue(AgentController):
-    def __init__(self, agents, critic_view_controller, agent_view_controller=None, test=False):
+    def __init__(
+        self, agents, critic_view_controller, agent_view_controller=None, test=False
+    ):
         super().__init__(agents, critic_view_controller, agent_view_controller)
         self.test = test
         if test:
@@ -68,15 +70,21 @@ class AgentControllerValue(AgentController):
         best_val = -1000000
 
         for act in env.available_actions:
-            val, new_a, new_b, new_pos = env.calculate_ir(self.agents_list[agent_id].position, act.vector, communal, agent_id)
+            val, new_a, new_b, new_pos = env.calculate_ir(
+                self.agents_list[agent_id].position, act.vector, communal, agent_id
+            )
             positions = []
             for agent in range(len(self.agents_list)):
                 if agent != agent_id:
                     positions.append(self.agents_list[agent].position)
                 else:
                     positions.append(new_pos)
-            observations = self.get_all_agent_obs({"agents": new_a, "apples": new_b}, positions)
-            val += get_config()["discount"] * self.get_collective_value(observations, agent_id)
+            observations = self.get_all_agent_obs(
+                {"agents": new_a, "apples": new_b}, positions
+            )
+            val += get_config()["discount"] * self.get_collective_value(
+                observations, agent_id
+            )
             if val > best_val:
                 action = act
                 best_val = val
@@ -137,7 +145,11 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
         self.actor_view_controller = actor_view_controller
 
     def get_best_action(self, env, agent_id, communal=True):
-        probs = self.agents_list[agent_id].policy_network.get_function_output(self.actor_view_controller.process_state(env.get_state(), self.agents_list[agent_id].position))
+        probs = self.agents_list[agent_id].policy_network.get_function_output(
+            self.actor_view_controller.process_state(
+                env.get_state(), self.agents_list[agent_id].position
+            )
+        )
         action = np.random.choice(len(probs), p=probs)
         return action
 
@@ -157,7 +169,9 @@ class AgentControllerActorCriticIndividual(AgentControllerActorCritic):
 
     def get_collective_value(self, states, agent_id):
         value = self.agents_list[agent_id].get_value_function(states[agent_id])
-        self.agents_list[agent_id].personal_q_value = get_config()["discount"] * value.item()
+        self.agents_list[agent_id].personal_q_value = (
+            get_config()["discount"] * value.item()
+        )
         return value
 
 
@@ -181,21 +195,33 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
     def __init__(self, agents, critic_view_controller, actor_view_controller):
         super().__init__(agents, critic_view_controller, actor_view_controller)
 
-    def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
+    def get_collective_advantage(
+        self, state, positions, new_state, new_positions, agent_id=None
+    ):
         new_observations = self.get_all_agent_obs(new_state, new_positions)
         old_observations = self.get_all_agent_obs(state, positions)
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
-                q_value = get_config()["discount"] * agent.get_value_function(new_observations[num])
+                q_value = get_config()["discount"] * agent.get_value_function(
+                    new_observations[num]
+                )
                 v_value = agent.get_value_function(old_observations[num])
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value, agent.rate)
-                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[agent_id]
+                agent.agent_alphas[agent_id] = get_discounted_value(
+                    agent.agent_alphas[agent_id], q_value, agent.rate
+                )
+                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[
+                    agent_id
+                ]
             else:
-                sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
+                sum_ += agent.get_value_function(
+                    new_observations[num]
+                ) - agent.get_value_function(old_observations[num])
         return sum_
 
-    def collective_value_from_state(self, state, positions, agent_id=None, discount=None):
+    def collective_value_from_state(
+        self, state, positions, agent_id=None, discount=None
+    ):
         observations = self.get_all_agent_obs(state, positions)
         return self.get_collective_value(observations, agent_id, discount)
 
@@ -204,7 +230,11 @@ class AgentControllerActorCriticRates(AgentControllerActorCritic):
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
                 value = agent.get_value_function(states[num])
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], get_config()["discount"] * value.item(), agent.rate)
+                agent.agent_alphas[agent_id] = get_discounted_value(
+                    agent.agent_alphas[agent_id],
+                    get_config()["discount"] * value.item(),
+                    agent.rate,
+                )
                 sum_ += value * agent.agent_observing_probabilities[agent_id]
             else:
                 sum_ += agent.get_value_function(states[num])
@@ -215,18 +245,28 @@ class AgentControllerActorCriticRatesAdvantage(AgentControllerActorCriticRates):
     def __init__(self, agents, critic_view_controller, actor_view_controller):
         super().__init__(agents, critic_view_controller, actor_view_controller)
 
-    def get_collective_advantage(self, state, positions, new_state, new_positions, agent_id=None):
+    def get_collective_advantage(
+        self, state, positions, new_state, new_positions, agent_id=None
+    ):
         new_observations = self.get_all_agent_obs(new_state, new_positions)
         old_observations = self.get_all_agent_obs(state, positions)
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
             if num != agent_id:
-                q_value = get_config()["discount"] * agent.get_value_function(new_observations[num])
+                q_value = get_config()["discount"] * agent.get_value_function(
+                    new_observations[num]
+                )
                 v_value = agent.get_value_function(old_observations[num])
-                agent.agent_alphas[agent_id] = get_discounted_value(agent.agent_alphas[agent_id], q_value - v_value, agent.rate)
-                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[agent_id]
+                agent.agent_alphas[agent_id] = get_discounted_value(
+                    agent.agent_alphas[agent_id], q_value - v_value, agent.rate
+                )
+                sum_ += (q_value - v_value) * agent.agent_observing_probabilities[
+                    agent_id
+                ]
             else:
-                sum_ += agent.get_value_function(new_observations[num]) - agent.get_value_function(old_observations[num])
+                sum_ += agent.get_value_function(
+                    new_observations[num]
+                ) - agent.get_value_function(old_observations[num])
         return sum_
 
 
@@ -240,7 +280,22 @@ class ViewController:
             self.vision = vision
         self.new_input = new_input
 
-    def process_state(self, state, agent_pos, agent_id=None):
+    def state_to_nn_input(self, state, agent_pos, agent_id=None) -> np.ndarray:
+        """Flattens environment state for into 1D array for input into agents.
+
+        - If perfect_info is True, the entire flattened state is returned
+        - If perfect_info is False, a square window of size (vision x vision) is extracted
+          around the agent's position. If the environment height is 1, a 1D window of length
+          vision is extracted instead.
+
+        Args:
+            state: A dictionary containing thet 'agents' and 'apple' grids
+            agent_pos: The acting agent's (row, col) position in the grid
+            agent_id: agent's id
+
+        Returns:
+            A 1D array representing the processed state.
+        """
         agents, apples = unwrap_state(state)
         H, W = agents.shape
 
@@ -255,20 +310,18 @@ class ViewController:
             if not self.new_input or agent_pos is None:
                 # Flatten once; no per-row concatenation
                 res = np.concatenate(
-                    (agents.ravel()[:, None],
-                     apples.ravel()[:, None]),
-                    axis=0
+                    (agents.ravel()[:, None], apples.ravel()[:, None]), axis=0
                 )
                 return append_pos(res)
             else:
-                # new_input = True
+                # new_input = True #IMPORTANT
                 # 1) agents grid without the acting agent
                 agents_wo = agents.astype(np.float32).copy()
                 if agent_pos is not None:
                     r, c = agent_pos
                     agents_wo[r, c] = max(0.0, agents_wo[r, c] - 1.0)
 
-                agents_col = agents_wo.ravel()[:, None]          # (H*W, 1)
+                agents_col = agents_wo.ravel()[:, None]  # (H*W, 1)
 
                 # 2) full apples vector (same as non-new_input branch)
                 apples_col = apples.ravel().astype(np.float32)[:, None]
@@ -277,7 +330,7 @@ class ViewController:
                 pos_onehot = np.zeros((H, W), dtype=np.float32)
                 if agent_pos is not None:
                     r, c = agent_pos
-                    pos_onehot[r, c] = 1.0
+                    pos_onehot[r, c] = 1.0  # this is self-agent
                 pos_col = pos_onehot.ravel()[:, None]
 
                 # Concatenate: [agents_wo_self, apples_full, onehot_pos]
@@ -292,8 +345,8 @@ class ViewController:
         pad_y = (half, half) if H != 1 else (0, 0)
         pad_x = (half, half)
 
-        ap = np.pad(agents, (pad_y, pad_x), mode='constant', constant_values=-1)
-        bp = np.pad(apples, (pad_y, pad_x), mode='constant', constant_values=-1)
+        ap = np.pad(agents, (pad_y, pad_x), mode="constant", constant_values=-1)
+        bp = np.pad(apples, (pad_y, pad_x), mode="constant", constant_values=-1)
 
         r, c = agent_pos
         r_true = r + pad_y[0]
@@ -319,7 +372,7 @@ class ViewController:
 
 
 class ViewControllerOrchardSelfless(ViewController):
-    def process_state(self, state, agent_pos, agent_id=None):
+    def state_to_nn_input(self, state, agent_pos, agent_id=None):
         if self.perfect_info:
             if not self.new_input:
                 agents, apples = unwrap_state(state)
@@ -334,7 +387,9 @@ class ViewControllerOrchardSelfless(ViewController):
 
                 if agent_id is None:
                     # Centralized value function - call parent class
-                    apple_grid = (apples != 0).astype(np.float32)           # collapse all IDs to 1
+                    apple_grid = (apples != 0).astype(
+                        np.float32
+                    )  # collapse all IDs to 1
                     apples_col = apple_grid.ravel()[:, None]
                 else:
                     # Decentralized value function - return only agent's apples

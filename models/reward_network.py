@@ -2,27 +2,30 @@ import numpy as np
 import torch
 from helpers.helpers import ten
 from config import DEVICE
-from models.network import Network
+from models.network import NetworkWrapper
+
 torch.set_default_dtype(torch.float64)
 
 
-class RewardNetwork(Network):
-    def __init__(self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4):
+class RewardNetwork(NetworkWrapper):
+    def __init__(
+        self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4
+    ):
         super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
         self.batch_rewards = []
         self.loss_history = []
 
-    def get_value_function(self, x):
+    def get_model_reward_prediction(self, x):
         res = ten(x, DEVICE)
         res = res.view(1, -1)
         with torch.no_grad():
-            val = self.function(res).cpu().numpy()
+            val = self.model(res).cpu().numpy()
         return val
 
     def get_input_dim(self):
         return self._input_dim
 
-    def train(self):
+    def train(self):  # IMPORTANT
         if len(self.batch_states) == 0:
             return None  # nothing to do
 
@@ -34,9 +37,9 @@ class RewardNetwork(Network):
         # Targets: [B]
         targets = ten(np.asarray(self.batch_rewards, dtype=np.float64), DEVICE).view(-1)
 
-        preds = self.function(states).view(-1)  # robust to [B] or [B,1] outputs
+        preds = self.model(states).view(-1)  # robust to [B] or [B,1] outputs
 
-        criterion = torch.nn.MSELoss(reduction='mean')
+        criterion = torch.nn.MSELoss(reduction="mean")
         self.optimizer.zero_grad()
         loss = criterion(preds, targets)
         loss.backward()
@@ -54,4 +57,3 @@ class RewardNetwork(Network):
     def add_experience(self, state, reward):
         self.batch_states.append(state)
         self.batch_rewards.append(reward)
-
