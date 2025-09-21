@@ -18,10 +18,6 @@ class AgentInfo:
 
 
 class Agent:
-    policy_network: Optional[ActorNetwork]
-    policy_value: Optional[VNetwork]
-    reward_network: Optional[RewardNetwork]
-
     def __init__(self, agent_info: AgentInfo):
         self.position = np.array([0, 0])
         self.policy = agent_info.policy

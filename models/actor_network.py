@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from helpers.helpers import ten
+from utils import ten
 from config import DEVICE
 from models.network import NetworkWrapper
 

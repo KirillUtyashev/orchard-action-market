@@ -6,10 +6,11 @@ import torch
 from policies.nearest import nearest_policy
 from policies.random_policy import random_policy
 from config import get_config
-from helpers.helpers import get_discounted_value, unwrap_state, convert_position
+from helpers.helpers import get_discounted_value, convert_position
 import numpy as np
 
 from policies.random_policy import random_policy
+from utils import unwrap_state
 
 
 class AgentController:
@@ -40,7 +41,7 @@ class AgentController:
         raise NotImplementedError
 
 
-class AgentControllerRandom(AgentController):
+class AgentControllerUsingPolicy(AgentController):
     def get_best_action(self, env, agent_id):
         return nearest_policy(env.get_state(), self.agents_list[agent_id].position)
         # return random_policy(env.available_actions)

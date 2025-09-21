@@ -19,6 +19,7 @@ logs/
 graphs/
 policyitchk/
 positions/
+out/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/

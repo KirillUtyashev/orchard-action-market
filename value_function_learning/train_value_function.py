@@ -1,5 +1,6 @@
 from abc import ABC
 from typing import List, Tuple
+from typing_extensions import override
 import numpy as np
 from configs.config import ExperimentConfig
 from helpers.controllers import (
@@ -16,6 +17,7 @@ from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
 from algorithm import Algorithm
 from orchard.environment import OrchardBasic
+from plots import graph_plots
 
 
 class ValueFunction(Algorithm, ABC):
@@ -131,6 +133,21 @@ class DecentralizedValueFunction(ValueFunction):
         else:
             super().__init__(config, name)
         self.network_list = []
+
+    @override
+    def _generate_plots(self):
+        """Generates plots for value function training."""
+        # This class uses the old, complex plotting function because it
+        # has all the data that function needs.
+        graph_plots(
+            self.name,
+            self.weights_plot,
+            self.critic_loss,
+            self.loss_plot,
+            self.loss_plot5,
+            self.loss_plot6,
+            self.v_weights,
+        )
 
     def build_experiment(
         self,

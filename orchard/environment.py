@@ -196,6 +196,11 @@ class Orchard(ABC):
             self.agents[position[0], position[1]] += 1
 
     def get_state(self):
+        """Get the current state of the environment.
+
+        Returns:
+            A dictionary containing the current state with keys agents and apples.
+        """
         return {"agents": self.agents.copy(), "apples": self.apples.copy()}
 
     def _init_render(self):

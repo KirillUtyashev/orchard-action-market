@@ -2,10 +2,12 @@ from typing import Optional
 
 from agents.agent import Agent, AgentInfo
 from models.reward_network import RewardNetwork
+from models.reward_cnn import RewardCNN
+from typing import Union
 
 
 class RewardAgent(Agent):
-    reward_network: Optional[RewardNetwork]
+    reward_network: Optional[Union[RewardNetwork, RewardCNN]]
 
     def __init__(self, agent_info: AgentInfo):
         super().__init__(agent_info)

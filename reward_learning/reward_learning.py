@@ -8,7 +8,7 @@ import torch
 from agents.agent import Agent
 from agents.reward_agent import RewardAgent
 from configs.config import ExperimentConfig
-from helpers.controllers import AgentControllerRandom, ViewController
+from helpers.controllers import AgentControllerUsingPolicy, ViewController
 from helpers.helpers import (
     create_env,
     step_reward_learning_centralized,
@@ -37,7 +37,9 @@ class RewardLearning(Algorithm, ABC):
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
         return []
 
-    def init_agents_for_eval(self) -> Tuple[List[RewardAgent], AgentControllerRandom]:
+    def init_agents_for_eval(
+        self,
+    ) -> Tuple[List[RewardAgent], AgentControllerUsingPolicy]:
         a_list = []
         info = self.agent_info
         for ii in range(len(self._agents_list)):
@@ -45,12 +47,12 @@ class RewardLearning(Algorithm, ABC):
             trained_agent = RewardAgent(info)
             trained_agent.reward_network = self.network_for_eval[ii]
             a_list.append(trained_agent)
-        return a_list, AgentControllerRandom(a_list, self.critic_view_controller)
+        return a_list, AgentControllerUsingPolicy(a_list, self.critic_view_controller)
 
     def build_experiment(
         self,
         view_controller_cls=ViewController,
-        agent_controller_cls=AgentControllerRandom,
+        agent_controller_cls=AgentControllerUsingPolicy,
         agent_type=RewardAgent,
         value_network_cls=None,
         actor_network_cls=None,

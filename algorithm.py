@@ -18,6 +18,7 @@ from helpers.controllers import (
 from main import eval_performance
 from models import reward_network
 from models.actor_network import ActorNetwork
+from models.reward_cnn import RewardCNN
 from models.reward_network import RewardNetwork
 from models.value_function import VNetwork
 from plots import add_to_plots, graph_plots
@@ -66,6 +67,18 @@ VIEW_CONTROLLER_MAP = {
 
 @dataclass
 class EnvStep:
+    """Represents a single step in the environment.
+
+    Attributes:
+        old_state: dict with "agents" and "apples" keys
+        new_state: dict with "agents" and "apples" keys
+        acting_agent_id: The ID of the agent that took the action.
+        old_positions: List of all agents' positions before the action.
+        action: The action taken by the acting agent. 0=left, 1=right, 2=stay, 3=up, 4=down
+        reward_vector: Numpy array of rewards for all agents resulting from the action.
+        picked: Whether an apple was picked during this action.
+    """
+
     old_state: dict
     new_state: dict
     acting_agent_id: int
@@ -230,6 +243,18 @@ class Algorithm:
         if self.train_config.test:
             self.count_random_actions = 0
 
+    @abstractmethod
+    def _generate_plots(
+        self,
+    ):  # NOTE The reason for this is because different algorithms generate plots
+        # differently so we cannot use a general graph_plots function for every algorithm.
+        """
+        Subclasses must implement this to generate and save any plots
+        relevant to their specific training progress. This is called
+        periodically by the training_loop.
+        """
+        raise NotImplementedError
+
     @property
     def agents_list(self) -> Sequence[Agent]:
         """This is necessary because most classes have agent_list type Agent, but things like RewardAgent have the type more specific
@@ -338,18 +363,21 @@ class Algorithm:
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
+        try:
+            eval_result = self.run_inference()
 
-        eval_result = self.run_inference()
+            print("After eval: ", random.getstate()[1][0])
 
-        print("After eval: ", random.getstate()[1][0])
+            self.restore_rng_state()
+            print("Back to initial: ", random.getstate()[1][0])
 
-        self.restore_rng_state()
-        print("Back to initial: ", random.getstate()[1][0])
+            # Save networks
+            self._save_best_networks()
 
-        # Save networks
-        self._save_best_networks()
-
-        return eval_result
+            return eval_result
+        except Exception as e:
+            self.logger.error(f"Error during eval_network: {e}")
+            raise
 
     def _save_best_networks(self):
         """Save the current best networks"""
@@ -603,30 +631,46 @@ class Algorithm:
         self.env.spawn_despawn()
 
         if not self.debug:
+            for agent in self._agents_list:
+                if hasattr(agent, "policy_value"):
+                    network = agent.policy_value
+                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                        network.train()
+                if hasattr(agent, "policy_network"):
+                    network = agent.policy_network
+                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                        network.train()
+                if hasattr(agent, "reward_network"):
+                    network = agent.reward_network
+                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                        if isinstance(network, RewardCNN):
+                            network.train_batch()
+                        else:
+                            network.train()
             # Train if enough samples collected
-            if hasattr(self._agents_list[0], "policy_value"):
-                for i in range(self.train_config.num_agents):
-                    if (
-                        len(self._agents_list[i].policy_value.batch_states)
-                        >= self.train_config.batch_size
-                    ):
-                        self._agents_list[i].policy_value.train()
+            # if hasattr(self._agents_list[0], "policy_value"):
+            #     for i in range(self.train_config.num_agents):
+            #         if (
+            #             len(self._agents_list[i].policy_value.batch_states)
+            #             >= self.train_config.batch_size
+            #         ):
+            #             self._agents_list[i].policy_value.train()
 
-            if hasattr(self._agents_list[0], "policy_network"):
-                for i in range(self.train_config.num_agents):
-                    if (
-                        len(self._agents_list[i].policy_network.batch_states)
-                        >= self.train_config.batch_size
-                    ):
-                        self._agents_list[i].policy_network.train()
+            # if hasattr(self._agents_list[0], "policy_network"):
+            #     for i in range(self.train_config.num_agents):
+            #         if (
+            #             len(self._agents_list[i].policy_network.batch_states)
+            #             >= self.train_config.batch_size
+            #         ):
+            #             self._agents_list[i].policy_network.train()
 
-            if hasattr(self._agents_list[0], "reward_network"):
-                for i in range(self.train_config.num_agents):
-                    if (
-                        len(self._agents_list[i].reward_network.batch_states)
-                        >= self.train_config.batch_size
-                    ):
-                        self._agents_list[i].reward_network.train()
+            # if hasattr(self._agents_list[0], "reward_network"):
+            #     for i in range(self.train_config.num_agents):
+            #         if (
+            #             len(self._agents_list[i].reward_network.batch_states)
+            #             >= self.train_config.batch_size
+            #         ):
+            #             self._agents_list[i].reward_network.train()
 
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
@@ -658,25 +702,14 @@ class Algorithm:
                         self.evaluate_checkpoint(step, self.train_config.seed).log(
                             self.logger
                         )
-                        graph_plots(
-                            self.name,
-                            self.weights_plot,
-                            self.critic_loss,
-                            self.loss_plot,
-                            self.loss_plot5,
-                            self.loss_plot6,
-                            self.v_weights,
-                        )
+                        # NOTE most classes just call graph_plots
+                        # but cnn architecture generates plots differently
+                        # so each algorithm should be responsible for generating
+                        # its own plot.
+                        self._generate_plots()
             # Final evaluation
-            graph_plots(
-                self.name,
-                self.weights_plot,
-                self.critic_loss,
-                self.loss_plot,
-                self.loss_plot5,
-                self.loss_plot6,
-                self.v_weights,
-            )
+            self._generate_plots()
+            # Final evaluation
             if not self.debug:
                 return self._evaluate_final()
             else:
@@ -754,6 +787,14 @@ class Algorithm:
     def _init_agents_for_training(
         self, agent_cls, value_networks, actor_networks, reward_networks
     ):
+        """Create agents of type agent_cls using provided parameters as info, and store in self._agents_list.
+
+        Args:
+            agent_cls: The class of the agent to create.
+            value_networks: The value networks to assign to the agents.
+            actor_networks: The actor networks to assign to the agents.
+            reward_networks: The reward networks to assign to the agents.
+        """
         info = self.agent_info
         for num in range(self.train_config.num_agents):
             info.agent_id = num
