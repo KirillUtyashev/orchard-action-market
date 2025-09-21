@@ -634,15 +634,24 @@ class Algorithm:
             for agent in self._agents_list:
                 if hasattr(agent, "policy_value"):
                     network = agent.policy_value
-                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                    if (
+                        network is not None
+                        and len(network.batch_states) >= self.train_config.batch_size
+                    ):
                         network.train()
                 if hasattr(agent, "policy_network"):
                     network = agent.policy_network
-                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                    if (
+                        network is not None
+                        and len(network.batch_states) >= self.train_config.batch_size
+                    ):
                         network.train()
                 if hasattr(agent, "reward_network"):
                     network = agent.reward_network
-                    if network is not None and len(network.batch_states) >= self.train_config.batch_size:
+                    if (
+                        network is not None
+                        and len(network.batch_states) >= self.train_config.batch_size
+                    ):
                         if isinstance(network, RewardCNN):
                             network.train_batch()
                         else:
@@ -707,6 +716,8 @@ class Algorithm:
                         # so each algorithm should be responsible for generating
                         # its own plot.
                         self._generate_plots()
+                        # we only care about end plot
+
             # Final evaluation
             self._generate_plots()
             # Final evaluation

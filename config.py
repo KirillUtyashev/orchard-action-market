@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"--- PyTorch is configured to use: {DEVICE} ---")
 
 OUT_DIR = PROJECT_ROOT / "out"
 OUT_DIR.mkdir(exist_ok=True)

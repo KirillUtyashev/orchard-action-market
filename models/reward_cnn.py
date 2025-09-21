@@ -71,6 +71,7 @@ class RewardCNN(nn.Module):
         self.batch_states = []
         self.batch_rewards = []
         self.loss_history = []
+        self.to(DEVICE)
 
     def forward(self, x: Tensor) -> Tensor:
         """Defines the forward pass of the data through the network."""
