@@ -85,6 +85,16 @@ class ConsumeResult:
 
 
 class Orchard(ABC):
+    length: int
+    width: int
+    num_agents: int
+    agents_list: list | None
+    spawn_algorithm: callable
+    despawn_algorithm: callable
+    spawn_dirt_algorithm: callable
+    action_algorithm: callable
+    # to be completed!
+    
     def __init__(self,
                  length,
                  width,
@@ -96,6 +106,11 @@ class Orchard(ABC):
                  spawn_dirt_algo=spawn_dirt,
                  s_target=0.1,
                  apple_mean_lifetime=None):
+        print(f"\n\nInitialize Start s_target: {type(s_target)}\n\n")
+        if (s_target is None):
+            s_target = 0.1
+            print(f"\n\Value of s_target: {s_target}")
+
         self.length = length
         self.width = width
         self.available_actions = Action1D if width == 1 else Action2D
@@ -122,9 +137,10 @@ class Orchard(ABC):
         self.total_dirt = 0
 
         # spawn/despawn rates (unchanged logic)
-        #dirt spawn rate would be a bit slower to spawn rate
-        self.dirt_spawn_rate = (self.n / (self.length * self.width)) * s_target * 0.8
-        self.spawn_rate = (self.n / (self.length * self.width)) * s_target
+        # dirt spawn rate would be a bit slower to spawn rate
+        print(f"\n\ns_target: {type(s_target)}\n\n")
+        self.dirt_spawn_rate = (self.n / float((self.length * self.width))) * s_target * 0.8 
+        self.spawn_rate = (self.n / float((self.length * self.width))) * s_target
         if apple_mean_lifetime is None:
             self.despawn_rate = min(
                 1.0,
