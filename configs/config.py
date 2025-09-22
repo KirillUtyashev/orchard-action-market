@@ -7,13 +7,13 @@ from orchard.algorithms import despawn_apple, spawn_apple
 @dataclass
 class TrainingConfig:
     """Configuration for training parameters."""
+
     batch_size: int = 4
     alpha: float = 0.000275
     actor_alpha: float = 0.0002
-    lr_schedule: dict = field(
-        default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075}
-    )
+    lr_schedule: dict = field(default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075})
     timesteps: int = 1000000
+    eval_timesteps: int = 5000
     num_agents: int = 4
     eval_interval: float = 0.1
     checkpoint_dir: str = "checkpoints"
@@ -40,6 +40,7 @@ class TrainingConfig:
 @dataclass
 class EnvironmentConfig:
     """Configuration for environment parameters."""
+
     s_target: float = 0.03
     apple_mean_lifetime: float = 3.5
     spawn_algo: callable = spawn_apple
@@ -52,7 +53,7 @@ class EnvironmentConfig:
 @dataclass
 class ExperimentConfig:
     """Configuration for experiment parameters."""
+
     train_config: TrainingConfig = None
     env_config: EnvironmentConfig = None
     debug: bool = False
-

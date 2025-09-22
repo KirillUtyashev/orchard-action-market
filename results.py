@@ -1,20 +1,16 @@
 import math
 
+from config import LOG_DIR
 from evaluate_policies import evaluate_factory, evaluate_network
 import matplotlib.pyplot as plt
 import numpy as np
 import re
 from pathlib import Path
 
-COLOURS = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'b', 'g', 'r', 'c', 'm', 'y', 'k']
+COLOURS = ["b", "g", "r", "c", "m", "y", "k", "b", "g", "r", "c", "m", "y", "k"]
 
 
-INPUT_DIM = {
-    2: 74,
-    4: 164,
-    7: 290,
-    10: 452
-}
+INPUT_DIM = {2: 74, 4: 164, 7: 290, 10: 452}
 
 
 def interpolate_nans(x, y):
@@ -63,14 +59,14 @@ def plot_apple_picking(widths, num_agents, series_dict, title, label_x, label_y)
         if len(series_dict[label]) > 0:
             if type(series_dict[label][1]) is float:
                 y_interp = interpolate_nans(widths, ratios)
-                if 'Centralized' in label:
-                    color = 'blue'
-                elif 'Decentralized Personal Q-Values' in label:
-                    color = 'green'
-                elif 'Decentralized' in label:
-                    color = 'orange'
-                elif 'Random' == label:
-                    color = 'red'
+                if "Centralized" in label:
+                    color = "blue"
+                elif "Decentralized Personal Q-Values" in label:
+                    color = "green"
+                elif "Decentralized" in label:
+                    color = "orange"
+                elif "Random" == label:
+                    color = "red"
                 elif "Decentralized (local view = 5)" == label:
                     color = "green"
                 elif "Rates" in label and "W/o" in label:
@@ -81,7 +77,14 @@ def plot_apple_picking(widths, num_agents, series_dict, title, label_x, label_y)
                     color = "darkblue"
                 else:
                     color = "purple"
-                plt.plot(widths, y_interp, marker='o', label=label, color=color, linestyle=':')
+                plt.plot(
+                    widths,
+                    y_interp,
+                    marker="o",
+                    label=label,
+                    color=color,
+                    linestyle=":",
+                )
 
     plt.title(title)
     plt.xlabel(label_x)
@@ -97,10 +100,12 @@ def _to_float_array(vals):
     """Convert list with None/str to float array with NaNs."""
     return np.array(vals, dtype=np.float64)
 
+
 def _is_power_of_two(x):
     # treat near-integers as integers
     xi = int(round(x))
     return xi > 0 and (xi & (xi - 1)) == 0 and abs(x - xi) < 1e-9
+
 
 def min_width_for_threshold_pow2_only(widths, performances, threshold):
     """
@@ -154,8 +159,10 @@ def plot_fixed_thresholds(widths, series_dict, thresholds):
         if np.all(np.isnan(y)):
             continue
 
-        min_widths = [min_width_for_threshold_pow2_only(widths, ratios, t) for t in thresholds]
-        plt.plot(thresholds, min_widths, marker='o', linestyle=':', label=label)
+        min_widths = [
+            min_width_for_threshold_pow2_only(widths, ratios, t) for t in thresholds
+        ]
+        plt.plot(thresholds, min_widths, marker="o", linestyle=":", label=label)
 
     plt.title("Hidden Dimensions Needed for Fixed Performance Levels")
     plt.xlabel("Performance (Apples Per Agent)")
@@ -190,8 +197,11 @@ def plot_percentage_of_max(widths, series_dict, percentages):
         if np.all(np.isnan(y)):
             continue
 
-        min_widths = [min_width_for_threshold_pow2_only(widths, ratios, global_max * p) for p in percentages]
-        plt.plot(x_pct, min_widths, marker='o', linestyle=':', label=label)
+        min_widths = [
+            min_width_for_threshold_pow2_only(widths, ratios, global_max * p)
+            for p in percentages
+        ]
+        plt.plot(x_pct, min_widths, marker="o", linestyle=":", label=label)
 
     plt.title("Hidden Dimensions Needed for % of Global Max Performance")
     plt.xlabel("Target Performance (% of Max)")
@@ -202,15 +212,35 @@ def plot_percentage_of_max(widths, series_dict, percentages):
     plt.show()
 
 
-
 def convert_to_weights(hidden_dimensions, num_agents):
     return {
         # "Decentralized": [(hidden_dim * INPUT_DIM[num_agents] + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1) * num_agents for hidden_dim in hidden_dimensions[:len(hidden_dimensions) - 1]],
-        "Decentralized": [(hidden_dim * INPUT_DIM[num_agents] + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1) * num_agents for hidden_dim in hidden_dimensions],
-        "Centralized": [hidden_dim * (INPUT_DIM[num_agents] - 2) + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1 for hidden_dim in hidden_dimensions],
-        "Decentralized (local view = 5)": [(hidden_dim * 27 + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1) * num_agents for hidden_dim in hidden_dimensions],
+        "Decentralized": [
+            (
+                hidden_dim * INPUT_DIM[num_agents]
+                + 2 * (hidden_dim**2)
+                + 4 * hidden_dim
+                + 1
+            )
+            * num_agents
+            for hidden_dim in hidden_dimensions
+        ],
+        "Centralized": [
+            hidden_dim * (INPUT_DIM[num_agents] - 2)
+            + 2 * (hidden_dim**2)
+            + 4 * hidden_dim
+            + 1
+            for hidden_dim in hidden_dimensions
+        ],
+        "Decentralized (local view = 5)": [
+            (hidden_dim * 27 + 2 * (hidden_dim**2) + 4 * hidden_dim + 1) * num_agents
+            for hidden_dim in hidden_dimensions
+        ],
         # "Decentralized (local view = 5)": [(hidden_dim * 27 + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1) * num_agents for hidden_dim in  hidden_dimensions[:len(hidden_dimensions) - 1]],
-        "Centralized (local view = 5)": [hidden_dim * 27 + 2 * (hidden_dim ** 2) + 4 * hidden_dim + 1 for hidden_dim in hidden_dimensions],
+        "Centralized (local view = 5)": [
+            hidden_dim * 27 + 2 * (hidden_dim**2) + 4 * hidden_dim + 1
+            for hidden_dim in hidden_dimensions
+        ],
     }
 
 
@@ -224,9 +254,22 @@ def plot_series(changing_param, series_dict, title, label_x, label_y):
             for i in range(len(series)):
                 if series[i]:
                     y_interp = interpolate_nans(x, series[i])
-                    plt.plot(x, y_interp, marker='o', label=label + f" ({changing_param[i]} hidden dim.)")
-        y_interp = interpolate_nans([0, 200000, 400000, 600000, 800000, 1000000], series_dict["Random"][0])
-        plt.plot([0, 200000, 400000, 600000, 800000, 1000000], y_interp, marker='o', label="Random", color="red")
+                    plt.plot(
+                        x,
+                        y_interp,
+                        marker="o",
+                        label=label + f" ({changing_param[i]} hidden dim.)",
+                    )
+        y_interp = interpolate_nans(
+            [0, 200000, 400000, 600000, 800000, 1000000], series_dict["Random"][0]
+        )
+        plt.plot(
+            [0, 200000, 400000, 600000, 800000, 1000000],
+            y_interp,
+            marker="o",
+            label="Random",
+            color="red",
+        )
         plt.xlabel(label_x)
         plt.ylabel(label_y)
         plt.title(title)
@@ -236,7 +279,19 @@ def plot_series(changing_param, series_dict, title, label_x, label_y):
         plt.show()
 
 
-def parse_log_metrics(architecture: str, orchard: str, num_agents: int, length: int, width: int, hidden_dimensions: int, alpha: float, dimensions: int, critic_dimensions=None, budget=None, beta=0.0) -> tuple | None:
+def parse_log_metrics(
+    architecture: str,
+    orchard: str,
+    num_agents: int,
+    length: int,
+    width: int,
+    hidden_dimensions: int,
+    alpha: float,
+    dimensions: int,
+    critic_dimensions=None,
+    budget=None,
+    beta=0.0,
+) -> tuple | None:
     """
     Parse the log file for a specific experimental setup and return:
     (last_ratio_picked, mean_distance, total_apples)
@@ -257,7 +312,7 @@ def parse_log_metrics(architecture: str, orchard: str, num_agents: int, length: 
         tuple: (last_ratio_picked, mean_distance, total_apples) or None if not found
     """
 
-    log_dir = Path(f"logs/{orchard}")
+    log_dir = LOG_DIR / "logs"
 
     if architecture == "Centralized":
         pattern = (
@@ -332,7 +387,14 @@ def parse_log_metrics(architecture: str, orchard: str, num_agents: int, length: 
                         match = re.search(r"Total picked: ([0-9.eE+-]+)", line)
                         if match:
                             total_picked = float(match.group(1))
-            return last_ratio, total_apples, mean_distance, picked_per_agents[-1], total_picked,  picked_per_agents
+            return (
+                last_ratio,
+                total_apples,
+                mean_distance,
+                picked_per_agents[-1],
+                total_picked,
+                picked_per_agents,
+            )
 
     return None  # if no file matched
 
@@ -366,7 +428,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Decentralized": {
             "sweep_values": [],
@@ -375,7 +437,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Decentralized Personal Q-Values": {
             "sweep_values": [],
@@ -384,7 +446,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Centralized (local view = 5)": {
             "sweep_values": [],
@@ -393,7 +455,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Actor Critic": {
             "sweep_values": [],
@@ -402,7 +464,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Actor Critic Rates W/ Beta": {
             "sweep_values": [],
@@ -411,7 +473,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Actor Critic Rates W/o Beta": {
             "sweep_values": [],
@@ -420,7 +482,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Actor Critic Beta": {
             "sweep_values": [],
@@ -429,8 +491,8 @@ def sweep_logs(base_config: dict, sweep_params: dict):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
-        }
+            "picked_over_time": [],
+        },
     }
 
     # Identify which parameter is being swept (we assume 1 for simplicity)
@@ -450,7 +512,7 @@ def sweep_logs(base_config: dict, sweep_params: dict):
                 width=config["width"],
                 hidden_dimensions=config["hidden_dimensions"],
                 alpha=config["alpha"],
-                dimensions=config["dimensions"]
+                dimensions=config["dimensions"],
             )
 
             results[arch]["sweep_values"].append(val)
@@ -471,7 +533,7 @@ def init_dicts(critic_dimensions=None, actor_dimensions=None):
             "Centralized": [],
             "Decentralized Personal Q-Values": [],
             "Random": [],
-            "Actor Critic": []
+            "Actor Critic": [],
         }
     if not actor_dimensions:
         return {
@@ -480,18 +542,27 @@ def init_dicts(critic_dimensions=None, actor_dimensions=None):
             "Decentralized (local view = 5)": [],
             "Centralized (local view = 5)": [],
             "Random": [],
-            "Actor Critic": []
+            "Actor Critic": [],
         }
     return {
         f"Actor Critic": [],
         f"Actor Critic Beta": [],
         "Random": [],
         "Actor Critic Rates W/ Beta": [],
-        "Actor Critic Rates W/o Beta": []
+        "Actor Critic Rates W/o Beta": [],
     }
 
 
-def add_random(arch, ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res, picked_series):
+def add_random(
+    arch,
+    ratios,
+    total_apples,
+    mean_distances,
+    picked_per_agents,
+    total_picked,
+    random_res,
+    picked_series,
+):
     ratios[arch].append(random_res[0])
     total_apples[arch].append(random_res[1])
     mean_distances[arch].append(random_res[2])
@@ -511,18 +582,48 @@ def run(base_config: dict, sweep_params: dict):
     picked_series = init_dicts()
 
     # first, get the results for random
-    if "width" not in sweep_params or "dimensions" in sweep_params or "alpha" in sweep_params:
-        random_res = evaluate_factory(base_config["length"], base_config["width"], base_config["num_agents"], base_config["orchard"])
+    if (
+        "width" not in sweep_params
+        or "dimensions" in sweep_params
+        or "alpha" in sweep_params
+    ):
+        random_res = evaluate_factory(
+            base_config["length"],
+            base_config["width"],
+            base_config["num_agents"],
+            base_config["orchard"],
+        )
         for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-            add_random("Random", ratios, total_apples, mean_distances, picked_per_agents, total_picked, (random_res["ratio_per_agent"],
-                                                                                                         random_res["total_apples"],
-                                                                                                         random_res["mean_distance"],
-                                                                                                         random_res["picked_per_agent"],
-                                                                                                         random_res["total_picked"]), picked_series)
+            add_random(
+                "Random",
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                (
+                    random_res["ratio_per_agent"],
+                    random_res["total_apples"],
+                    random_res["mean_distance"],
+                    random_res["picked_per_agent"],
+                    random_res["total_picked"],
+                ),
+                picked_series,
+            )
     elif "width" in sweep_params:
         for width in sweep_params["width"]:
-            random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
-            add_random(ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res, picked_series)
+            random_res = evaluate_factory(
+                base_config["length"], width, base_config["num_agents"]
+            )
+            add_random(
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                random_res,
+                picked_series,
+            )
     else:
         pass
     result = sweep_logs(base_config, sweep_params)
@@ -536,26 +637,105 @@ def run(base_config: dict, sweep_params: dict):
             total_picked[arch_name].extend(result[arch_name]["total_picked"])
             picked_series[arch_name].extend(result[arch_name]["picked_over_time"])
 
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], ratios,
-                       'Ratio of Apples Picked Per Agent',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Ratio')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], mean_distances, 'Mean Distance Between Agents',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Distance')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_apples, 'Total Apples Created',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_picked, 'Total Apples Picked',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], picked_per_agents, 'Total Apples Picked Per Agent',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_series(sweep_params[list(sweep_params.keys())[0]], picked_series, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        ratios,
+        "Ratio of Apples Picked Per Agent",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Ratio",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        mean_distances,
+        "Mean Distance Between Agents",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Distance",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_apples,
+        "Total Apples Created",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_picked,
+        "Total Apples Picked",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        picked_per_agents,
+        "Total Apples Picked Per Agent",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_series(
+        sweep_params[list(sweep_params.keys())[0]],
+        picked_series,
+        "Total Apples Picked per Agent over Time",
+        "Training Steps",
+        "Apples Picked per Agent",
+    )
 
     # Example thresholds for Plot 1
     thresholds = [400, 500, 600, 700, 800, 850, 900, 950, 1000]
-    plot_fixed_thresholds(sweep_params[list(sweep_params.keys())[0]], picked_per_agents, thresholds)
+    plot_fixed_thresholds(
+        sweep_params[list(sweep_params.keys())[0]], picked_per_agents, thresholds
+    )
 
     # Example percentages for Plot 2
     percentages = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    plot_percentage_of_max(sweep_params[list(sweep_params.keys())[0]], picked_per_agents, percentages)
+    plot_percentage_of_max(
+        sweep_params[list(sweep_params.keys())[0]], picked_per_agents, percentages
+    )
 
 
 def run_actor_critic(base_config: dict, sweep_params: dict, critic_dimensions: int):
@@ -567,26 +747,88 @@ def run_actor_critic(base_config: dict, sweep_params: dict, critic_dimensions: i
     picked_series = init_dicts(critic_dimensions)
 
     # first, get the results for random
-    if "width" not in sweep_params or "dimensions" in sweep_params or "alpha" in sweep_params:
-        random_res = evaluate_factory(base_config["length"], base_config["width"], base_config["num_agents"])
+    if (
+        "width" not in sweep_params
+        or "dimensions" in sweep_params
+        or "alpha" in sweep_params
+    ):
+        random_res = evaluate_factory(
+            base_config["length"], base_config["width"], base_config["num_agents"]
+        )
         for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-            add_random("Random", ratios, total_apples, mean_distances, picked_per_agents, total_picked, (random_res["ratio_per_agent"],
-                                                                                                         random_res["total_apples"],
-                                                                                                         random_res["mean_distance"],
-                                                                                                         random_res["picked_per_agent"],
-                                                                                                         random_res["total_picked"]), picked_series)
+            add_random(
+                "Random",
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                (
+                    random_res["ratio_per_agent"],
+                    random_res["total_apples"],
+                    random_res["mean_distance"],
+                    random_res["picked_per_agent"],
+                    random_res["total_picked"],
+                ),
+                picked_series,
+            )
     else:
         for width in sweep_params["width"]:
-            random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
-            add_random("Random", ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res, picked_series)
+            random_res = evaluate_factory(
+                base_config["length"], width, base_config["num_agents"]
+            )
+            add_random(
+                "Random",
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                random_res,
+                picked_series,
+            )
 
     # next, we get the results for DC and C at given dimensions
-    c_res = parse_log_metrics("Centralized", base_config["num_agents"], base_config["length"], base_config["width"], critic_dimensions, 0.000275, 4)
+    c_res = parse_log_metrics(
+        "Centralized",
+        base_config["num_agents"],
+        base_config["length"],
+        base_config["width"],
+        critic_dimensions,
+        0.000275,
+        4,
+    )
     for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-        add_random(f"Centralized, {critic_dimensions} hidden dimensions", ratios, total_apples, mean_distances, picked_per_agents, total_picked, c_res, picked_series)
-    dc_res = parse_log_metrics("Decentralized", base_config["num_agents"], base_config["length"], base_config["width"], critic_dimensions, 0.000275, 4)
+        add_random(
+            f"Centralized, {critic_dimensions} hidden dimensions",
+            ratios,
+            total_apples,
+            mean_distances,
+            picked_per_agents,
+            total_picked,
+            c_res,
+            picked_series,
+        )
+    dc_res = parse_log_metrics(
+        "Decentralized",
+        base_config["num_agents"],
+        base_config["length"],
+        base_config["width"],
+        critic_dimensions,
+        0.000275,
+        4,
+    )
     for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-        add_random(f"Decentralized, {critic_dimensions} hidden dimensions", ratios, total_apples, mean_distances, picked_per_agents, total_picked, dc_res, picked_series)
+        add_random(
+            f"Decentralized, {critic_dimensions} hidden dimensions",
+            ratios,
+            total_apples,
+            mean_distances,
+            picked_per_agents,
+            total_picked,
+            dc_res,
+            picked_series,
+        )
 
     results = {
         "Actor Critic": {
@@ -596,7 +838,7 @@ def run_actor_critic(base_config: dict, sweep_params: dict, critic_dimensions: i
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
     }
 
@@ -615,7 +857,7 @@ def run_actor_critic(base_config: dict, sweep_params: dict, critic_dimensions: i
                 hidden_dimensions=config["hidden_dimensions"],
                 alpha=config["alpha"],
                 dimensions=config["dimensions"],
-                critic_dimensions=critic_dimensions
+                critic_dimensions=critic_dimensions,
             )
 
             results[arch]["sweep_values"].append(val)
@@ -634,18 +876,93 @@ def run_actor_critic(base_config: dict, sweep_params: dict, critic_dimensions: i
         total_picked[arch_name].extend(results[arch_name]["total_picked"])
         picked_series[arch_name].extend(results[arch_name]["picked_over_time"])
 
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], ratios,
-                       'Ratio of Apples Picked Per Agent',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Ratio')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], mean_distances, 'Mean Distance Between Agents',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Distance')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_apples, 'Total Apples Created',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_picked, 'Total Apples Picked',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], picked_per_agents, 'Total Apples Picked Per Agent',
-                       "Linear Layers" if "dimensions" == list(sweep_params.keys())[0] else "Actor Network Hidden Dimensions" if "hidden_dimensions" == list(sweep_params.keys())[0] else "Width", 'Apples')
-    plot_series(sweep_params[list(sweep_params.keys())[0]], {k: picked_series[k] for k in ["Actor Critic", "Random"]}, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        ratios,
+        "Ratio of Apples Picked Per Agent",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Ratio",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        mean_distances,
+        "Mean Distance Between Agents",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Distance",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_apples,
+        "Total Apples Created",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_picked,
+        "Total Apples Picked",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        picked_per_agents,
+        "Total Apples Picked Per Agent",
+        (
+            "Linear Layers"
+            if "dimensions" == list(sweep_params.keys())[0]
+            else (
+                "Actor Network Hidden Dimensions"
+                if "hidden_dimensions" == list(sweep_params.keys())[0]
+                else "Width"
+            )
+        ),
+        "Apples",
+    )
+    plot_series(
+        sweep_params[list(sweep_params.keys())[0]],
+        {k: picked_series[k] for k in ["Actor Critic", "Random"]},
+        "Total Apples Picked per Agent over Time",
+        "Training Steps",
+        "Apples Picked per Agent",
+    )
 
 
 def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
@@ -657,26 +974,90 @@ def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
     picked_series = init_dicts(critic_dimensions, base_config["hidden_dimensions"])
 
     # first, get the results for random
-    if "width" not in sweep_params or "dimensions" in sweep_params or "alpha" in sweep_params:
-        random_res = evaluate_factory(base_config["length"], base_config["width"], base_config["num_agents"])
+    if (
+        "width" not in sweep_params
+        or "dimensions" in sweep_params
+        or "alpha" in sweep_params
+    ):
+        random_res = evaluate_factory(
+            base_config["length"], base_config["width"], base_config["num_agents"]
+        )
         for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-            add_random("Random", ratios, total_apples, mean_distances, picked_per_agents, total_picked, (random_res["ratio_per_agent"],
-                                                                                                         random_res["total_apples"],
-                                                                                                         random_res["mean_distance"],
-                                                                                                         random_res["picked_per_agent"],
-                                                                                                         random_res["total_picked"]), picked_series)
+            add_random(
+                "Random",
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                (
+                    random_res["ratio_per_agent"],
+                    random_res["total_apples"],
+                    random_res["mean_distance"],
+                    random_res["picked_per_agent"],
+                    random_res["total_picked"],
+                ),
+                picked_series,
+            )
     else:
         for width in sweep_params["width"]:
-            random_res = evaluate_factory(base_config["length"], width, base_config["num_agents"])
-            add_random("Random", ratios, total_apples, mean_distances, picked_per_agents, total_picked, random_res, picked_series)
+            random_res = evaluate_factory(
+                base_config["length"], width, base_config["num_agents"]
+            )
+            add_random(
+                "Random",
+                ratios,
+                total_apples,
+                mean_distances,
+                picked_per_agents,
+                total_picked,
+                random_res,
+                picked_series,
+            )
 
     # next, we get the results for AC and AC Beta (if present) at given dimensions
-    ac_res = parse_log_metrics("Actor Critic", base_config["num_agents"], base_config["length"], base_config["width"], base_config["hidden_dimensions"], base_config["alpha"], 4, critic_dimensions)
+    ac_res = parse_log_metrics(
+        "Actor Critic",
+        base_config["num_agents"],
+        base_config["length"],
+        base_config["width"],
+        base_config["hidden_dimensions"],
+        base_config["alpha"],
+        4,
+        critic_dimensions,
+    )
     for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-        add_random(f"Actor Critic", ratios, total_apples, mean_distances, picked_per_agents, total_picked, ac_res, picked_series)
-    ac_res = parse_log_metrics("Actor Critic Beta", base_config["num_agents"], base_config["length"], base_config["width"], base_config["hidden_dimensions"], base_config["alpha"], 4, critic_dimensions)
+        add_random(
+            f"Actor Critic",
+            ratios,
+            total_apples,
+            mean_distances,
+            picked_per_agents,
+            total_picked,
+            ac_res,
+            picked_series,
+        )
+    ac_res = parse_log_metrics(
+        "Actor Critic Beta",
+        base_config["num_agents"],
+        base_config["length"],
+        base_config["width"],
+        base_config["hidden_dimensions"],
+        base_config["alpha"],
+        4,
+        critic_dimensions,
+    )
     for _ in range(len(sweep_params[list(sweep_params.keys())[0]])):
-        add_random(f"Actor Critic Beta", ratios, total_apples, mean_distances, picked_per_agents, total_picked, ac_res, picked_series)
+        add_random(
+            f"Actor Critic Beta",
+            ratios,
+            total_apples,
+            mean_distances,
+            picked_per_agents,
+            total_picked,
+            ac_res,
+            picked_series,
+        )
 
     results = {
         "Actor Critic Rates W/ Beta": {
@@ -686,7 +1067,7 @@ def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
         "Actor Critic Rates W/o Beta": {
             "sweep_values": [],
@@ -695,7 +1076,7 @@ def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
             "last_ratios": [],
             "total_picked": [],
             "picked_per_agent": [],
-            "picked_over_time": []
+            "picked_over_time": [],
         },
     }
 
@@ -716,7 +1097,7 @@ def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
                 dimensions=config["dimensions"],
                 critic_dimensions=critic_dimensions,
                 budget=config["budget"],
-                beta=config["beta"] if arch == "Actor Critic Rates W/ Beta" else 0.0
+                beta=config["beta"] if arch == "Actor Critic Rates W/ Beta" else 0.0,
             )
 
             results[arch]["sweep_values"].append(val)
@@ -735,17 +1116,60 @@ def run_budget(base_config: dict, sweep_params: dict, critic_dimensions: int):
         total_picked[arch_name].extend(results[arch_name]["total_picked"])
         picked_series[arch_name].extend(results[arch_name]["picked_over_time"])
 
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], ratios,
-                       'Ratio of Apples Picked Per Agent', "Budget", 'Ratio')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], mean_distances, 'Mean Distance Between Agents',
-                       "Budget", 'Distance')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_apples, 'Total Apples Created',
-                       "Budget", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], total_picked, 'Total Apples Picked',
-                       "Budget", 'Apples')
-    plot_apple_picking(sweep_params[list(sweep_params.keys())[0]], base_config["num_agents"], picked_per_agents, 'Total Apples Picked Per Agent',
-                       "Budget", 'Apples')
-    plot_series(sweep_params[list(sweep_params.keys())[0]], {k: picked_series[k] for k in ["Actor Critic Rates W/ Beta", "Actor Critic Rates W/o Beta", "Random"]}, 'Total Apples Picked per Agent over Time', "Training Steps", "Apples Picked per Agent")
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        ratios,
+        "Ratio of Apples Picked Per Agent",
+        "Budget",
+        "Ratio",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        mean_distances,
+        "Mean Distance Between Agents",
+        "Budget",
+        "Distance",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_apples,
+        "Total Apples Created",
+        "Budget",
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        total_picked,
+        "Total Apples Picked",
+        "Budget",
+        "Apples",
+    )
+    plot_apple_picking(
+        sweep_params[list(sweep_params.keys())[0]],
+        base_config["num_agents"],
+        picked_per_agents,
+        "Total Apples Picked Per Agent",
+        "Budget",
+        "Apples",
+    )
+    plot_series(
+        sweep_params[list(sweep_params.keys())[0]],
+        {
+            k: picked_series[k]
+            for k in [
+                "Actor Critic Rates W/ Beta",
+                "Actor Critic Rates W/o Beta",
+                "Random",
+            ]
+        },
+        "Total Apples Picked per Agent over Time",
+        "Training Steps",
+        "Apples Picked per Agent",
+    )
 
 
 def read_performance_log(filepath):
@@ -812,6 +1236,7 @@ def build_series_by_hidden_dims(filepaths, hidden_dims, reducer="mean"):
 
     return hidden_dims_sorted, series
 
+
 # --- simple metrics if you don't already have them ---
 
 
@@ -860,14 +1285,21 @@ def plot_percent_diffs(filepaths, agent_counts):
     plt.figure(figsize=(6, 4))
 
     for filepath, agents in zip(filepaths, agent_counts):
-        match = re.search(r'(\d+)', filepath)
+        match = re.search(r"(\d+)", filepath)
         if match:
             number = int(match.group(1))
         c_vals, d_vals = read_log_pairs(filepath)
         pct_diffs = 100.0 * (d_vals - c_vals) / c_vals
         if len(c_vals) == 5:
             pct_diffs = np.append(pct_diffs, None)
-        plt.plot(agent_counts, pct_diffs, marker='o', label=f"{number} hidden dimensions", alpha=0.7, linestyle=":")
+        plt.plot(
+            agent_counts,
+            pct_diffs,
+            marker="o",
+            label=f"{number} hidden dimensions",
+            alpha=0.7,
+            linestyle=":",
+        )
 
     plt.xlabel("Number of Agents")
     plt.ylabel("Decentralized Gain over Centralized (%)")
@@ -888,13 +1320,37 @@ def plot_diffs(filepaths, agent_counts):
     random_res = [238 for _ in range(6)]
 
     for filepath, agents in zip(filepaths, agent_counts):
-        match = re.search(r'(\d+)', filepath)
+        match = re.search(r"(\d+)", filepath)
         if match:
             number = int(match.group(1))
         c_vals, d_vals = read_log_pairs(filepath)
-        plt.plot(agent_counts, c_vals, marker='o', label=f"Centralized, {number} hidden dimensions", alpha=0.7, linestyle=":", color="blue")
-        plt.plot(agent_counts, d_vals, marker='o', label=f"Decentralized, {number} hidden dimensions", alpha=0.7, linestyle=":", color="orange")
-    plt.plot(agent_counts, random_res, marker='o', label="Random", alpha=0.7, linestyle=":", color="red")
+        plt.plot(
+            agent_counts,
+            c_vals,
+            marker="o",
+            label=f"Centralized, {number} hidden dimensions",
+            alpha=0.7,
+            linestyle=":",
+            color="blue",
+        )
+        plt.plot(
+            agent_counts,
+            d_vals,
+            marker="o",
+            label=f"Decentralized, {number} hidden dimensions",
+            alpha=0.7,
+            linestyle=":",
+            color="orange",
+        )
+    plt.plot(
+        agent_counts,
+        random_res,
+        marker="o",
+        label="Random",
+        alpha=0.7,
+        linestyle=":",
+        color="red",
+    )
     plt.xlabel("Number of Agents")
     plt.ylabel("Apples Picked Per Agent For Different Agent Counts")
     plt.title("Apples Picked Per Agent")
@@ -904,7 +1360,7 @@ def plot_diffs(filepaths, agent_counts):
     plt.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # base = {
     #     "length": 9,
     #     "num_agents": 4,
@@ -928,8 +1384,8 @@ if __name__ == '__main__':
     c_baseline = [0.42, 0.47, 0.58, 0.68]
 
     plt.figure(figsize=(6, 4))
-    plt.plot(hidden, dc_baseline, marker='o', label="Decentralized", color="orange")
-    plt.plot(hidden, c_baseline, marker='o', label="Centralized", color="blue")
+    plt.plot(hidden, dc_baseline, marker="o", label="Decentralized", color="orange")
+    plt.plot(hidden, c_baseline, marker="o", label="Centralized", color="blue")
 
     # ✅ axis labels, title, ticks, legend all go before plt.show()
     plt.xlabel("Hidden dimension")
@@ -946,8 +1402,8 @@ if __name__ == '__main__':
     c_new_input = [0.42, 0.47, 0.58, 0.68]
 
     plt.figure(figsize=(6, 4))
-    plt.plot(hidden, dc_new_input, marker='o', label="Decentralized", color="orange")
-    plt.plot(hidden, c_new_input, marker='o', label="Centralized", color="blue")
+    plt.plot(hidden, dc_new_input, marker="o", label="Decentralized", color="orange")
+    plt.plot(hidden, c_new_input, marker="o", label="Centralized", color="blue")
 
     # ✅ axis labels, title, ticks, legend all go before plt.show()
     plt.xlabel("Hidden dimension")
@@ -959,11 +1415,18 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
-
 
     plt.figure(figsize=(6, 4))
-    plt.plot(hidden, dc_baseline, marker='o', label="Decentralized, Old Input", color="green")
-    plt.plot(hidden, dc_new_input, marker='o', label="Decentralized, New Input", color="purple")
+    plt.plot(
+        hidden, dc_baseline, marker="o", label="Decentralized, Old Input", color="green"
+    )
+    plt.plot(
+        hidden,
+        dc_new_input,
+        marker="o",
+        label="Decentralized, New Input",
+        color="purple",
+    )
 
     # ✅ axis labels, title, ticks, legend all go before plt.show()
     plt.xlabel("Hidden dimension")
@@ -975,14 +1438,13 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
-
 
     dc_new_dynamic = [0.859425, 0.94705, 0.97985, 0.987625]
     c_new_dynamic = [0.66, 0.86, 0.975, 0.98]
 
     plt.figure(figsize=(6, 4))
-    plt.plot(hidden, dc_new_dynamic, marker='o', label="Decentralized", color="orange")
-    plt.plot(hidden, c_new_dynamic, marker='o', label="Centralized", color="blue")
+    plt.plot(hidden, dc_new_dynamic, marker="o", label="Decentralized", color="orange")
+    plt.plot(hidden, c_new_dynamic, marker="o", label="Centralized", color="blue")
 
     # ✅ axis labels, title, ticks, legend all go before plt.show()
     plt.xlabel("Hidden dimension")
@@ -994,7 +1456,6 @@ if __name__ == '__main__':
 
     plt.tight_layout()
     plt.show()
-
 
     # euclidean_old = [0.204, 0.5651999999999999, 0.6792, 0.7211]
     # euclidean_new = [0.274025, 0.933075, 0.926275, 0.9175]
@@ -1035,5 +1496,3 @@ if __name__ == '__main__':
     # plt.grid(True)
     #
     # plt.show()
-
-

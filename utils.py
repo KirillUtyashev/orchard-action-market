@@ -1,5 +1,6 @@
-# this is needed to resolve circlualr imports
 import numpy as np
+
+# this is needed to resolve circlualr imports
 import torch
 
 

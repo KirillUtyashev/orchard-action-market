@@ -16,7 +16,7 @@ class RewardNetwork(NetworkWrapper):
         self.loss_history = []
 
     def get_model_reward_prediction(self, x):
-        res = ten(x, DEVICE)
+        res = ten(x, device=DEVICE)
         res = res.view(1, -1)
         with torch.no_grad():
             val = self.model(res).cpu().numpy()

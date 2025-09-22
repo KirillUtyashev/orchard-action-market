@@ -168,7 +168,7 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
                     env=env,
                     name=self.name,
                     agents_list=agents_list,
-                    timesteps=10000,
+                    timesteps=self.train_config.eval_timesteps,
                     epsilon=self.train_config.epsilon,
                     env_step=step_and_evaluate_reward_prediction_accuracy_cnn_decentralized,
                 )

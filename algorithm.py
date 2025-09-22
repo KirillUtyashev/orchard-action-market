@@ -347,7 +347,7 @@ class Algorithm:
                 env=env,
                 name=self.name,
                 agents_list=agents_list,
-                timesteps=10000,
+                timesteps=self.train_config.eval_timesteps,
                 epsilon=self.train_config.epsilon,
             )
 
@@ -656,30 +656,7 @@ class Algorithm:
                             network.train_batch()
                         else:
                             network.train()
-            # Train if enough samples collected
-            # if hasattr(self._agents_list[0], "policy_value"):
-            #     for i in range(self.train_config.num_agents):
-            #         if (
-            #             len(self._agents_list[i].policy_value.batch_states)
-            #             >= self.train_config.batch_size
-            #         ):
-            #             self._agents_list[i].policy_value.train()
-
-            # if hasattr(self._agents_list[0], "policy_network"):
-            #     for i in range(self.train_config.num_agents):
-            #         if (
-            #             len(self._agents_list[i].policy_network.batch_states)
-            #             >= self.train_config.batch_size
-            #         ):
-            #             self._agents_list[i].policy_network.train()
-
-            # if hasattr(self._agents_list[0], "reward_network"):
-            #     for i in range(self.train_config.num_agents):
-            #         if (
-            #             len(self._agents_list[i].reward_network.batch_states)
-            #             >= self.train_config.batch_size
-            #         ):
-            #             self._agents_list[i].reward_network.train()
+        return
 
     def training_loop(self) -> Tuple[floating, ...] | None:
         """Train the value function."""
@@ -704,7 +681,7 @@ class Algorithm:
                 self.update_lr(step)
 
                 # Periodic evaluation
-                if eval_constant > 0:
+                if step > 0:
                     if (step % eval_constant == 0) and (
                         step != self.train_config.timesteps - 1
                     ):

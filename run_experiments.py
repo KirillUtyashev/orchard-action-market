@@ -56,6 +56,12 @@ def parse_args(args):
         "--timesteps", type=int, default=1000000, help="Number of timesteps."
     )
     parser.add_argument(
+        "--eval_timesteps",
+        type=int,
+        default=5000,
+        help="When evaluating during training, this is the number of timesteps to evaluate for.",
+    )
+    parser.add_argument(
         "--apple_life", type=float, default=3, help="Apple mean lifetime."
     )
     parser.add_argument(
@@ -122,6 +128,7 @@ def set_config(args):
         alpha=args.alpha,
         actor_alpha=args.actor_alpha,
         timesteps=args.timesteps,
+        eval_timesteps=args.eval_timesteps,
         num_agents=args.num_agents,
         hidden_dimensions=args.hidden_dim,
         hidden_dimensions_actor=args.hidden_dim_actor,
