@@ -24,6 +24,7 @@ from models.reward_cnn import RewardCNN
 from orchard.environment import (
     Orchard,
     OrchardBasic,
+    OrchardBasicNewDynamic,
     OrchardEuclideanNegativeRewards,
     OrchardEuclideanRewards,
 )
@@ -364,26 +365,28 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
         ).tolist()
 
         # --- PLOT 1: TRAINING LOSS CURVE (one per agent) ---
-        # for i, agent in enumerate(self.agents_list):
-        #     network = agent.reward_network
-        #     if isinstance(network, RewardCNN) and network.loss_history:
-        #         fig = plot_smoothed(
-        #             [network.loss_history], labels=[f"Agent {i} Smoothed Training Loss"]
-        #         )
-        #         ax = fig.gca()
-        #         ax.set_title(f"Reward Prediction Training Loss (Agent {i})")
-        #         ax.set_xlabel("Training Step")
-        #         ax.set_ylabel("MSE Loss")
-        #         ax.set_yscale("log")
-        #         ax.grid(True)
-        #         fig.savefig(output_graph_dir / f"Final_Loss_Agent_{i}.png")
-        #         plt.close(fig)
-
+        for i, agent in enumerate(self.agents_list):
+            network = agent.reward_network
+            plt.figure(figsize=(10, 6))
+            assert isinstance(network, RewardCNN)
+            # plot raw data
+            plt.plot(
+                range(len(network.loss_history)),
+                network.loss_history,
+                label="Raw Loss",
+                alpha=0.3,
+            )
+            plt.title(f"Training Loss Curve for Agent {i}")
+            plt.xlabel("eval step")
+            plt.ylabel("Loss")
+            plt.grid(True)
+            plt.savefig(output_graph_dir / f"Training_Loss_Agent_{i}.png")
+            plt.close()
         # --- PLOT 2: ACCURACY BY REWARD TYPE OVER TIME ---
         plt.figure(figsize=(10, 6))
 
         # Determine which set of keys to use based on the environment
-        DISCRETE_ENVS = [OrchardBasic, Orchard]
+        DISCRETE_ENVS = [OrchardBasic, Orchard, OrchardBasicNewDynamic]
         is_discrete = type(self.env) in DISCRETE_ENVS
 
         if is_discrete:
