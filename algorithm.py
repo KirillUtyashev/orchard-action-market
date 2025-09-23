@@ -8,7 +8,8 @@ from numpy import floating
 
 from agents.agent import Agent, AgentInfo
 from agents.simple_agent import SimpleAgent
-from config import CHECKPOINT_DIR, DEVICE
+from config import CHECKPOINT_DIR, DEVICE, OUT_DIR
+from configs.config import EnvironmentConfig, TrainingConfig
 from helpers.controllers import (
     AgentController,
     AgentControllerCentralized,
@@ -189,22 +190,17 @@ class Algorithm:
     """
 
     def __init__(self, config, name):
-        self.train_config = config.train_config
-        self.env_config = config.env_config
+        self.train_config: TrainingConfig = config.train_config
+        self.env_config: EnvironmentConfig = config.env_config
         self.name = name
         self.debug = config.debug
         self.rng_state = None
 
-        log_folder = Path("logs")
+        algo_dir = OUT_DIR / "algo_dir"
+        log_folder = algo_dir / "algo_logs"
         log_folder.mkdir(parents=True, exist_ok=True)
 
-        graph_folder = Path("graphs")
-        graph_folder.mkdir(parents=True, exist_ok=True)
-
-        name_folder = graph_folder / self.name
-        name_folder.mkdir(parents=True, exist_ok=True)
-
-        self.graphs_out_path = name_folder
+        self.graphs_out_path = algo_dir / self.name
 
         filename = log_folder / f"{name}.log"
 
@@ -244,7 +240,7 @@ class Algorithm:
             self.count_random_actions = 0
 
     @abstractmethod
-    def _generate_plots(
+    def generate_plots(
         self,
     ):  # NOTE The reason for this is because different algorithms generate plots
         # differently so we cannot use a general graph_plots function for every algorithm.
@@ -322,13 +318,18 @@ class Algorithm:
         raise NotImplementedError
 
     def evaluate_checkpoint(self, step: int, seed: int) -> EvalResult:
-        """Evaluate the current checkpoint"""
+        """Evaluate agents based on current model parameters and plot the graphs for it."""
         print(f"=====Eval at {step} steps======")
         result = self.eval_network(seed)
         print("=====Completed Evaluation=====")
         return result
 
     def run_inference(self):
+        """Run inference using current model weights and plot graphs
+
+        Returns:
+            Eval Results. see class for details.
+        """
         agents_list, agent_controller = self.init_agents_for_eval()
 
         env = create_env(
@@ -692,11 +693,8 @@ class Algorithm:
                         # but cnn architecture generates plots differently
                         # so each algorithm should be responsible for generating
                         # its own plot.
-                        self._generate_plots()
-                        # we only care about end plot
+                        self.generate_plots()
 
-            # Final evaluation
-            self._generate_plots()
             # Final evaluation
             if not self.debug:
                 return self._evaluate_final()

@@ -136,7 +136,7 @@ def set_config(args):
         num_layers_actor=args.num_layers_actor,
         critic_vision=args.critic_vision,
         actor_vision=args.actor_vision,
-        skip=True if args.skip == 0 else False,
+        skip=True if args.skip == 1 else False,
         epsilon=args.epsilon,
         policy=POLICY_MAP[args.algorithm],
         seed=args.seed,

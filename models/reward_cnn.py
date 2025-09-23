@@ -1,14 +1,12 @@
 import sys
 
-from utils import ten
-
 sys.path.append("../")
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from utils import unwrap_state
+from utils import unwrap_state, ten, state_logger
 from config import DEVICE
 
 import torch
@@ -203,3 +201,12 @@ class RewardCNN(nn.Module):
         processed_state = self._raw_state_to_nn_input(raw_state, agent_pos)
         self.batch_states.append(processed_state)
         self.batch_rewards.append(reward)
+        if reward >= 1.5:
+            log_message = (
+                f"\n--- Interesting Experience Logged ---\n"
+                f"Reward (Target): {reward}\n"
+                f"Apples Channel (Input):\n{processed_state[0]}\n"
+                f"Other-Agents Channel (Input):\n{processed_state[1]}\n"
+                f"Self-Agent Channel (Input):\n{processed_state[2]}"
+            )
+            state_logger.debug(log_message)

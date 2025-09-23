@@ -1,6 +1,7 @@
 import random
 
 import numpy as np
+from agents.reward_agent import RewardAgent
 from models.reward_cnn import RewardCNN
 from orchard.environment import (
     Orchard,
@@ -189,91 +190,6 @@ def step_and_evaluate_reward_prediction_accuracy_decentralized(
         else:
             ag.correct_predictions_by_reward["other"] += c
             ag.total_predictions_by_reward["other"] += 1
-
-    global same_cell_no_reward
-    for agent in agents_list:
-        if (
-            environment.apples[agent.position[0]][agent.position[1]] == 1
-            and labels[agent.id] == 0
-        ):
-            same_cell_no_reward += 1
-
-    global count
-    count += 1
-
-    if count == 10000 * len(agents_list):
-        count = 0
-        same_cell_no_reward = 0
-        print(f"Total picked, env side: {environment.total_picked}")
-
-    # if count % 1000 == 0:
-    #     print(same_cell_no_reward)
-
-    if (
-        isinstance(environment, OrchardBasicNewDynamic)
-        or isinstance(environment, OrchardEuclideanRewardsNewDynamic)
-        or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic)
-        or result.picked is True
-    ):
-        environment.remove_apple(agents_list[agent_idx].position.copy())
-
-
-def step_and_evaluate_reward_prediction_accuracy_cnn_decentralized(
-    agents_list,
-    environment: Orchard,
-    agent_controller,
-    epsilon,
-    inference=False,
-    tol=1e-1,
-):
-    """Specialized step function for decentralized reward learning with CNN-based agents.
-    Needed because cnn doesn't use view controller and instead contains state_to_nn_input
-    in the network itself.
-
-    Args:
-        agents_list: List of agents in the environment.
-        environment: The current environment instance.
-        agent_controller: The controller managing the agents.
-        epsilon: Exploration rate for the agents.
-        inference: Whether the step is for inference or training. Defaults to False.
-        tol: Tolerance for reward prediction accuracy. Defaults to 1e-1.
-    """
-    agent_idx = random.randint(0, environment.n - 1)
-    action = agent_controller.agent_get_action(environment, agent_idx, None)
-
-    # Step env and labels
-    result = environment.process_action(
-        agent_idx, agents_list[agent_idx].position.copy(), action
-    )
-    labels = result.reward_vector
-    state: dict = environment.get_state()
-
-    reward_predictions = []
-    for agent in agents_list:
-        network = agent.reward_network
-        assert isinstance(
-            network, RewardCNN
-        ), "Agent does not have a CNN reward network!"
-        nn_input = network._raw_state_to_nn_input(state, agent.position)
-        prediction = network.get_model_reward_prediction(nn_input)
-        reward_predictions.append(float(prediction))
-
-    # Tolerance-based correctness
-    correct_predictions = [
-        1 if abs(p - y) <= tol else 0 for p, y in zip(reward_predictions, labels)
-    ]
-
-    # Update counters
-    for agent, c in zip(agents_list, correct_predictions):
-        agent.correct_predictions += c
-        agent.total_predictions += 1
-        # Predictions by reward
-        if str(labels[agent.id]) in agent.correct_predictions_by_reward.keys():
-            agent.correct_predictions_by_reward[str(labels[agent.id])] += c
-            agent.total_predictions_by_reward[str(labels[agent.id])] += 1
-        else:
-            agent.correct_predictions_by_reward["other"] += c
-            agent.total_predictions_by_reward["other"] += 1
 
     global same_cell_no_reward
     for agent in agents_list:

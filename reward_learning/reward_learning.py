@@ -71,7 +71,7 @@ class RewardLearning(Algorithm, ABC):
         print(self.env.dummy_counter)
 
     @abstractmethod
-    def process_accuracy(self, agents_list):
+    def plot_accuracy_results(self, agents_list):
         pass
 
 
@@ -127,7 +127,7 @@ class RewardLearningCentralized(RewardLearning):
             self.logger.error(f"Error collecting observations: {e}")
             raise
 
-    def process_accuracy(self, agents_list):
+    def plot_accuracy_results(self, agents_list):
         self._agents_list[0].prediction_accuracy_history.append(
             agents_list[0].correct_predictions / agents_list[0].total_predictions
         )
@@ -197,7 +197,7 @@ class RewardLearningCentralized(RewardLearning):
                 epsilon=self.train_config.epsilon,
                 env_step=step_reward_learning_centralized,
             )
-        self.process_accuracy(agents_list)
+        self.plot_accuracy_results(agents_list)
         print(env.dummy_counter)
 
         return EvalResult(*results)
@@ -220,11 +220,14 @@ class RewardLearningCentralized(RewardLearning):
 
 
 class RewardLearningDecentralized(RewardLearning):
-    def __init__(self, config: ExperimentConfig):
-        super().__init__(
-            config,
-            f"RewardLearningDecentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>-new_dynamic-<{config.train_config.new_dynamic}>",
-        )
+    def __init__(self, config: ExperimentConfig, name=None):
+        if name is None:
+            super().__init__(
+                config,
+                f"RewardLearningDecentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>-new_dynamic-<{config.train_config.new_dynamic}>",
+            )
+        else:
+            super().__init__(config, name)
         self.same_cell_no_reward = [0]
         self.total_number_of_states_with_reward = 0
 
@@ -290,7 +293,7 @@ class RewardLearningDecentralized(RewardLearning):
             self.logger.error(f"Error collecting observations: {e}")
             raise
 
-    def process_accuracy(self, agents_list):
+    def plot_accuracy_results(self, agents_list):
         for num, agent in enumerate(agents_list):
             self.agents_list[num].prediction_accuracy_history.append(
                 agent.correct_predictions / agent.total_predictions
@@ -401,7 +404,7 @@ class RewardLearningDecentralized(RewardLearning):
             except Exception as e:
                 print(f"Error during inference: {e}")
                 raise
-        self.process_accuracy(agents_list)
+        self.plot_accuracy_results(agents_list)
 
         return EvalResult(*results)
 

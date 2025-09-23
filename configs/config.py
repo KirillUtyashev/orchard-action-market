@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from orchard.algorithms import despawn_apple, spawn_apple
+from config import LOG_DIR
 
 
 @dataclass
@@ -16,8 +17,8 @@ class TrainingConfig:
     eval_timesteps: int = 5000
     num_agents: int = 4
     eval_interval: float = 0.1
-    checkpoint_dir: str = "checkpoints"
-    log_dir: str = "logs"
+    # checkpoint_dir: str = "checkpoints"
+    # log_dir: str = LOG_DIR / "logs"
     discount: float = 0.99
     critic_vision: Optional[int] = 0
     actor_vision: Optional[int] = 0

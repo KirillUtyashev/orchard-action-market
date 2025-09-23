@@ -2,6 +2,7 @@ from abc import ABC
 from typing import List, Tuple
 from typing_extensions import override
 import numpy as np
+from agents.agent import Agent
 from configs.config import ExperimentConfig
 from helpers.controllers import (
     AgentController,
@@ -135,7 +136,7 @@ class DecentralizedValueFunction(ValueFunction):
         self.network_list = []
 
     @override
-    def _generate_plots(self):
+    def generate_plots(self, eval_agents: list[Agent]):
         """Generates plots for value function training."""
         # This class uses the old, complex plotting function because it
         # has all the data that function needs.
