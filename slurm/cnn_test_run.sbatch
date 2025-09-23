@@ -27,20 +27,11 @@ You may need to change them based on your cluster's configuration.
 
 Environment Setup
 #-----------------
-
-Load necessary modules (adjust as needed for your environment)
-module load python/3.9
-module load cuda/11.7
-Activate your virtual environment if you are using one
 source ../bin/activate
 #-----------------
 
-Job Execution
 #-----------------
 
-This is the command that will run your Python script.
-Replace your_script.py with the actual name of your script.
-python run_experiments.py 
 
 --algorithm "RewardLearningCNNDecentralized" 
 
