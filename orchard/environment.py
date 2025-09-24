@@ -239,6 +239,16 @@ class Orchard(ABC):
     def process_action(
         self, agent_id: int, position: np.ndarray, action_idx: Optional[int]
     ) -> ProcessAction:
+        """Get reward and if apple was picked for agent_id doing action_idx in position
+
+        Args:
+            agent_id: The ID of the agent performing the action.
+            position: The current position of the agent.
+            action_idx: The index of the action being performed.
+
+        Returns:
+            A ProcessAction object containing the reward and whether an apple was picked.
+        """
         if self.debug:
             self.state_history.append(
                 np.concatenate([self.get_state()["agents"], self.get_state()["apples"]])

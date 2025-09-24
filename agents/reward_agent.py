@@ -45,14 +45,14 @@ class RewardAgent(Agent):
         super().__init__(agent_info)
         self.correct_predictions = 0
         self.reward_network = None
-        self.correct_predictions_by_reward_discrete = {
+        self.correct_predictions_by_reward = {
             "-1.0": 0,
             "0.0": 0,
             "1.0": 0,
             "other": 0,
         }
 
-        self.total_predictions_by_reward_discrete = {
+        self.total_predictions_by_reward = {
             "-1.0": 0,
             "0.0": 0,
             "1.0": 0,

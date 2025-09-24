@@ -1,5 +1,6 @@
-import os
+# reward_learningimport os
 
+import os
 from matplotlib import pyplot as plt
 from helpers.helpers import step
 from config import get_config
@@ -8,9 +9,14 @@ import numpy as np
 import random
 from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
-from metrics.metrics import PositionRecorder, append_positional_metrics, \
-    append_y_coordinates, plot_agent_heatmap_alpha, plot_agent_specific_metrics, \
-    plot_agents_trajectories
+from metrics.metrics import (
+    PositionRecorder,
+    append_positional_metrics,
+    append_y_coordinates,
+    plot_agent_heatmap_alpha,
+    plot_agent_specific_metrics,
+    plot_agents_trajectories,
+)
 
 adv_plot = []
 
@@ -50,11 +56,23 @@ def plot_raw(series_list, labels=None, title="", xlabel="Step", ylabel="Value"):
     # plt.show()
 
 
-def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, agents_list=None, epsilon=0.1, inference=False, env_step=step):
+def eval_performance(
+    num_agents,
+    agent_controller,
+    env,
+    name,
+    timesteps=5000,
+    agents_list=None,
+    epsilon=0.1,
+    inference=False,
+    env_step=step,
+):
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
     if inference:
-        agent_distance_hist = {i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)}
+        agent_distance_hist = {
+            i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)
+        }
         personal_q_values = {i: [] for i in range(num_agents)}
     apple_x_coordinates = []
     apple_y_coordinates = []
@@ -82,10 +100,12 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
         for i, other_agent in enumerate(agents):
             if i != agent_idx:
                 distances.append(distance(current_pos, other_agent.position))
-        return min(distances) if distances else float('inf')
+        return min(distances) if distances else float("inf")
 
     os.makedirs("positions", exist_ok=True)
-    with PositionRecorder(num_agents, timesteps * num_agents + 1, f"positions/{name}_pos.npy") as rec:
+    with PositionRecorder(
+        num_agents, timesteps * num_agents + 1, f"positions/{name}_pos.npy"
+    ) as rec:
         rec.log(agents_list)
         for i in range(timesteps):
             num_of_apples_per_second.append(env.apples.sum())
@@ -100,8 +120,12 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
                 reward += change
                 rec.log(agents_list)
                 if name != "test":
-                    agent_x_coordinates = append_positional_metrics(agent_x_coordinates, agents_list)
-                    agent_y_coordinates = append_y_coordinates(agent_y_coordinates, agents_list)
+                    agent_x_coordinates = append_positional_metrics(
+                        agent_x_coordinates, agents_list
+                    )
+                    agent_y_coordinates = append_y_coordinates(
+                        agent_y_coordinates, agents_list
+                    )
                     to_add_x = []
                     to_add_y = []
                     for k in range(env.apples.shape[0]):
@@ -115,7 +139,9 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
                 if inference:
                     for num, agent in enumerate(agents_list):
                         stack = add_distances(num, agents_list)
-                        agent_distance_hist[num] = np.vstack([agent_distance_hist[num], stack])
+                        agent_distance_hist[num] = np.vstack(
+                            [agent_distance_hist[num], stack]
+                        )
                         # stack = np.asarray(agents_list[num].agent_alphas, dtype=float).reshape(1, -1)
                         # alpha_ema[num] = np.concatenate([alpha_ema[num], stack], axis=0)
                         personal_q_values[num].append(agent.personal_q_value)
@@ -150,14 +176,28 @@ def eval_performance(num_agents, agent_controller, env, name, timesteps=5000, ag
     print("Number of idle actions: ", idle_actions)
     print("Results for", name)
     print("Reward: ", reward)
-    print("Average distance from spawned apple to nearest agent:", np.mean(mean_distances))
+    print(
+        "Average distance from spawned apple to nearest agent:", np.mean(mean_distances)
+    )
     print("Total Apples: ", env.total_apples)
     print("Apples per agent:", reward / num_agents)
     print("Average Reward: ", reward / env.total_apples)
-    print("Picked vs Spawned per agent", (reward / num_agents) / (env.total_apples / num_agents))
+    print(
+        "Picked vs Spawned per agent",
+        (reward / num_agents) / (env.total_apples / num_agents),
+    )
     plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, name, "x")
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
     if not inference:
-        return env.total_apples, reward, reward / num_agents, (reward / num_agents) / (env.total_apples / num_agents), np.mean(nearest_neighbour_mean_distance), np.mean(num_of_apples_per_second), nearest_apple_actions, idle_actions
+        return (
+            env.total_apples,
+            reward,
+            reward / num_agents,
+            (reward / num_agents) / (env.total_apples / num_agents),
+            np.mean(nearest_neighbour_mean_distance),
+            np.mean(num_of_apples_per_second),
+            nearest_apple_actions,
+            idle_actions,
+        )
     else:
         return personal_q_values, agent_distance_hist

@@ -158,10 +158,19 @@ def step_and_evaluate_reward_prediction_accuracy_decentralized(
 
     reward_predictions = []
     for ag in agents_list:
-        s = agent_controller.critic_view_controller.state_to_nn_input(
-            environment.get_state(), ag.position, ag
-        )
-        reward_predictions.append(float(ag.reward_network.get_value_function(s)))
+        if isinstance(ag.reward_network, RewardCNN):
+            s = ag.reward_network._raw_state_to_nn_input(
+                environment.get_state(), ag.position
+            )
+            reward_predictions.append(
+                float(ag.reward_network.get_model_reward_prediction(s))
+            )
+        else:
+            s = agent_controller.critic_view_controller.state_to_nn_input(
+                environment.get_state(), ag.position, ag
+            )
+
+            reward_predictions.append(float(ag.reward_network.get_value_function(s)))
 
     if (
         isinstance(environment, OrchardBasicNewDynamic)

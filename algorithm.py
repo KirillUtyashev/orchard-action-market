@@ -689,13 +689,25 @@ class Algorithm:
                         self.evaluate_checkpoint(step, self.train_config.seed).log(
                             self.logger
                         )
-                        # NOTE most classes just call graph_plots
-                        # but cnn architecture generates plots differently
-                        # so each algorithm should be responsible for generating
-                        # its own plot.
-                        self.generate_plots()
-
+                        graph_plots(
+                            self.name,
+                            self.weights_plot,
+                            self.critic_loss,
+                            self.loss_plot,
+                            self.loss_plot5,
+                            self.loss_plot6,
+                            self.v_weights,
+                        )
             # Final evaluation
+            graph_plots(
+                self.name,
+                self.weights_plot,
+                self.critic_loss,
+                self.loss_plot,
+                self.loss_plot5,
+                self.loss_plot6,
+                self.v_weights,
+            )
             if not self.debug:
                 return self._evaluate_final()
             else:
@@ -761,10 +773,13 @@ class Algorithm:
             self._init_reward_networks(),
         )
         if not test:
+            # NOTE this was causing problems for me so I remove it temporarily.
+            # agent_pos = *self.restore_all() if self.train_config.skip else (None, None)
             self.env: Orchard = create_env(
                 self.env_config,
                 self.train_config.num_agents,
-                *self.restore_all() if self.train_config.skip else (None, None),
+                (None, None),
+                None,
                 self._agents_list,
                 self.env_cls,
                 debug=self.debug,

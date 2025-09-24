@@ -201,7 +201,7 @@ class RewardCNN(nn.Module):
         processed_state = self._raw_state_to_nn_input(raw_state, agent_pos)
         self.batch_states.append(processed_state)
         self.batch_rewards.append(reward)
-        if reward >= 1.5:
+        if True:
             log_message = (
                 f"\n--- Interesting Experience Logged ---\n"
                 f"Reward (Target): {reward}\n"

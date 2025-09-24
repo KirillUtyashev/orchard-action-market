@@ -20,6 +20,7 @@ from algorithm import Algorithm, EvalResult
 import matplotlib.pyplot as plt
 
 from models.reward_network import RewardNetwork
+from orchard.environment import OrchardBasic
 from plots import plot_smoothed
 
 
@@ -380,7 +381,7 @@ class RewardLearningDecentralized(RewardLearning):
     def run_inference(self):
         agents_list, agent_controller = self.init_agents_for_eval()
 
-        env = create_env(
+        env: OrchardBasic = create_env(
             self.env_config,
             self.train_config.num_agents,
             None,
