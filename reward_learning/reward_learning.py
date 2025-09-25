@@ -334,58 +334,69 @@ class RewardLearningDecentralized(RewardLearning):
             fig = plot_smoothed(
                 [agent.prediction_accuracy_history],
                 labels=[f"Agent {agent.id}"],
-                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy",
-                xlabel="Training step",
-                ylabel="Reward Prediction Accuracy",
-                num_points=50,  # this controls smoothing granularity
-            )
-            fig.savefig(self.graphs_out_path / f"{agent.id}_reward_loss.png")
-            plt.close(fig)
-            fig = plot_smoothed(
-                [agent.prediction_accuracy_by_reward["1.0"]],
-                labels=[f"Agent {agent.id}"],
-                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy",
-                xlabel="Training step",
-                ylabel="Reward Prediction Accuracy",
-                num_points=50,  # this controls smoothing granularity
-            )
-            fig.savefig(self.graphs_out_path / f"{agent.id}_reward_loss_reward_1.png")
-            plt.close(fig)
-
-            fig = plot_smoothed(
-                [agent.prediction_accuracy_by_reward["0.0"]],
-                labels=[f"Agent {agent.id}"],
-                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy",
-                xlabel="Training step",
-                ylabel="Reward Prediction Accuracy",
-                num_points=50,  # this controls smoothing granularity
-            )
-            fig.savefig(self.graphs_out_path / f"{agent.id}_reward_loss_reward_0.png")
-            plt.close(fig)
-
-            fig = plot_smoothed(
-                [agent.prediction_accuracy_by_reward["other"]],
-                labels=[f"Agent {agent.id}"],
-                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy",
+                title=f"Agent {agent.id} – Reward Prediction Accuracy over time",
                 xlabel="Training step",
                 ylabel="Reward Prediction Accuracy",
                 num_points=50,  # this controls smoothing granularity
             )
             fig.savefig(
-                self.graphs_out_path / f"{agent.id}_reward_loss_reward_other.png"
+                self.graphs_out_path
+                / f"{agent.id}_reward_prediction_accuracy_over_time.png"
+            )
+            plt.close(fig)
+            fig = plot_smoothed(
+                [agent.prediction_accuracy_by_reward["1.0"]],
+                labels=[f"Agent {agent.id}"],
+                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is 1.0",
+                xlabel="Training step",
+                ylabel="Reward Prediction Accuracy",
+                num_points=50,  # this controls smoothing granularity
+            )
+            fig.savefig(
+                self.graphs_out_path
+                / f"{agent.id}_reward_prediction_when_reward_is_1.png"
+            )
+            plt.close(fig)
+
+            fig = plot_smoothed(
+                [agent.prediction_accuracy_by_reward["0.0"]],
+                labels=[f"Agent {agent.id}"],
+                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is 0.0",
+                xlabel="Training step",
+                ylabel="Reward Prediction Accuracy",
+                num_points=50,  # this controls smoothing granularity
+            )
+            fig.savefig(
+                self.graphs_out_path
+                / f"{agent.id}_reward_prediction_when_reward_is_0.png"
+            )
+            plt.close(fig)
+
+            fig = plot_smoothed(
+                [agent.prediction_accuracy_by_reward["other"]],
+                labels=[f"Agent {agent.id}"],
+                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is other",
+                xlabel="Training step",
+                ylabel="Reward Prediction Accuracy",
+                num_points=50,  # this controls smoothing granularity
+            )
+            fig.savefig(
+                self.graphs_out_path
+                / f"{agent.id}_reward_prediction_when_reward_is_other.png"
             )
             plt.close(fig)
 
             fig = plot_smoothed(
                 [agent.prediction_accuracy_by_reward["-1.0"]],
                 labels=[f"Agent {agent.id}"],
-                title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy",
+                title=f"Agent {agent.id} – Immediate Reward Prediction when Reward is -1.0",
                 xlabel="Training step",
                 ylabel="Reward Prediction Accuracy",
                 num_points=50,  # this controls smoothing granularity
             )
             fig.savefig(
-                self.graphs_out_path / f"{agent.id}_reward_loss_reward_minus_one.png"
+                self.graphs_out_path
+                / f"{agent.id}_reward_prediction_when_reward_is_minus_one.png"
             )
             plt.close(fig)
 
