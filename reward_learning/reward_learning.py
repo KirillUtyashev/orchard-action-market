@@ -19,6 +19,7 @@ from models.actor_network import ActorNetwork
 from algorithm import Algorithm, EvalResult
 import matplotlib.pyplot as plt
 
+from models.reward_cnn import RewardCNN
 from models.reward_network import RewardNetwork
 from orchard.environment import OrchardBasic
 from plots import plot_smoothed
@@ -259,15 +260,25 @@ class RewardLearningDecentralized(RewardLearning):
                             env_step_result.old_positions[each_agent],
                             each_agent + 1,
                         )
-                    else:
-                        state = self.critic_view_controller.state_to_nn_input(
-                            env_step_result.new_state,
-                            self.agents_list[each_agent].position,
-                            each_agent + 1,
-                        )
+                    else:  # cnn should go here
+                        reward_net = self.agents_list[each_agent].reward_network
+                        if isinstance(reward_net, RewardCNN):
+                            reward_net.add_experience_from_raw(
+                                env_step_result.new_state,
+                                self.agents_list[each_agent].position,
+                                reward,
+                            )
+                        else:
+                            state = self.critic_view_controller.state_to_nn_input(
+                                env_step_result.new_state,
+                                self.agents_list[each_agent].position,
+                                each_agent + 1,
+                            )
                     agent_reward_network = self.agents_list[each_agent].reward_network
+
                     assert agent_reward_network is not None
-                    agent_reward_network.add_experience(state, reward)
+                    if not isinstance(agent_reward_network, RewardCNN):
+                        agent_reward_network.add_experience(state, reward)
                     if (
                         self.env.apples[self.agents_list[each_agent].position[0]][
                             self.agents_list[each_agent].position[1]

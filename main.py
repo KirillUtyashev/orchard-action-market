@@ -69,7 +69,7 @@ def eval_performance(
 ):
     agent_x_coordinates = [[] for _ in range(num_agents)]
     agent_y_coordinates = [[] for _ in range(num_agents)]
-    if inference:
+    if inference:  # not needed
         agent_distance_hist = {
             i: np.zeros((0, num_agents), dtype=float) for i in range(num_agents)
         }
@@ -119,7 +119,7 @@ def eval_performance(
                 change = apples_before - env.get_sum_apples()
                 reward += change
                 rec.log(agents_list)
-                if name != "test":
+                if name != "test":  #### IGNORE START #####
                     agent_x_coordinates = append_positional_metrics(
                         agent_x_coordinates, agents_list
                     )
@@ -166,6 +166,7 @@ def eval_performance(
                 nearest_dist = get_nearest_neighbor_distance(agent_idx, agents_list)
                 timestep_distances.append(nearest_dist)
             nearest_neighbour_mean_distance.append(np.mean(timestep_distances))
+            ### IGNORE END #####
             if i % 1000 == 0:
                 print(i)
             env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
@@ -190,7 +191,7 @@ def eval_performance(
     plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
     if not inference:
         return (
-            env.total_apples,
+            env.total_apples,  # always here
             reward,
             reward / num_agents,
             (reward / num_agents) / (env.total_apples / num_agents),

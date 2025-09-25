@@ -120,36 +120,36 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
                 debug=self.debug,
             )
 
-    @override
-    def collect_observation(self, step: int) -> None:
-        """
-        Collects observations and adds them to the CNN's replay buffer.
-        This version passes the raw state directly to the network, which
-        handles its own state processing.
-        """
-        try:
-            for tick in range(self.train_config.num_agents):
-                env_step_result: EnvStep = self.env_step(tick)
+    # @override
+    # def collect_observation(self, step: int) -> None:
+    #     """
+    #     Collects observations and adds them to the CNN's replay buffer.
+    #     This version passes the raw state directly to the network, which
+    #     handles its own state processing.
+    #     """
+    #     try:
+    #         for tick in range(self.train_config.num_agents):
+    #             env_step_result: EnvStep = self.env_step(tick)
 
-                # Use the property to get the correctly typed list
-                for agent in self.agents_list:
-                    # FIXME |_ This should also be agents with CNN reward network
-                    reward = env_step_result.reward_vector[agent.id]
+    #             # Use the property to get the correctly typed list
+    #             for agent in self.agents_list:
+    #                 # FIXME |_ This should also be agents with CNN reward network
+    #                 reward = env_step_result.reward_vector[agent.id]
 
-                    rewardcnn = agent.reward_network
-                    assert isinstance(rewardcnn, RewardCNN), "Agent doesn't have a CNN!"
+    #                 rewardcnn = agent.reward_network
+    #                 assert isinstance(rewardcnn, RewardCNN), "Agent doesn't have a CNN!"
 
-                    rewardcnn.add_experience_from_raw(
-                        env_step_result.new_state, agent.position, reward
-                    )
+    #                 rewardcnn.add_experience_from_raw(
+    #                     env_step_result.new_state, agent.position, reward
+    #                 )
 
-                if env_step_result.picked:
-                    self.env.remove_apple(
-                        self.agents_list[env_step_result.acting_agent_id].position
-                    )
-        except Exception as e:
-            self.logger.error(f"Error collecting observations: {e}")
-            raise
+    #             if env_step_result.picked:
+    #                 self.env.remove_apple(
+    #                     self.agents_list[env_step_result.acting_agent_id].position
+    #                 )
+    #     except Exception as e:
+    #         self.logger.error(f"Error collecting observations: {e}")
+    #         raise
 
     @override
     def init_agents_for_eval(
