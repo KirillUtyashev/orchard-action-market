@@ -200,7 +200,7 @@ class Algorithm:
         log_folder = algo_dir / "algo_logs"
         log_folder.mkdir(parents=True, exist_ok=True)
 
-        self.graphs_out_path = algo_dir / "graphs"
+        self.graphs_out_path = algo_dir / "graphs" / self.name
         self.graphs_out_path.mkdir(parents=True, exist_ok=True)
 
         filename = log_folder / f"{name}.log"
