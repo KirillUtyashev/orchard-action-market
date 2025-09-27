@@ -779,7 +779,7 @@ class Algorithm:
             self.env: Orchard = create_env(
                 self.env_config,
                 self.train_config.num_agents,
-                (None, None),
+                None,
                 None,
                 self._agents_list,
                 self.env_cls,

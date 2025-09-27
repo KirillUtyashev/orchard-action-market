@@ -159,7 +159,7 @@ def step_and_evaluate_reward_prediction_accuracy_decentralized(
     reward_predictions = []
     for ag in agents_list:
         if isinstance(ag.reward_network, RewardCNN):
-            s = ag.reward_network._raw_state_to_nn_input(
+            s = ag.reward_network.raw_state_to_nn_input(
                 environment.get_state(), ag.position
             )
             reward_predictions.append(

@@ -1,7 +1,9 @@
 import sys
+from typing_extensions import override
 
 sys.path.append("../")
 
+from pyparsing import abstractmethod
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -149,7 +151,44 @@ class RewardCNN(nn.Module):
         self.loss_history.append(loss_val)
         return loss_val
 
-    def _raw_state_to_nn_input(self, state: dict, agent_pos: np.ndarray) -> np.ndarray:
+    @abstractmethod
+    def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
+        """
+        Transforms state into neural net input
+
+        Args:
+            state: dict with keys "agents" and "apples" with values as 2D numpy arrays.
+            **kwargs: Additional arguments that may be needed by subclasses (e.g., agent_pos for decentralized model)
+        """
+        raise NotImplementedError(
+            "_raw_state_to_nn_input must be implemented in subclasses."
+        )
+
+    def add_experience_from_raw(self, raw_state: dict, reward: float, **kwargs):
+        """Processes a raw state and adds the experience to the training buffer.
+
+        Args:
+            raw_state: state after action was taken. dict with keys "agents" and "apples" with values as 2D numpy arrays.
+            reward: The reward received after taking an action.
+            **kwargs: Additional arguments that may be needed by subclasses (e.g., agent_pos for decentralized model)
+        """
+        processed_state = self.raw_state_to_nn_input(raw_state, **kwargs)
+        self.batch_states.append(processed_state)
+        self.batch_rewards.append(reward)
+        if False:
+            log_message = (
+                f"\n--- Interesting Experience Logged ---\n"
+                f"Reward (Target): {reward}\n"
+                f"Apples Channel (Input):\n{processed_state[0]}\n"
+                f"Other-Agents Channel (Input):\n{processed_state[1]}\n"
+                f"Self-Agent Channel (Input):\n{processed_state[2]}"
+            )
+            state_logger.debug(log_message)
+
+
+class RewardCNNDecentralized(RewardCNN):
+    @override
+    def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
         """
         Transforms state into a (3, height, width) numpy array for a CNN.
 
@@ -159,8 +198,19 @@ class RewardCNN(nn.Module):
 
         Args:
             state: dict with keys "agents" and "apples" with values as 2D numpy arrays.
-            agent_pos: The (row, col) position of the agent in the grid.
+            **kwargs:
+                agent_pos: (np.ndarray) indicating the position of the current agent.
+
+        Returns:
+            A numpy array of shape (3, height, width) suitable for CNN Decentralized input.
         """
+        try:
+            agent_pos = kwargs["agent_pos"]
+        except KeyError:
+            # Raise a more descriptive error to help the user.
+            raise ValueError(
+                "The decentralized model requires 'agent_pos' to be passed as a keyword argument."
+            )
         agents_map, apples_map = unwrap_state(state)  # Your helper from helpers.py
         height, width = agents_map.shape
 
@@ -188,25 +238,42 @@ class RewardCNN(nn.Module):
 
         return cnn_state
 
-    def add_experience_from_raw(
-        self, raw_state: dict, agent_pos: np.ndarray, reward: float
-    ):
-        """Processes a raw state and adds the experience to the training buffer.
 
-        Args:
-            raw_state: state after action was taken. dict with keys "agents" and "apples" with values as 2D numpy arrays.
-            agent_pos: The (row, col) position of the agent in the grid.
-            reward: The reward received after taking an action.
+class RewardCNNCentralized(RewardCNN):
+    @override
+    def __init__(
+        self,
+        height: int,
+        width: int,
+        alpha: float,
+        mlp_hidden_features: int = 128,
+    ):
+        # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
+        super().__init__(
+            input_channels=2,
+            height=height,
+            width=width,
+            alpha=alpha,
+            mlp_hidden_features=mlp_hidden_features,
+        )
+
+    def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
         """
-        processed_state = self._raw_state_to_nn_input(raw_state, agent_pos)
-        self.batch_states.append(processed_state)
-        self.batch_rewards.append(reward)
-        if True:
-            log_message = (
-                f"\n--- Interesting Experience Logged ---\n"
-                f"Reward (Target): {reward}\n"
-                f"Apples Channel (Input):\n{processed_state[0]}\n"
-                f"Other-Agents Channel (Input):\n{processed_state[1]}\n"
-                f"Self-Agent Channel (Input):\n{processed_state[2]}"
-            )
-            state_logger.debug(log_message)
+        Converts state dictionary with 2 keys and stacks them into a 2-channel numpy array.
+        - Channel 0: Apples
+        - Channel 1: All agents (not distinguishing between different agents)
+        Args:
+            state: dict with keys "agents" and "apples" with values as 2D numpy arrays.
+            **kwargs: Not used but included for compatibility with base class.
+        Returns:
+            A numpy array of shape (2, height, width) suitable for CNN Centralized input
+
+        """
+        agents_map, apples_map = unwrap_state(state)  # Your helper from helpers.py
+        height, width = agents_map.shape
+
+        # Stack the channels to create the final "image"
+        # The shape is (channels, height, width), which PyTorch expects
+        cnn_state = np.stack([apples_map, agents_map.astype(np.float32)], axis=0)
+
+        return cnn_state
