@@ -54,3 +54,4 @@ tzdata==2025.2
 --index-url https://download.pytorch.org/whl/cu129
 torch
 torchvision
+tqdm

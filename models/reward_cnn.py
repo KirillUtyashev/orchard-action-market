@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from utils import unwrap_state, ten, state_logger
+from utils import ten_float, unwrap_state, ten, state_logger
 from config import DEVICE
 
 import torch
@@ -19,6 +19,9 @@ import numpy as np
 
 class RewardCNN(nn.Module):
     """Convolutional Neural Network for Reward Prediction
+
+
+    Precondition: height and width must be at least 4 due to two max-pooling layers with kernel size 2.
 
     Attributes:
 
@@ -101,17 +104,32 @@ class RewardCNN(nn.Module):
             x = self.pool2(F.relu(self.conv2(x)))
             return x.numel()  # Total number of elements
 
-    def get_model_reward_prediction(self, x) -> np.ndarray:
+    def get_model_reward_prediction_from_proccessed_state(self, x) -> np.ndarray:
         # x is a single numpy array of shape [channels, height, width]
 
         # Convert to a PyTorch tensor and add a batch dimension of 1
-        state_input_tensor = ten(x, DEVICE).unsqueeze(
+        state_input_tensor = ten_float(x, DEVICE).unsqueeze(
             0
         )  # unsqueeze(0) adds the batch dim, shape becomes [1, C, H, W]
 
         with torch.no_grad():
             reward_prediction = self.forward(state_input_tensor)
         return reward_prediction.cpu().numpy()
+
+    def get_model_reward_prediction_from_raw(
+        self, raw_state: dict, **kwargs
+    ) -> np.ndarray:
+        """Get the model's reward prediction from a raw state dictionary.
+
+        Args:
+            raw_state: dict with keys "agents" and "apples" with values as 2D numpy arrays.
+            **kwargs: See raw_state_to_nn_input for details.
+
+        Returns:
+            The model's reward prediction as a numpy array.
+        """
+        processed_state = self.raw_state_to_nn_input(raw_state, **kwargs)
+        return self.get_model_reward_prediction_from_proccessed_state(processed_state)
 
     def train_batch(self):
         """Train the CNN model on the current batch of states and rewards. Note by batch we mean mini-batch training.
@@ -128,10 +146,12 @@ class RewardCNN(nn.Module):
         # self.batch_states is a list of numpy arrays with shape [channels, height, width]
         # Stack them into a single numpy array of shape [batch_size, channels, height, width]
         states_np = np.stack(self.batch_states, axis=0)
-        states_tensor = ten(states_np, DEVICE)
+        states_tensor = ten_float(states_np, DEVICE)
 
         # Targets are the rewards
-        targets = ten(np.asarray(self.batch_rewards, dtype=np.float64), DEVICE).view(
+        targets = ten_float(
+            np.asarray(self.batch_rewards, dtype=np.float64), DEVICE
+        ).view(
             -1
         )  # view is just in case
         preds = self.forward(states_tensor).view(
@@ -170,7 +190,7 @@ class RewardCNN(nn.Module):
         Args:
             raw_state: state after action was taken. dict with keys "agents" and "apples" with values as 2D numpy arrays.
             reward: The reward received after taking an action.
-            **kwargs: Additional arguments that may be needed by subclasses (e.g., agent_pos for decentralized model)
+            **kwargs: See raw_state_to_nn_input for details.
         """
         processed_state = self.raw_state_to_nn_input(raw_state, **kwargs)
         self.batch_states.append(processed_state)
@@ -276,4 +296,4 @@ class RewardCNNCentralized(RewardCNN):
         # The shape is (channels, height, width), which PyTorch expects
         cnn_state = np.stack([apples_map, agents_map.astype(np.float32)], axis=0)
 
-        return cnn_state
+        return cnn_state.astype(np.float32)

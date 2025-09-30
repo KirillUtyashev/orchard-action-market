@@ -163,7 +163,11 @@ def step_and_evaluate_reward_prediction_accuracy_decentralized(
                 environment.get_state(), ag.position
             )
             reward_predictions.append(
-                float(ag.reward_network.get_model_reward_prediction(s))
+                float(
+                    ag.reward_network.get_model_reward_prediction_from_proccessed_state(
+                        s
+                    )
+                )
             )
         else:
             s = agent_controller.critic_view_controller.state_to_nn_input(

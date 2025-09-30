@@ -20,6 +20,19 @@ def ten(c: np.ndarray, device: torch.device) -> torch.Tensor:
     return torch.from_numpy(c).to(device).double()
 
 
+def ten_float(c: np.ndarray, device: torch.device) -> torch.Tensor:
+    """Convert numpy array to torch tensor on specified device as float instead.
+
+    Args:
+        c: Input numpy array.
+        device: Target device for the tensor.
+
+    Returns:
+        A torch tensor on the specified device.
+    """
+    return torch.from_numpy(c).to(device).float()
+
+
 def unwrap_state(state: dict) -> tuple[np.ndarray, np.ndarray]:
     return state["agents"].copy(), state["apples"].copy()
 

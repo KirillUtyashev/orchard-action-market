@@ -26,5 +26,3 @@ out/
 
 # Environment variables file
 .env
-
-notebooks/
