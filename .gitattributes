@@ -1,1 +1,2 @@
+*.pkl filter=lfs diff=lfs merge=lfs -text
 data/100000_data_points/synthetic_rl_datasets.pkl !text !filter !merge !diff
