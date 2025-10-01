@@ -106,7 +106,7 @@ class RewardLearningCentralized(RewardLearning):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.env_step(tick)
-                - = np.sum(env_step_result.reward_vector) # 0 or 1 always
+                reward_sum = np.sum(env_step_result.reward_vector)  # 0 or 1 always
                 if not self.train_config.new_dynamic:
                     state = self.critic_view_controller.state_to_nn_input(
                         env_step_result.old_state, None, None
