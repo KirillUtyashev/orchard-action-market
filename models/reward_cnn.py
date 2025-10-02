@@ -38,6 +38,7 @@ class RewardCNN(nn.Module):
         width: int,
         alpha: float,
         mlp_hidden_features: int = 128,
+        num_mlp_hidden_layers: int = 1,
     ):
         """Convolutional Neural Network for Reward Prediction
 
@@ -62,11 +63,20 @@ class RewardCNN(nn.Module):
         # Calculate the size of the flattened layer after convolutions and pooling
         # This is a robust way to handle different input sizes
         conv_output_size = self._get_conv_output_size(input_channels, height, width)
-        self.mlp_head = nn.Sequential(
-            nn.Linear(conv_output_size, mlp_hidden_features),
-            nn.ReLU(),
-            nn.Linear(mlp_hidden_features, 1),
-        )
+
+        layers = []
+        input_features = conv_output_size
+
+        # This loop runs 'num_mlp_hidden_layers' times
+        for _ in range(num_mlp_hidden_layers):
+            layers.append(nn.Linear(input_features, mlp_hidden_features))
+            layers.append(nn.ReLU())
+            input_features = mlp_hidden_features
+
+        # This final layer is always added
+        layers.append(nn.Linear(input_features, 1))
+
+        self.mlp_head = nn.Sequential(*layers)
 
         # use all parameters of the model
         self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
