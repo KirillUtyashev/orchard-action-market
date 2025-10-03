@@ -29,3 +29,5 @@ GRAPHS_DIR = OUT_DIR / "graphs"
 GRAPHS_DIR.mkdir(exist_ok=True)
 CHECKPOINT_DIR = OUT_DIR / "checkpoints"
 CHECKPOINT_DIR.mkdir(exist_ok=True)
+OUT_DATA_DIR = OUT_DIR / "data"
+OUT_DATA_DIR.mkdir(exist_ok=True)

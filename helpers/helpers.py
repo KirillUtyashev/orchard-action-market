@@ -245,10 +245,10 @@ def step_reward_learning_centralized(
         )
         labels = result.reward_vector
 
-    s = agent_controller.critic_view_controller.process_state(
+    s = agent_controller.critic_view_controller.state_to_nn_input(
         environment.get_state(), None, None
     )
-    reward_prediction = agents_list[0].reward_network.get_value_function(s)
+    reward_prediction = agents_list[0].reward_network.get_model_reward_prediction(s)
 
     if not isinstance(environment, OrchardBasicNewDynamic):
         # Step env and labels

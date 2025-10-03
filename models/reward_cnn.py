@@ -59,7 +59,6 @@ class RewardCNN(nn.Module):
             in_channels=16, out_channels=32, kernel_size=3, padding=1
         )
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-
         # Calculate the size of the flattened layer after convolutions and pooling
         # This is a robust way to handle different input sizes
         conv_output_size = self._get_conv_output_size(input_channels, height, width)
@@ -84,6 +83,7 @@ class RewardCNN(nn.Module):
         self.batch_states = []
         self.batch_rewards = []
         self.loss_history = []
+        self.float()
         self.to(DEVICE)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -160,7 +160,7 @@ class RewardCNN(nn.Module):
 
         # Targets are the rewards
         targets = ten_float(
-            np.asarray(self.batch_rewards, dtype=np.float64), DEVICE
+            np.asarray(self.batch_rewards, dtype=np.float32), DEVICE
         ).view(
             -1
         )  # view is just in case
@@ -204,6 +204,7 @@ class RewardCNN(nn.Module):
         """
         processed_state = self.raw_state_to_nn_input(raw_state, **kwargs)
         self.batch_states.append(processed_state)
+        # turn reward into float32 as well
         self.batch_rewards.append(reward)
         if False:
             log_message = (
@@ -217,6 +218,25 @@ class RewardCNN(nn.Module):
 
 
 class RewardCNNDecentralized(RewardCNN):
+    @override
+    def __init__(
+        self,
+        height: int,
+        width: int,
+        alpha: float,
+        mlp_hidden_features: int = 128,
+        num_mlp_hidden_layers: int = 1,
+    ):
+        # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
+        super().__init__(
+            input_channels=3,
+            height=height,
+            width=width,
+            alpha=alpha,
+            mlp_hidden_features=mlp_hidden_features,
+            num_mlp_hidden_layers=num_mlp_hidden_layers,
+        )
+
     @override
     def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
         """
@@ -277,6 +297,7 @@ class RewardCNNCentralized(RewardCNN):
         width: int,
         alpha: float,
         mlp_hidden_features: int = 128,
+        num_mlp_hidden_layers: int = 1,
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
@@ -285,6 +306,7 @@ class RewardCNNCentralized(RewardCNN):
             width=width,
             alpha=alpha,
             mlp_hidden_features=mlp_hidden_features,
+            num_mlp_hidden_layers=num_mlp_hidden_layers,
         )
 
     def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
