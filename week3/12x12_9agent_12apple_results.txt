@@ -1,0 +1,17 @@
+
+--- Total Evaluation Results ---
+Total samples evaluated: 20000
+Total Mean Absolute Error (MAE): 0.0808
+Total Root Mean Squared Error (RMSE): 0.1167
+----- When reward > 0 -----
+Samples with true reward > 0: 8856
+MAE when true reward > 0: 0.1239
+RMSE when true reward > 0: 0.1613
+----- When reward = -1 -----
+Samples with true reward = -1: 1184
+MAE when true reward = -1: 0.0543
+RMSE when true reward = -1: 0.0658
+----- When reward = 0 -----
+Samples with true reward = 0: 9960
+MAE when true reward = 0: 0.0457
+RMSE when true reward = 0: 0.0608
