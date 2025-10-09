@@ -13,6 +13,16 @@ def pick_agent_uniformly(num):
 
 
 def get_agent_positions(agents_grid, picker_pos, index):
+    """Returns a list of agent positions ensuring that index index is the index of the picker.
+
+    Args:
+        agents_grid: grid of agents
+        picker_pos: position of the picker agent
+        index: target index for the picker agent
+
+    Returns:
+        list of agent positions where index 0 is the position of the picker agent
+    """
     positions = np.argwhere(agents_grid != 0).tolist()
     picker_pos = list(picker_pos)
 
@@ -22,7 +32,8 @@ def get_agent_positions(agents_grid, picker_pos, index):
         if i != index and index < len(positions):
             positions[i], positions[index] = positions[index], positions[i]
     else:
-        # if picker_pos wasn't in positions, just overwrite at index
+        # this should not happen
+        raise Exception("Picker position not in agents grid")
         if index < len(positions):
             positions[index] = picker_pos
         else:
@@ -37,9 +48,7 @@ def generate_reward_vector(picker_id, positions_list, apple_pos, picked):
         return res
     else:
         for agent_num in range(len(positions_list)):
-            res[agent_num] = calc_distance(
-                positions_list[agent_num], apple_pos
-            )
+            res[agent_num] = calc_distance(positions_list[agent_num], apple_pos)
         res = res / np.sum(res)
         res = 2 * res
         res[picker_id] = -1

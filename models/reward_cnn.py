@@ -224,8 +224,8 @@ class RewardCNNDecentralized(RewardCNN):
         height: int,
         width: int,
         alpha: float,
-        mlp_hidden_features: int = 128,
-        num_mlp_hidden_layers: int = 1,
+        mlp_hidden_features: int = 256,
+        num_mlp_hidden_layers: int = 2,
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
