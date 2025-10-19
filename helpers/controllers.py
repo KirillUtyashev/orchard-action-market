@@ -63,10 +63,11 @@ class AgentControllerValue(AgentController):
             self.count_random_actions = 0
 
     @abstractmethod
-    def get_collective_value(self, states, agent_id):
+    def get_collective_value(self, processed_state, agent_id):
         pass
 
-    def get_best_action(self, env, agent_id, communal=True):
+    def get_best_action(self, env, agent_id, **kwargs):
+        communal = kwargs.get("communal", True)
         action = env.available_actions.STAY
         best_val = -1000000
 

@@ -9,6 +9,7 @@ from helpers.controllers import (
     AgentControllerCentralized,
     AgentControllerDecentralized,
     AgentControllerDecentralizedPersonal,
+    AgentControllerValue,
     ViewController,
 )
 from helpers.helpers import get_discounted_value
@@ -56,11 +57,11 @@ class CentralizedValueFunction(ValueFunction):
             a_list.append(trained_agent)
         return a_list, AgentControllerCentralized(a_list, self.critic_view_controller)
 
-    def collect_observation(self, step: int) -> None:
+    def step_and_collect_observation(self, step: int) -> None:
         """Collect observations."""
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick)
+                env_step_result = self.single_agent_env_step(tick)
                 processed_state = self.critic_view_controller.state_to_nn_input(
                     env_step_result.old_state, None, None
                 )
@@ -84,7 +85,7 @@ class CentralizedValueFunction(ValueFunction):
             self.logger.error(f"Error collecting observations: {e}")
             raise
 
-    def _init_critic_networks(self, value_network_cls=VNetwork):
+    def _init_critic_networks(self, value_network_cls=VNetwork) -> list:
         # Get critic network vision
         if self.train_config.critic_vision != 0:
             if self.env_config.width != 1:
@@ -106,7 +107,7 @@ class CentralizedValueFunction(ValueFunction):
     def build_experiment(
         self,
         view_controller_cls=ViewController,
-        agent_controller_cls=AgentControllerCentralized,
+        agent_controller_cls: AgentControllerValue = AgentControllerCentralized,  # type: ignore
         agent_type=SimpleAgent,
         value_network_cls=VNetwork,
         **kwargs,
@@ -182,11 +183,11 @@ class DecentralizedValueFunction(ValueFunction):
             a_list.append(trained_agent)
         return a_list, AgentControllerDecentralized(a_list, self.critic_view_controller)
 
-    def collect_observation(self, step: int) -> None:
+    def step_and_collect_observation(self, step: int) -> None:
         """Collect observations for decentralized training."""
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick)
+                env_step_result = self.single_agent_env_step(tick)
                 for each_agent in range(len(self._agents_list)):
                     reward = env_step_result.reward_vector[each_agent]
                     processed_state = self.critic_view_controller.state_to_nn_input(

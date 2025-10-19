@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba
 
+from config import INFERENCE_DIR
+
 graph = 0
 
 
@@ -47,9 +49,11 @@ class PositionRecorder(AbstractContextManager):
 
     def save(self):
         """Write the tensor to disk immediately (optional)."""
-        np.save(self.outfile, self._pos[:self._t])
-        print(f"[PositionRecorder]   saved → {self.outfile} "
-              f"shape={self._pos[:self._t].shape}")
+        np.save(self.outfile, self._pos[: self._t])
+        print(
+            f"[PositionRecorder]   saved → {self.outfile} "
+            f"shape={self._pos[:self._t].shape}"
+        )
 
     # -------- context-manager plumbing -------------------------------------
     def __exit__(self, exc_type, exc, tb):
@@ -57,17 +61,17 @@ class PositionRecorder(AbstractContextManager):
         try:
             self.save()
         finally:
-            return False            # propagate any exception
+            return False  # propagate any exception
 
 
 def plot_agents_trajectories(
-        positions: np.ndarray,
-        agent_ids: Optional[List[int]] = None,
-        colors: Optional[List[str]] = None,
-        ax: Optional[Axes] = None,
-        linewidth: float = 2.0,
-        alpha: float = 0.9,
-        show_markers: bool = True,
+    positions: np.ndarray,
+    agent_ids: Optional[List[int]] = None,
+    colors: Optional[List[str]] = None,
+    ax: Optional[Axes] = None,
+    linewidth: float = 2.0,
+    alpha: float = 0.9,
+    show_markers: bool = True,
 ) -> Axes:
     """
     Overlay plain trajectories (no time-colour) for one or more agents.
@@ -94,7 +98,9 @@ def plot_agents_trajectories(
     ax : matplotlib Axes
         The axes on which the trajectories were drawn.
     """
-    assert positions.ndim == 3 and positions.shape[-1] == 2, "positions must be (T, N, 2)"
+    assert (
+        positions.ndim == 3 and positions.shape[-1] == 2
+    ), "positions must be (T, N, 2)"
 
     # default to all agents
     if agent_ids is None:
@@ -120,17 +126,31 @@ def plot_agents_trajectories(
         ax.plot(xs, ys, color=colour, lw=linewidth, alpha=alpha, label=f"agent {aid}")
 
         if show_markers and len(xs) > 0:
-            ax.scatter(xs[0],  ys[0],  s=60, c=[colour],
-                       marker="o", edgecolors="k", linewidths=.5)
-            ax.scatter(xs[-1], ys[-1], s=80, c=[colour],
-                       marker="X", edgecolors="k", linewidths=.5)
+            ax.scatter(
+                xs[0],
+                ys[0],
+                s=60,
+                c=[colour],
+                marker="o",
+                edgecolors="k",
+                linewidths=0.5,
+            )
+            ax.scatter(
+                xs[-1],
+                ys[-1],
+                s=80,
+                c=[colour],
+                marker="X",
+                edgecolors="k",
+                linewidths=0.5,
+            )
 
     # cosmetics
     ax.set_xlim(0, L)
     ax.set_ylim(0, L)
     ax.set_xticks(range(L + 1))
     ax.set_yticks(range(L + 1))
-    ax.grid(which="both", color="gray", lw=.4, alpha=.3)
+    ax.grid(which="both", color="gray", lw=0.4, alpha=0.3)
     ax.set_aspect("equal")
     ax.set_title("Agent trajectories (start ○  end ✕)")
     ax.legend(loc="upper right", fontsize=8, frameon=False)
@@ -139,12 +159,12 @@ def plot_agents_trajectories(
 
 
 def plot_agent_heatmap_alpha(
-        positions: np.ndarray,
-        agent_ids: Optional[List[int]] = None,
-        colors: Optional[List[str]] = None,
-        ax: Optional[plt.Axes] = None,
-        grid_color: str = "white",
-        normalize: str = "per_agent",   # "per_agent" or "global"
+    positions: np.ndarray,
+    agent_ids: Optional[List[int]] = None,
+    colors: Optional[List[str]] = None,
+    ax: Optional[plt.Axes] = None,
+    grid_color: str = "white",
+    normalize: str = "per_agent",  # "per_agent" or "global"
 ) -> plt.Axes:
     """
     Overlay single-colour α-heat-maps for several agents on ONE axes.
@@ -174,7 +194,9 @@ def plot_agent_heatmap_alpha(
     -------
     ax : matplotlib Axes
     """
-    assert positions.ndim == 3 and positions.shape[-1] == 2, "positions must be (T, N, 2)"
+    assert (
+        positions.ndim == 3 and positions.shape[-1] == 2
+    ), "positions must be (T, N, 2)"
     T, N, _ = positions.shape
 
     if agent_ids is None:
@@ -308,8 +330,17 @@ def average_agent_x(state, total_reward, timestep):
     return np.sum(dist_list) / dist_list.size
 
 
-def append_metrics(metrics, state, total_reward, timestep, avg_picked=True, avg_field=True, dist_to_apple=True,
-                 dist_to_agent=True, avg_x=True):
+def append_metrics(
+    metrics,
+    state,
+    total_reward,
+    timestep,
+    avg_picked=True,
+    avg_field=True,
+    dist_to_apple=True,
+    dist_to_agent=True,
+    avg_x=True,
+):
     if timestep == 0:
         return metrics
     if avg_picked:
@@ -339,12 +370,13 @@ def append_y_coordinates(agent_y_coordinates, agents_list):
 
     return agent_y_coordinates
 
+
 metric_titles = [
     "Average Apples Picked per Timestep",
     "Average Apples on Field",
     "Average Distance to Nearest Apple",
     "Average Distance to Nearest Agent",
-    "Average X of Agents"
+    "Average X of Agents",
 ]
 
 
@@ -382,14 +414,14 @@ def plot_agent_specific_metrics(agent_metrics, apples, name, vector):
     """
     global graph
     graph += 1
-    graph_folder = Path(f"graphs/{name}")
+    graph_folder = INFERENCE_DIR / f"{name}"
     graph_folder.mkdir(parents=True, exist_ok=True)
     fig_id = f"graph_{name}_{str(graph)}"
     plt.figure(fig_id, figsize=(6, 5))
 
     # --- agents: keep as connected lines ------------------------------
     for i, series in enumerate(agent_metrics):
-        series1 = series[8000:10000]        # or whatever window you like
+        series1 = series[8000:10000]  # or whatever window you like
         plt.plot(series1, label=f"agent {i}")
 
     check = apples[8000:10000]
@@ -397,12 +429,11 @@ def plot_agent_specific_metrics(agent_metrics, apples, name, vector):
     xs, ys = [], []
 
     for t, vals in enumerate(check):
-        xs.extend([t] * len(vals))   # repeat the timestep for *each* value
-        ys.extend(vals)              # append every number in the list
-
+        xs.extend([t] * len(vals))  # repeat the timestep for *each* value
+        ys.extend(vals)  # append every number in the list
 
     # --- apples: unconnected scatter ---------------------------------
-    plt.scatter(xs, ys, c=ys, cmap='tab10', s=30, alpha=0.1, edgecolors='none')
+    plt.scatter(xs, ys, c=ys, cmap="tab10", s=30, alpha=0.1, edgecolors="none")
 
     # -----------------------------------------------------------------
     if vector == "x":

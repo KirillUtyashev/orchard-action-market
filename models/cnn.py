@@ -17,8 +17,8 @@ import torch.nn.functional as F
 import numpy as np
 
 
-class RewardCNN(nn.Module):
-    """Convolutional Neural Network for Reward Prediction
+class CNN(nn.Module):
+    """Convolutional Neural Network used for anything that takes in the orchard state.
 
 
     Precondition: height and width must be at least 4 due to two max-pooling layers with kernel size 2.
@@ -216,8 +216,35 @@ class RewardCNN(nn.Module):
             )
             state_logger.debug(log_message)
 
+    def export_net_state(self):
+        """
+        Creates a dictionary containing the model's weights and the optimizer's state.
+        This makes the CNN compatible with the existing saving and loading mechanism.
+        """
+        return {
+            "weights": self.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+        }
 
-class RewardCNNDecentralized(RewardCNN):
+    def import_net_state(self, blob, device=DEVICE):
+        """
+        Loads the model's weights and optimizer state from a dictionary.
+        """
+        # The main model is a nn.Module, so we can use load_state_dict
+        self.load_state_dict(blob["weights"])
+
+        # Also load the optimizer state if it exists
+        if blob.get("optimizer") is not None:
+            self.optimizer.load_state_dict(blob["optimizer"])
+            # The original code has this important loop to move optimizer
+            # tensors to the correct device (e.g., GPU), which we should keep.
+            for state in self.optimizer.state.values():
+                for k, v in state.items():
+                    if torch.is_tensor(v):
+                        state[k] = v.to(device)
+
+
+class CNNDecentralized(CNN):
     @override
     def __init__(
         self,
@@ -289,7 +316,7 @@ class RewardCNNDecentralized(RewardCNN):
         return cnn_state
 
 
-class RewardCNNCentralized(RewardCNN):
+class CNNCentralized(CNN):
     @override
     def __init__(
         self,

@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from models.reward_cnn import RewardCNNDecentralized
+from models.cnn import CNNDecentralized
 
 
 def test_cnn_decentralized_input_0_1():
@@ -24,7 +24,7 @@ def test_cnn_decentralized_input_0_1():
     agent_pos = np.array([1, 2])
     raw_state = {"agents": agents, "apples": apples}
 
-    model = RewardCNNDecentralized(4, 4, 0.0001)
+    model = CNNDecentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state, agent_pos=agent_pos)
 
     expected_state = np.array(
@@ -75,7 +75,7 @@ def test_cnn_centralized_input_0():
     raw_state = {"agents": agents, "apples": apples}
     agent_pos = np.array([0, 1])
 
-    model = RewardCNNDecentralized(4, 4, 0.0001)
+    model = CNNDecentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state, agent_pos=agent_pos)
 
     expected_state = np.array(
@@ -125,7 +125,7 @@ def test_cnn_centralized_input_biggers_numbers1():
     )
     raw_state = {"agents": agents, "apples": apples}
     agent_pos = np.array([0, 1])
-    model = RewardCNNDecentralized(4, 4, 0.0001)
+    model = CNNDecentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state, agent_pos=agent_pos)
 
     expected_state = np.array(
@@ -176,7 +176,7 @@ def test_cnn_centralized_input_biggers_numbers2():
     agent_pos = np.array([1, 2])
 
     raw_state = {"agents": agents, "apples": apples}
-    model = RewardCNNDecentralized(4, 4, 0.0001)
+    model = CNNDecentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state, agent_pos=agent_pos)
 
     expected_state = np.array(

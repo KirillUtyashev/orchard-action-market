@@ -11,7 +11,7 @@ from agents.agent import Agent
 from agents.agent import Agent
 from agents.reward_agent import RewardAgent
 from algorithm import EnvStep, EvalResult
-from config import GRAPHS_DIR
+from config import FINAL_DIR
 from configs.config import ExperimentConfig
 from helpers.controllers import AgentController, AgentControllerUsingPolicy
 from helpers.helpers import (
@@ -20,7 +20,7 @@ from helpers.helpers import (
 
 
 from main import eval_performance
-from models.reward_cnn import RewardCNN
+from models.cnn import CNN
 from orchard.environment import (
     Orchard,
     OrchardBasic,
@@ -50,27 +50,27 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
             config,
             name=f"CNNRewardLearning-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>-new_dynamic-<{config.train_config.new_dynamic}>",
         )
-        self.accuracy_over_time_discrete = {
-            key: [] for key in reward_plot_keys_discrete
-        }
-        self.accuracy_over_time_continuous = {
-            key: [] for key in reward_plot_keys_continuous
-        }
-        # Note total refers to over all agents
-        self.total_true_rewards_discrete: dict[RewardKeys, int] = {
-            key: 0 for key in reward_plot_keys_discrete
-        }
-        self.total_true_rewards_continuous: dict[RewardKeys, int] = {
-            key: 0 for key in reward_plot_keys_continuous
-        }
-        self.total_predicted_rewards_discrete: dict[RewardKeys, int] = {
-            key: 0 for key in reward_plot_keys_discrete
-        }
-        self.total_predicted_rewards_continuous: dict[RewardKeys, int] = {
-            key: 0 for key in reward_plot_keys_continuous
-        }
-        self.loss_over_time = []
-        self.prediction_error_over_time = []
+        # self.accuracy_over_time_discrete = {
+        #     key: [] for key in reward_plot_keys_discrete
+        # }
+        # self.accuracy_over_time_continuous = {
+        #     key: [] for key in reward_plot_keys_continuous
+        # }
+        # # Note total refers to over all agents
+        # self.total_true_rewards_discrete: dict[RewardKeys, int] = {
+        #     key: 0 for key in reward_plot_keys_discrete
+        # }
+        # self.total_true_rewards_continuous: dict[RewardKeys, int] = {
+        #     key: 0 for key in reward_plot_keys_continuous
+        # }
+        # self.total_predicted_rewards_discrete: dict[RewardKeys, int] = {
+        #     key: 0 for key in reward_plot_keys_discrete
+        # }
+        # self.total_predicted_rewards_continuous: dict[RewardKeys, int] = {
+        #     key: 0 for key in reward_plot_keys_continuous
+        # }
+        # self.loss_over_time = []
+        # self.prediction_error_over_time = []
 
     # --- THIS IS THE ONLY METHOD WE NEED TO OVERRIDE ---
     def build_experiment(  # FIXME we should refactor this because this is improper override.
@@ -89,9 +89,9 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
 
         # --- 2. Create the CNNs for the agents ---
         # We manually create the list of networks here.
-        networks: list[RewardCNN] = []
+        networks: list[CNN] = []
         for _ in range(self.train_config.num_agents):
-            net = RewardCNN(
+            net = CNN(
                 input_channels=3,
                 height=self.env_config.width,
                 width=self.env_config.length,
@@ -119,37 +119,6 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
                 self.env_cls,
                 debug=self.debug,
             )
-
-    # @override
-    # def collect_observation(self, step: int) -> None:
-    #     """
-    #     Collects observations and adds them to the CNN's replay buffer.
-    #     This version passes the raw state directly to the network, which
-    #     handles its own state processing.
-    #     """
-    #     try:
-    #         for tick in range(self.train_config.num_agents):
-    #             env_step_result: EnvStep = self.env_step(tick)
-
-    #             # Use the property to get the correctly typed list
-    #             for agent in self.agents_list:
-    #                 # FIXME |_ This should also be agents with CNN reward network
-    #                 reward = env_step_result.reward_vector[agent.id]
-
-    #                 rewardcnn = agent.reward_network
-    #                 assert isinstance(rewardcnn, RewardCNN), "Agent doesn't have a CNN!"
-
-    #                 rewardcnn.add_experience_from_raw(
-    #                     env_step_result.new_state, agent.position, reward
-    #                 )
-
-    #             if env_step_result.picked:
-    #                 self.env.remove_apple(
-    #                     self.agents_list[env_step_result.acting_agent_id].position
-    #                 )
-    #     except Exception as e:
-    #         self.logger.error(f"Error collecting observations: {e}")
-    #         raise
 
     @override
     def init_agents_for_eval(
@@ -184,205 +153,6 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
 
         return eval_agents, eval_controller
 
-    # def _run_evaluation_simulation(
-    #     self, eval_agents: list[RewardAgent], env: Orchard
-    # ) -> None:
-    #     """
-    #     Runs a full evaluation simulation. This method MUTATES the eval_agents
-    #     by filling in their prediction_metrics
-    #     """
-    #     print("--- Starting new, clean evaluation simulation ---")
-    #     agent_controller = AgentControllerUsingPolicy(
-    #         eval_agents, critic_view_controller=None
-    #     )
-    #     tol = 1e-1  # Tolerance for a correct prediction
-
-    #     for _ in range(self.train_config.eval_timesteps):
-    #         for tick in range(self.train_config.num_agents):
-    #             # 1. ONE (random) AGENT TAKES ONE ACTION IN THE ENVIRONMENT
-    #             # This is the event we are going to evaluate.
-    #             acting_agent_idx = random.randint(0, env.n - 1)
-    #             action = agent_controller.agent_get_action(env, acting_agent_idx, None)
-    #             result = env.process_action(
-    #                 acting_agent_idx,
-    #                 eval_agents[acting_agent_idx].position.copy(),
-    #                 action,
-    #             )
-
-    #             # 2. GET THE RESULTS OF THAT ACTION
-    #             # This is the state AFTER the action, where agent and apple might overlap.
-    #             post_action_state = env.get_state()
-    #             # This is the ground-truth reward vector from that action.
-    #             labels = result.reward_vector
-
-    #             # 3. GET PREDICTIONS BASED ON THE POST-ACTION STATE
-    #             # Now we ask each agent: "Looking at this new state, what reward do you think you just got?"
-    #             reward_predictions = []
-    #             for agent in eval_agents:
-    #                 network = agent.reward_network
-    #                 assert isinstance(network, RewardCNN)
-
-    #                 # Use the network's internal helper to process the post-action state
-    #                 processed_state = network._raw_state_to_nn_input(
-    #                     post_action_state, agent.position
-    #                 )
-    #                 # Get the prediction for that processed state
-    #                 prediction = network.get_model_reward_prediction(processed_state)
-    #                 reward_predictions.append(prediction.item())
-
-    #             tol = 1e-1
-    #             for i, reward_agent in enumerate(eval_agents):
-    #                 label = labels[i]
-    #                 # populate discrete total rewards
-    #                 if label == -1.0:
-    #                     self.total_true_rewards_discrete[RewardKeys.NEG_ONE] += 1
-    #                 elif label == 0.0:
-    #                     self.total_true_rewards_discrete[RewardKeys.ZERO] += 1
-    #                 elif label == 1.0:
-    #                     self.total_true_rewards_discrete[RewardKeys.ONE] += 1
-    #                 else:
-    #                     self.total_true_rewards_discrete[RewardKeys.OTHER] += 1
-    #                 # populate continuous total rewards
-    #                 if label < 0.0:
-    #                     self.total_true_rewards_continuous[
-    #                         RewardKeys.LESS_THAN_ZERO
-    #                     ] += 1
-    #                 elif label > 0.0:
-    #                     self.total_true_rewards_continuous[
-    #                         RewardKeys.GREATER_THAN_ZERO
-    #                     ] += 1
-    #                 else:
-    #                     self.total_true_rewards_continuous[RewardKeys.ZERO] += 1
-
-    #                 predicted_reward = reward_predictions[i]
-    #                 prediction_error = abs(label - predicted_reward)
-    #                 is_correct = 1 if prediction_error <= tol else 0
-
-    #                 reward_agent.prediction_metrics[
-    #                     RewardKeys.PREDICTION_ERRORS
-    #                 ].append(prediction_error)
-
-    #                 if predicted_reward == -1.0:
-    #                     discrete_key = RewardKeys.NEG_ONE
-    #                 elif predicted_reward == 0.0:
-    #                     discrete_key = RewardKeys.ZERO
-    #                 elif predicted_reward == 1.0:
-    #                     discrete_key = RewardKeys.ONE
-    #                 else:
-    #                     discrete_key = RewardKeys.OTHER
-
-    #                 if predicted_reward < 0:
-    #                     continuous_key = RewardKeys.LESS_THAN_ZERO
-    #                 elif predicted_reward > 0:
-    #                     continuous_key = RewardKeys.GREATER_THAN_ZERO
-    #                 else:
-    #                     continuous_key = RewardKeys.ZERO
-    #                 reward_agent.prediction_metrics[RewardKeys.CORRECT] += is_correct
-    #                 reward_agent.prediction_metrics[RewardKeys.TOTAL] += 1
-    #                 # Update continuous metrics
-    #                 reward_agent.prediction_metrics[RewardType.CONTINUOUS][
-    #                     continuous_key
-    #                 ][RewardKeys.CORRECT] += is_correct
-    #                 reward_agent.prediction_metrics[RewardType.CONTINUOUS][
-    #                     continuous_key
-    #                 ][RewardKeys.TOTAL] += 1
-    #                 # Update discrete metrics
-    #                 reward_agent.prediction_metrics[RewardType.DISCRETE][discrete_key][
-    #                     RewardKeys.CORRECT
-    #                 ] += is_correct
-    #                 reward_agent.prediction_metrics[RewardType.DISCRETE][discrete_key][
-    #                     RewardKeys.TOTAL
-    #                 ] += 1
-
-    #             if result.picked:
-    #                 env.remove_apple(eval_agents[acting_agent_idx].position.copy())
-
-    #         env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
-    #         env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
-
-    # @override
-    # def run_inference(self) -> EvalResult:
-    #     """Custom inference method that uses our new, clean evaluation loop."""
-    #     try:
-    #         eval_agents_list, _ = self.init_agents_for_eval()
-
-    #         # 2. Create a fresh environment.
-    #         env: OrchardBasic = create_env(
-    #             self.env_config,
-    #             self.train_config.num_agents,
-    #             None,
-    #             None,
-    #             eval_agents_list,  # Use the eval agents
-    #             self.env_cls,
-    #         )
-
-    #         # 3. Run the simulation. This will populate the accuracy counters on the eval_agents.
-    #         with torch.no_grad():
-    #             self._run_evaluation_simulation(eval_agents_list, env)
-
-    #         # 5. Create the final result object for the main log file.
-    #         #    We get the metrics from the environment that was just run.
-    #         total_picked = env.total_picked
-    #         num_agents = env.n
-    #         total_apples = env.total_apples
-
-    #         # fill self.accuracy_over_time_discrete and self.accuracy_over_time_continuous, and loss_over_time and prediction_error_over_time
-    #         # by averaging over all eval_agents
-    #         for key in reward_plot_keys_discrete:
-    #             if key == RewardKeys.PREDICTION_ERRORS:
-    #                 continue
-    #             total_correct = sum(
-    #                 ag.prediction_metrics[RewardType.DISCRETE][key][RewardKeys.CORRECT]
-    #                 for ag in eval_agents_list
-    #             )
-    #             total_preds = sum(
-    #                 ag.prediction_metrics[RewardType.DISCRETE][key][RewardKeys.TOTAL]
-    #                 for ag in eval_agents_list
-    #             )
-    #             accuracy = total_correct / total_preds if total_preds > 0 else 0.0
-    #             self.accuracy_over_time_discrete[key].append(accuracy)
-
-    #         for key in reward_plot_keys_continuous:
-    #             if key == RewardKeys.PREDICTION_ERRORS:
-    #                 continue
-    #             total_correct = sum(
-    #                 ag.prediction_metrics[RewardType.CONTINUOUS][key][
-    #                     RewardKeys.CORRECT
-    #                 ]
-    #                 for ag in eval_agents_list
-    #             )
-    #             total_preds = sum(
-    #                 ag.prediction_metrics[RewardType.CONTINUOUS][key][RewardKeys.TOTAL]
-    #                 for ag in eval_agents_list
-    #             )
-    #             accuracy = total_correct / total_preds if total_preds > 0 else 0.0
-    #             self.accuracy_over_time_continuous[key].append(accuracy)
-
-    #         # PREDICTION ERRORS
-    #         avg_prediction_error = self.calculate_average_prediction_error(
-    #             eval_agents_list
-    #         )
-    #         self.prediction_error_over_time.append(avg_prediction_error)
-
-    #         return EvalResult(
-    #             total_apples=total_apples,
-    #             total_picked=total_picked,
-    #             picked_per_agent=total_picked / num_agents if num_agents > 0 else 0,
-    #             per_agent=(
-    #                 (total_picked / num_agents) / (total_apples / num_agents)
-    #                 if total_apples > 0
-    #                 else 0
-    #             ),
-    #             # These other metrics are not calculated in our simple loop, so we can default them.
-    #             average_distance=0.0,
-    #             apple_per_sec=0.0,
-    #             nearest_actions=0,
-    #             idle_actions=0,
-    #         )
-    #     except Exception as e:
-    #         self.logger.error(f"Error during inference: {e}")
-    #         raise
-
     def calculate_average_prediction_error(self, eval_agents_list):
         total_prediction_error = sum(
             sum(ag.prediction_metrics[RewardKeys.PREDICTION_ERRORS])
@@ -400,7 +170,7 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
 
     def generate_plots(self):  # BOOKMARK
         """Generates plots for training loss, final prediction accuracy."""
-        output_graph_dir = GRAPHS_DIR / f"{self.name}_{date.today()}"
+        output_graph_dir = FINAL_DIR / f"{self.name}_{date.today()}"
         output_graph_dir.mkdir(parents=True, exist_ok=True)
         # Create an x-axis representing the evaluation checkpoints
         num_evaluations = len(self.prediction_error_over_time)
@@ -414,7 +184,7 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
         for i, agent in enumerate(self.agents_list):
             network = agent.reward_network
             plt.figure(figsize=(10, 6))
-            assert isinstance(network, RewardCNN)
+            assert isinstance(network, CNN)
             # plot raw data
             plt.plot(
                 range(len(network.loss_history)),

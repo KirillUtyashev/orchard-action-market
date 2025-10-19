@@ -17,9 +17,9 @@ from helpers.controllers import (
     ViewControllerOrchardSelfless,
 )
 from main import eval_performance
-from models import reward_network
+from models import network, reward_network
 from models.actor_network import ActorNetwork
-from models.reward_cnn import RewardCNN
+from models.cnn import CNN
 from models.reward_network import RewardNetwork
 from models.value_function import VNetwork
 from plots import add_to_plots, graph_plots
@@ -76,7 +76,7 @@ class EnvStep:
         acting_agent_id: The ID of the agent that took the action.
         old_positions: List of all agents' positions before the action.
         action: The action taken by the acting agent. 0=left, 1=right, 2=stay, 3=up, 4=down
-        reward_vector: Numpy array of rewards for all agents resulting from the action.
+        reward_vector: Array where index i is the amount of apples collected by agent i.
         picked: Whether an apple was picked during this action.
     """
 
@@ -215,7 +215,7 @@ class Algorithm:
 
         self.logger = logging.getLogger(self.name)
 
-        self._agents_list: list[Agent] = []
+        self._agents_list: list[SimpleAgent] = []
 
         self.loss_plot: list[float] = []
         self.loss_plot5: list[float] = []
@@ -263,7 +263,7 @@ class Algorithm:
         return self._agents_list
 
     @abstractmethod
-    def collect_observation(self, step):
+    def step_and_collect_observation(self, step):
         raise NotImplementedError
 
     def save_rng_state(self):
@@ -470,9 +470,9 @@ class Algorithm:
         layout = "centralized" if len(critics) == 1 else "decentralized"
         return layout, critics
 
-    def env_step(self, tick, agent_id=None) -> EnvStep:
+    def single_agent_env_step(self, tick, agent_id=None) -> EnvStep:
         """Simulates one agent taking a single step in the environment, and returns
-        the resulting transition information.
+        the resulting transition information. Picks a random agent to act if agent_id not specified.
 
         Args:
             tick: A counter within a larger timestep, used to trigger periodic
@@ -620,44 +620,50 @@ class Algorithm:
         agent_pos, apples = self._load_env_state()
         return agent_pos, apples
 
-    def training_step(self, step) -> None:
-        """For this step/second, collect observations (these agents act and store the state info into neural net input) on a random subset of agents.
-        Then for all agents i, if agent i has observed enough samples, train it.
+    def train_agent(self, agent) -> None:
+        """
+        Handles the "how" of training. It will train EVERY valid network
+        that belongs to the agent.
+        """
+        # Train the critic/value network if it exists
+        if hasattr(agent, "policy_value") and agent.policy_value is not None:
+            network = agent.policy_value
+            loss = None
+            # This also correctly handles the CNN's special train method name
+            if isinstance(network, CNN):
+                loss = network.train_batch()
+            else:
+                loss = network.train()
+            if loss is not None:
+                self.critic_loss.append(loss)
+
+        # Train the actor network if it exists
+        if hasattr(agent, "policy_network") and agent.policy_network is not None:
+            agent.policy_network.train()
+
+    def training_step(self, step: int) -> None:
+        """
+        1. For this step/second, on a random subset of agents, the agents act and store the state info into neural net input
+        2. The environment updates (spawn/despawn apples)
+        3. Then for all agents i, if agent i has observed enough samples, train it.
 
         Args:
             step: The current training step.
         """
+        if self.debug:
+            return
         # Collect and process observations
-        self.collect_observation(step)
+        self.step_and_collect_observation(step)
 
         self.env.spawn_despawn()
 
-        if not self.debug:
-            for agent in self._agents_list:
-                if hasattr(agent, "policy_value"):
-                    network = agent.policy_value
-                    if (
-                        network is not None
-                        and len(network.batch_states) >= self.train_config.batch_size
-                    ):
-                        network.train()
-                if hasattr(agent, "policy_network"):
-                    network = agent.policy_network
-                    if (
-                        network is not None
-                        and len(network.batch_states) >= self.train_config.batch_size
-                    ):
-                        network.train()
-                if hasattr(agent, "reward_network"):
-                    network = agent.reward_network
-                    if (
-                        network is not None
-                        and len(network.batch_states) >= self.train_config.batch_size
-                    ):
-                        if isinstance(network, RewardCNN):
-                            network.train_batch()
-                        else:
-                            network.train()
+        for agent in self._agents_list:
+            agent_network = agent.get_primary_network()
+            if (
+                agent_network
+                and len(agent_network.batch_states) >= self.train_config.batch_size
+            ):
+                self.train_agent(agent)
         return
 
     def training_loop(self) -> Tuple[floating, ...] | None:
@@ -679,7 +685,7 @@ class Algorithm:
                 if step % log_constant == 0:
                     self.log_progress(sample_state, sample_state5, sample_state6)
                     memory_snapshot(label=f"step={step}", show_children=True)
-                    self._save_best_networks()
+                    # self._save_best_networks()
                 self.update_lr(step)
 
                 # Periodic evaluation
@@ -690,25 +696,9 @@ class Algorithm:
                         self.evaluate_checkpoint(step, self.train_config.seed).log(
                             self.logger
                         )
-                        graph_plots(
-                            self.name,
-                            self.weights_plot,
-                            self.critic_loss,
-                            self.loss_plot,
-                            self.loss_plot5,
-                            self.loss_plot6,
-                            self.v_weights,
-                        )
+                        # self.generate_plots()
             # Final evaluation
-            graph_plots(
-                self.name,
-                self.weights_plot,
-                self.critic_loss,
-                self.loss_plot,
-                self.loss_plot5,
-                self.loss_plot6,
-                self.v_weights,
-            )
+            self.generate_plots()
             if not self.debug:
                 return self._evaluate_final()
             else:

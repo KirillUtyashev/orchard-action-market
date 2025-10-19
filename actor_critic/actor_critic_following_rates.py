@@ -233,10 +233,10 @@ class ActorCriticRates(ActorCritic):
             for agent in self._agents_list:
                 agent.learn_rates()
 
-    def collect_observation(self, step):
+    def step_and_collect_observation(self, step):
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r, agent, positions, action = self.env_step(tick)
+                s, new_s, r, agent, positions, action = self.single_agent_env_step(tick)
                 if action is not None:
                     for each_agent in range(len(self._agents_list)):
                         curr_pos = self._agents_list[each_agent].position
@@ -503,10 +503,10 @@ class ActorCriticRatesFixed(ActorCritic):
             a_list.append(trained_agent)
         return a_list
 
-    def collect_observation(self, step):
+    def step_and_collect_observation(self, step):
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r, agent, positions, action = self.env_step(tick)
+                s, new_s, r, agent, positions, action = self.single_agent_env_step(tick)
                 if action is not None:
                     for each_agent in range(len(self._agents_list)):
                         curr_pos = self._agents_list[each_agent].position

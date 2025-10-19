@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from models.reward_cnn import RewardCNNCentralized
+from models.cnn import CNNCentralized
 
 
 def test_cnn_centralized_input_0_1():
@@ -23,7 +23,7 @@ def test_cnn_centralized_input_0_1():
     )
     raw_state = {"agents": agents, "apples": apples}
 
-    model = RewardCNNCentralized(4, 4, 0.0001)
+    model = CNNCentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state)
 
     expected_state = np.array(
@@ -67,7 +67,7 @@ def test_cnn_centralized_input_0():
     )
     raw_state = {"agents": agents, "apples": apples}
 
-    model = RewardCNNCentralized(4, 4, 0.0001)
+    model = CNNCentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state)
 
     expected_state = np.array(
@@ -111,7 +111,7 @@ def test_cnn_centralized_input_biggers_numbers():
     )
     raw_state = {"agents": agents, "apples": apples}
 
-    model = RewardCNNCentralized(4, 4, 0.0001)
+    model = CNNCentralized(4, 4, 0.0001)
     converted_state = model.raw_state_to_nn_input(raw_state)
 
     expected_state = np.array(

@@ -23,3 +23,11 @@ class Agent:
         self.policy = agent_info.policy
         self.id = agent_info.agent_id
         self.collected_apples = 0
+
+    def get_primary_network(self):
+        """
+        Returns the main network this agent uses for training.
+        Subclasses should override this. Returns None if the agent has no network.
+        """
+        # Base agent has no network.
+        return None

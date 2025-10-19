@@ -1,5 +1,5 @@
 import torch
-from models.reward_cnn import RewardCNNCentralized
+from models.cnn import CNNCentralized
 from tests.cnn.centralized.generate_synthetic_states import (
     generate_synthetic_state_at_most_1_apples,
 )
@@ -20,7 +20,7 @@ def test_cnn_accuracy_simple():
     num_agents = 2
     p = 0.5
 
-    model = RewardCNNCentralized(width, height, learning_rate)
+    model = CNNCentralized(width, height, learning_rate)
     model.load_state_dict(torch.load(model_path))
     model.eval()
 

@@ -4,7 +4,7 @@ import os
 
 sys.path.append("../")
 
-from config import GRAPHS_DIR, OUT_DATA_DIR
+from config import FINAL_DIR, OUT_DATA_DIR
 import json
 
 # create 3 plots: 6x6, 9x9, 12x12 based on data foldr
@@ -92,7 +92,7 @@ def load_and_plot():
         ax.legend()
 
         save_filename = f"model_accuracy_{grid}.png"
-        save_path = os.path.join(GRAPHS_DIR, save_filename)
+        save_path = os.path.join(FINAL_DIR, save_filename)
 
         # Use bbox_inches='tight' to prevent labels from being cut off
         plt.savefig(save_path, bbox_inches="tight")

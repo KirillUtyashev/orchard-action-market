@@ -10,7 +10,7 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     batch_size: int = 4
-    alpha: float = 0.000275
+    alpha: float = 0.01
     actor_alpha: float = 0.0002
     lr_schedule: dict = field(default_factory=lambda: {0.33: 0.00025, 0.625: 0.000075})
     timesteps: int = 1000000
@@ -20,10 +20,10 @@ class TrainingConfig:
     # checkpoint_dir: str = "checkpoints"
     # log_dir: str = LOG_DIR / "logs"
     discount: float = 0.99
-    critic_vision: Optional[int] = 0
-    actor_vision: Optional[int] = 0
-    hidden_dimensions: Optional[int] = 16
-    hidden_dimensions_actor: Optional[int] = 32
+    critic_vision: int = 0
+    actor_vision: int = 0
+    hidden_dimensions: int = 16
+    hidden_dimensions_actor: int = 32
     num_layers: int = 4
     policy: str = "value_function"
     num_layers_actor: int = 4

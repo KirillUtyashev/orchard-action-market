@@ -119,22 +119,22 @@ def eval_performance(
                 change = apples_before - env.get_sum_apples()
                 reward += change
                 rec.log(agents_list)
-                if name != "test":  #### IGNORE START #####
-                    agent_x_coordinates = append_positional_metrics(
-                        agent_x_coordinates, agents_list
-                    )
-                    agent_y_coordinates = append_y_coordinates(
-                        agent_y_coordinates, agents_list
-                    )
-                    to_add_x = []
-                    to_add_y = []
-                    for k in range(env.apples.shape[0]):
-                        for j in range(env.apples.shape[1]):
-                            if env.apples[k, j] != 0:
-                                to_add_x.append(j)
-                                to_add_y.append(k)
-                    apple_x_coordinates.append(to_add_x)
-                    apple_y_coordinates.append(to_add_y)
+                # if name != "test":  #### IGNORE START #####
+                #     agent_x_coordinates = append_positional_metrics(
+                #         agent_x_coordinates, agents_list
+                #     )
+                #     agent_y_coordinates = append_y_coordinates(
+                #         agent_y_coordinates, agents_list
+                #     )
+                #     to_add_x = []
+                #     to_add_y = []
+                #     for k in range(env.apples.shape[0]):
+                #         for j in range(env.apples.shape[1]):
+                #             if env.apples[k, j] != 0:
+                #                 to_add_x.append(j)
+                #                 to_add_y.append(k)
+                #     apple_x_coordinates.append(to_add_x)
+                #     apple_y_coordinates.append(to_add_y)
                 apples_picked.append(apples_per_second)
                 if inference:
                     for num, agent in enumerate(agents_list):
@@ -187,8 +187,8 @@ def eval_performance(
         "Picked vs Spawned per agent",
         (reward / num_agents) / (env.total_apples / num_agents),
     )
-    plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, name, "x")
-    plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
+    # plot_agent_specific_metrics(agent_x_coordinates, apple_x_coordinates, name, "x")
+    # plot_agent_specific_metrics(agent_y_coordinates, apple_y_coordinates, name, "y")
     if not inference:
         return (
             env.total_apples,  # always here

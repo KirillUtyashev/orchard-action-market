@@ -46,10 +46,10 @@ class ActorImperfectCriticPerfect(ActorCritic):
             )
         return a_list, agent_controller
 
-    def collect_observation(self, step):
+    def step_and_collect_observation(self, step):
         try:
             for tick in range(self.train_config.num_agents):
-                s, new_s, r, agent, positions, action = self.env_step(tick)
+                s, new_s, r, agent, positions, action = self.single_agent_env_step(tick)
                 if action is not None:
                     for each_agent in range(len(self._agents_list)):
                         curr_pos = self._agents_list[each_agent].position

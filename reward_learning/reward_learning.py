@@ -19,7 +19,7 @@ from models.actor_network import ActorNetwork
 from algorithm import Algorithm, EvalResult
 import matplotlib.pyplot as plt
 
-from models.reward_cnn import RewardCNN
+from models.cnn import CNN
 from models.reward_network import RewardNetwork
 from orchard.environment import OrchardBasic
 from plots import plot_smoothed
@@ -102,10 +102,10 @@ class RewardLearningCentralized(RewardLearning):
         )
         return [network for _ in range(self.train_config.num_agents)]
 
-    def collect_observation(self, step: int) -> None:
+    def step_and_collect_observation(self, step: int) -> None:
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick)
+                env_step_result = self.single_agent_env_step(tick)
                 reward_sum = np.sum(env_step_result.reward_vector)  # 0 or 1 always
                 if not self.train_config.new_dynamic:
                     state = self.critic_view_controller.state_to_nn_input(
@@ -242,7 +242,7 @@ class RewardLearningDecentralized(RewardLearning):
         return cast(Sequence[RewardAgent], self._agents_list)
 
     @override
-    def collect_observation(self, step: int) -> None:
+    def step_and_collect_observation(self, step: int) -> None:
         """
         Steps the environment and stores state-reward pairs for into each agent's reward neural net to lear from.
 
@@ -251,7 +251,7 @@ class RewardLearningDecentralized(RewardLearning):
         """
         try:
             for tick in range(self.train_config.num_agents):
-                env_step_result = self.env_step(tick)
+                env_step_result = self.single_agent_env_step(tick)
                 for each_agent in range(len(self.agents_list)):
                     reward = env_step_result.reward_vector[each_agent]
                     if not self.train_config.new_dynamic:
@@ -262,7 +262,7 @@ class RewardLearningDecentralized(RewardLearning):
                         )
                     else:  # cnn should go here
                         reward_net = self.agents_list[each_agent].reward_network
-                        if isinstance(reward_net, RewardCNN):
+                        if isinstance(reward_net, CNN):
                             reward_net.add_experience_from_raw(
                                 env_step_result.new_state,
                                 self.agents_list[each_agent].position,
@@ -277,7 +277,7 @@ class RewardLearningDecentralized(RewardLearning):
                     agent_reward_network = self.agents_list[each_agent].reward_network
 
                     assert agent_reward_network is not None
-                    if not isinstance(agent_reward_network, RewardCNN):
+                    if not isinstance(agent_reward_network, CNN):
                         agent_reward_network.add_experience(state, reward)
                     if (
                         self.env.apples[self.agents_list[each_agent].position[0]][

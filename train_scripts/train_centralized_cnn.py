@@ -8,11 +8,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 # Add the root directory to the Python path to find your modules
 
-from models.reward_cnn import RewardCNNCentralized
+from models.cnn import CNNCentralized
 from tests.cnn.centralized.generate_synthetic_states import (
     generate_synthetic_state_at_most_1_apples,
 )
-from config import MODEL_DIR, GRAPHS_DIR
+from config import MODEL_DIR, FINAL_DIR
 
 NUM_TRAIN_EPISODES = 1000
 BATCH_SIZE = 128
@@ -25,7 +25,7 @@ MODEL_SAVE_PATH = MODEL_DIR / "centralized_cnn.pth"  # The output file
 
 
 def train_and_save_model(lr):
-    model = RewardCNNCentralized(WIDTH, HEIGHT, lr)
+    model = CNNCentralized(WIDTH, HEIGHT, lr)
     # --- Training Loop ---
     for i in tqdm(range(NUM_TRAIN_EPISODES), desc="Training"):
         for _ in range(BATCH_SIZE):
@@ -42,7 +42,7 @@ def find_lr():
     """Trains the CNN on synthetic data and saves the model."""
     print("Starting training...")
     for lr in LEARNING_RATES:
-        model = RewardCNNCentralized(WIDTH, HEIGHT, lr)
+        model = CNNCentralized(WIDTH, HEIGHT, lr)
 
         # --- Training Loop ---
         for i in tqdm(range(NUM_TRAIN_EPISODES), desc="Training"):
@@ -54,7 +54,7 @@ def find_lr():
             loss = model.train_batch()
 
         loss_history = model.loss_history
-        PLOT_SAVE_PATH = GRAPHS_DIR / f"centralized_cnn_loss_{lr}lr.png"
+        PLOT_SAVE_PATH = FINAL_DIR / f"centralized_cnn_loss_{lr}lr.png"
 
         # 2. Create and save the plot
         plt.figure(figsize=(12, 6))

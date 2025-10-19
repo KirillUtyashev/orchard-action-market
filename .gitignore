@@ -26,3 +26,6 @@ out/
 
 # Environment variables file
 .env
+
+# other
+data

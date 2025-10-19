@@ -1,27 +1,27 @@
 import numpy as np
 from policies.random_policy import random_policy
-from policies.nearest import nearest
-from models.value_function import MainNet
+from models.main_net import MainNet
 
 import random
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
 torch.set_default_dtype(torch.float64)
 
 action_vectors = [
-            np.array([-1, 0]),
-            np.array([1, 0]),
-            np.array([0, 1]),
-            np.array([0, -1]),
-            np.array([0, 0])
-        ]
+    np.array([-1, 0]),
+    np.array([1, 0]),
+    np.array([0, 1]),
+    np.array([0, -1]),
+    np.array([0, 0]),
+]
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def ten(c):
+def ten(c, device=device):
     return torch.from_numpy(c).to(device).double()
 
 
@@ -41,7 +41,9 @@ def evaluate_value_function(a, b, pos, function, device):
 
 
 class ACAgent:
-    def __init__(self, policy=random_policy, model=MainNet, debug=False, num=0, num_agents=1):
+    def __init__(
+        self, policy=random_policy, model=MainNet, debug=False, num=0, num_agents=1
+    ):
         self.position = np.array([0, 0])
         self.policy = policy
         self.policy_value = None
@@ -69,19 +71,30 @@ class ACAgent:
         # assert np.sum(rates) <= max
         self.agent_rates = np.array(rates)
 
-    def get_comm_value_function(self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None):
+    def get_comm_value_function(
+        self, a, b, agents_list, new_pos=None, debug=False, agent_poses=None
+    ):
         sum = 0
         if debug:
             assert agent_poses is not None
             for num, agent in enumerate(agents_list):
-                sum += agent.policy_value.get_sum_value(a, b, np.array(agent_poses[num])) * agents_list[num].agent_rates[self.num]
+                sum += (
+                    agent.policy_value.get_sum_value(a, b, np.array(agent_poses[num]))
+                    * agents_list[num].agent_rates[self.num]
+                )
         else:
             assert new_pos is not None
             for num, agent in enumerate(agents_list):
                 if agent.num == self.num:
-                    sum += agent.policy_value.get_sum_value(a, b, new_pos) * self.agent_rates[num]
+                    sum += (
+                        agent.policy_value.get_sum_value(a, b, new_pos)
+                        * self.agent_rates[num]
+                    )
                 else:
-                    sum += agent.policy_value.get_sum_value(a, b, agent.position) * self.agent_rates[num]
+                    sum += (
+                        agent.policy_value.get_sum_value(a, b, agent.position)
+                        * self.agent_rates[num]
+                    )
         return sum
 
     def get_value_function(self, a, b):
@@ -113,7 +126,7 @@ class ACAgent:
 
     def update_lr(self, lr):
         for g in self.optimizer.param_groups:
-            g['lr'] = lr
+            g["lr"] = lr
 
     def get_best_action(self, state, discount, agents_list):
         a = state["agents"]
@@ -122,25 +135,44 @@ class ACAgent:
         action = 0
         best_val = 0
         if self.debug:
-            print("==========Making Decision for Agent "+str(self.num)+"===========")
+            print(
+                "==========Making Decision for Agent " + str(self.num) + "==========="
+            )
             print(list(a.flatten()), list(b.flatten()))
 
         for act in range(len(action_vectors)):
             val, new_a, new_b, new_pos = calculate_ir(a, b, self.position, act)
             rew = val
-            val += discount * self.get_comm_value_function(new_a, new_b, agents_list, new_pos=new_pos)
+            val += discount * self.get_comm_value_function(
+                new_a, new_b, agents_list, new_pos=new_pos
+            )
             if self.debug:
-                print("Action " + str(action_vectors[act]) + " has expected value " + str(val) + "; immediate reward " + str(rew))
+                print(
+                    "Action "
+                    + str(action_vectors[act])
+                    + " has expected value "
+                    + str(val)
+                    + "; immediate reward "
+                    + str(rew)
+                )
             if val > best_val:
                 action = act
                 best_val = val
 
         if self.debug:
-            print("Ultimately chose " + str(action_vectors[action]) + " with expected value " + str(best_val) + ".")
+            print(
+                "Ultimately chose "
+                + str(action_vectors[action])
+                + " with expected value "
+                + str(best_val)
+                + "."
+            )
 
         return action
 
-    def get_action(self, state, discount=0.99, agent_poses=None, agents_list=None, device=device):
+    def get_action(
+        self, state, discount=0.99, agent_poses=None, agents_list=None, device=device
+    ):
         if self.policy == "learned_policy":
             return self.get_learned_action(state)
         elif self.policy == "baseline":
@@ -149,6 +181,3 @@ class ACAgent:
             return self.get_best_action(state, discount, agents_list)
         else:
             return self.policy(state, self.position)
-
-
-

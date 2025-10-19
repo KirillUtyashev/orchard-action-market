@@ -2,7 +2,7 @@ from typing import Optional
 
 from agents.agent import Agent, AgentInfo
 from models.reward_network import RewardNetwork
-from models.reward_cnn import RewardCNN
+from models.cnn import CNN
 from typing import Union
 
 from enum import Enum
@@ -39,7 +39,7 @@ reward_plot_keys_continuous = [
 
 
 class RewardAgent(Agent):
-    reward_network: Optional[Union[RewardNetwork, RewardCNN]]
+    reward_network: Optional[Union[RewardNetwork, CNN]]
 
     def __init__(self, agent_info: AgentInfo):
         super().__init__(agent_info)

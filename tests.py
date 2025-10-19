@@ -394,7 +394,7 @@ class TestCentralizedLearning:
 
     def test_collect_observation(self, env_cls):
         self.algo.build_experiment()
-        self.algo.collect_observation(0)
+        self.algo.step_and_collect_observation(0)
         assert (
             len(self.algo._agents_list[0].policy_value.batch_states)
             == len(self.algo._agents_list[1].policy_value.batch_states)
@@ -443,7 +443,7 @@ class TestCentralizedLearning:
             self.algo._agents_list[0].position,
             self.algo._agents_list[1].position,
         ]
-        env_step_result = self.algo.env_step(0)
+        env_step_result = self.algo.single_agent_env_step(0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
         assert env_step_result.picked is False
@@ -487,7 +487,7 @@ class TestCentralizedLearning:
         ] = 1
         if isinstance(self.algo.env, OrchardBasic):
             print(1)
-        env_step_result = self.algo.env_step(0, agent_id=0)
+        env_step_result = self.algo.single_agent_env_step(0, agent_id=0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
 
@@ -703,7 +703,7 @@ class TestDecentralizedLearning:
 
     def test_collect_observation(self, env_cls):
         self.algo.build_experiment()
-        self.algo.collect_observation(0)
+        self.algo.step_and_collect_observation(0)
         assert (
             len(self.algo._agents_list[0].policy_value.batch_states)
             == len(self.algo._agents_list[1].policy_value.batch_states)
@@ -726,7 +726,7 @@ class TestDecentralizedLearning:
             self.algo._agents_list[0].position,
             self.algo._agents_list[1].position,
         ]
-        env_step_result = self.algo.env_step(0)
+        env_step_result = self.algo.single_agent_env_step(0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
         assert env_step_result.picked is False
@@ -787,7 +787,7 @@ class TestDecentralizedLearning:
         ] = 1
         if isinstance(self.algo.env, OrchardBasic):
             print(1)
-        env_step_result = self.algo.env_step(0, agent_id=0)
+        env_step_result = self.algo.single_agent_env_step(0, agent_id=0)
         assert (old_state["agents"] == env_step_result.old_state["agents"]).all()
         assert env_step_result.new_state is not None
 

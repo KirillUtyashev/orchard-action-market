@@ -2,7 +2,7 @@ import random
 
 import numpy as np
 from agents.reward_agent import RewardAgent
-from models.reward_cnn import RewardCNN
+from models.cnn import CNN
 from orchard.environment import (
     Orchard,
     OrchardBasic,
@@ -158,7 +158,7 @@ def step_and_evaluate_reward_prediction_accuracy_decentralized(
 
     reward_predictions = []
     for ag in agents_list:
-        if isinstance(ag.reward_network, RewardCNN):
+        if isinstance(ag.reward_network, CNN):
             s = ag.reward_network.raw_state_to_nn_input(
                 environment.get_state(), ag.position
             )
