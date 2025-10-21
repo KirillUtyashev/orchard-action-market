@@ -36,6 +36,7 @@ class TrainingConfig:
     new_input: bool = False
     new_dynamic: bool = False
     debug: bool = False
+    debug_log_states: bool = True
 
 
 @dataclass

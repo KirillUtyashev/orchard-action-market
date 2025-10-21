@@ -222,6 +222,7 @@ class Algorithm:
         self.loss_plot6: list[float] = []
         self.weights_plot: dict[str, Any] = {}
         self.critic_loss = []
+        self.apple_count_history: list[int] = []
 
         self.max_ratio = 0
 
@@ -656,6 +657,8 @@ class Algorithm:
         self.step_and_collect_observation(step)
 
         self.env.spawn_despawn()
+
+        self.apple_count_history.append(self.env.apples.sum())
 
         for agent in self._agents_list:
             agent_network = agent.get_primary_network()

@@ -86,33 +86,6 @@ class ValueFunctionCNNAlgorithm(Algorithm):
             picked=action_result.picked,
         )
 
-    # @override
-    # def training_step(self, step: int) -> None:
-    #     """
-    #     Executes a single, complete timestep: spawn, act, resolve, store, train.
-    #     This logic is shared by both centralized and decentralized versions.
-    #     """
-    #     self.env.spawn_despawn()
-    #     env_step_result = self.perform_single_agent_step()
-
-    #     if env_step_result.picked:
-    #         acting_agent_pos = self._agents_list[
-    #             env_step_result.acting_agent_id
-    #         ].position
-    #         self.env.remove_apple(acting_agent_pos)
-
-    #     # Delegate the specifics of storing the experience to the subclass.
-    #     self.collect_observation(env_step_result)
-
-    #     for agent in self._agents_list:
-    #         primary_network = agent.get_primary_network()
-    #         if (
-    #             primary_network
-    #             and len(primary_network.batch_states) >= self.train_config.batch_size
-    #         ):
-    #             self.train_agent(agent)
-    #     return
-
     @override
     def generate_plots(self):
         """
@@ -150,6 +123,21 @@ class ValueFunctionCNNAlgorithm(Algorithm):
             plt.savefig(self.graphs_out_path / "Sample_State_Values.png")
             plt.close()
 
+        # --- 3. Plot the Apple Count History ---
+        if self.apple_count_history:
+            fig = plot_smoothed(
+                [self.apple_count_history],
+                labels=["Apple Count"],
+                title="Number of Apples in Orchard During Training",
+                xlabel="Training Step",
+                ylabel="Total Apples",
+            )
+            ax = fig.gca()
+            ax.grid(True)
+            # save the figure
+            fig.savefig(self.graphs_out_path / "Apple_Count_During_Training.png")
+            plt.close(fig)
+
 
 class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
     """Algorithm class for centralized Critique learning using CNN model."""
@@ -169,12 +157,14 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
             Array of ValueCNNCentralized of length num_agents.
         """
         network = ValueCNNCentralized(
-            self.env_config.width,
             self.env_config.length,
+            self.env_config.width,
             self.train_config.alpha,
             self.train_config.discount,
-            mlp_hidden_features=self.train_config.hidden_dimensions,
-            num_mlp_hidden_layers=self.train_config.num_layers,
+            self.train_config.hidden_dimensions,
+            self.train_config.num_layers,
+            self.train_config.batch_size,
+            self.train_config.debug_log_states,
         )
         return [network for _ in range(self.train_config.num_agents)]
 
@@ -282,12 +272,14 @@ class DecentralizedValueFunctionCNNAlgorithm(ValueFunctionCNNAlgorithm):
         networks = []
         for _ in range(self.train_config.num_agents):
             net = ValueCNNDecentralized(
-                height=self.env_config.width,
-                width=self.env_config.length,
-                alpha=self.train_config.alpha,
-                discount=self.train_config.discount,
-                batch_size=self.train_config.batch_size,
-                mlp_hidden_features=self.train_config.hidden_dimensions,
+                self.env_config.length,
+                self.env_config.width,
+                self.train_config.alpha,
+                self.train_config.discount,
+                self.train_config.hidden_dimensions,
+                self.train_config.num_layers,
+                self.train_config.batch_size,
+                self.train_config.debug_log_states,
             )
             networks.append(net)
         return networks

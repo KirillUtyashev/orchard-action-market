@@ -15,14 +15,18 @@ class ValueTrainer:
     This class is composed within a CNN and is not a Mixin.
     """
 
-    def __init__(self, network: CNN, discount: float, batch_size: int = 0):
+    def __init__(
+        self,
+        network: CNN,
+        discount: float,
+        batch_size: int = 0,
+        log_states: bool = False,
+    ):
         # Store a direct reference to the network we are training.
         self.network = network
         self.discount = discount
         self.data_logger = (
-            HtmlDataLogger(STATES_DIR / "log.html", batch_size)
-            if batch_size > 0
-            else None
+            HtmlDataLogger(STATES_DIR / "log.html", batch_size) if log_states else None
         )
 
         # The trainer now explicitly manages the buffers on the network object.
@@ -80,12 +84,16 @@ class ValueCNNCentralized(CNNCentralized):
         width: int,
         alpha: float,
         discount: float,
+        mlp_hidden_features: int,
+        mlp_hidden_layers: int,
         batch_size: int = 0,
-        **kwargs
+        log_states: bool = False,
     ):
-        super().__init__(height=height, width=width, alpha=alpha, **kwargs)
+        super().__init__(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
         # Create and hold an instance of the trainer. Pass `self` as the network.
-        self.trainer = ValueTrainer(self, discount=discount, batch_size=batch_size)
+        self.trainer = ValueTrainer(
+            self, discount=discount, batch_size=batch_size, log_states=log_states
+        )
 
     # Delegate the training and experience calls to the trainer helper.
     def add_experience(self, state, new_state, reward):
@@ -110,11 +118,16 @@ class ValueCNNDecentralized(CNNDecentralized):
         width: int,
         alpha: float,
         discount: float,
+        mlp_hidden_features: int,
+        mlp_hidden_layers: int,
         batch_size: int = 0,
+        log_states: bool = False,
         **kwargs
     ):
-        super().__init__(height=height, width=width, alpha=alpha, **kwargs)
-        self.trainer = ValueTrainer(self, discount=discount, batch_size=batch_size)
+        super().__init__(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
+        self.trainer = ValueTrainer(
+            self, discount=discount, batch_size=batch_size, log_states=log_states
+        )
 
     def add_experience(self, state, new_state, reward):
         self.trainer.add_experience(state, new_state, reward)

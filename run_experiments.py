@@ -43,8 +43,8 @@ POLICY_MAP = {
     "RewardLearningDecentralized": nearest_policy,
     "RewardLearningCentralized": nearest_policy,
     "RewardLearningCNNDecentralized": nearest_policy,
-    "CentralizedCNN": "value_function",
-    "DecentralizedCNN": "value_function",
+    "CentralizedCNN": "value_function",  # cnn doesn't use this but here for consistency
+    "DecentralizedCNN": "value_function",  # cnn doesn't use this but here for consistency
 }
 
 
