@@ -33,3 +33,5 @@ OUT_DATA_DIR = OUT_DIR / "data"
 OUT_DATA_DIR.mkdir(exist_ok=True)
 INFERENCE_DIR = OUT_DIR / "inference"
 INFERENCE_DIR.mkdir(exist_ok=True)
+STATES_DIR = OUT_DIR / "states"
+STATES_DIR.mkdir(exist_ok=True)

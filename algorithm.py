@@ -307,7 +307,7 @@ class Algorithm:
             )
         v_value6 = self.agent_controller.get_collective_value(agent_obs, 0)
 
-        add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
+        # add_to_plots(self.network_for_eval[0].function.state_dict(), self.weights_plot)
 
         print("P", v_value)
         self.loss_plot.append(v_value.item())
@@ -747,7 +747,10 @@ class Algorithm:
         value_network_cls=VNetwork,
         actor_network_cls=ActorNetwork,
         test=False,
+        **kwargs,
     ):
+        """the build experiment method should not have such strict parameters. Use kwargs for compatibility with other designs."""
+
         self.critic_view_controller: ViewController = view_controller_cls(
             self.train_config.critic_vision, self.train_config.new_input
         )

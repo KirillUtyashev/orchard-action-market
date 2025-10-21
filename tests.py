@@ -417,7 +417,7 @@ class TestCentralizedLearning:
         ] = 1
 
         apples_before = self.algo.env.apples.copy()
-        ir, agents, apples, new_pos = self.algo.env.calculate_ir(
+        ir, agents, apples, new_pos = self.algo.env.get_next_state_and_reward(
             self.algo._agents_list[0].position, [0, 0]
         )
         if (

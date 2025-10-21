@@ -269,7 +269,9 @@ class Orchard(ABC):
         return ProcessAction(reward_vector=reward_vector, picked=c.consumed)
 
     @abstractmethod
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
         raise NotImplementedError
 
     def spawn_despawn(self):
@@ -310,7 +312,9 @@ class OrchardBasic(Orchard):
             res[picker_id] = 1
         return res
 
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )
@@ -360,7 +364,9 @@ class OrchardWithAppleIDs(Orchard):
             return ConsumeResult(consumed=True, owner_id=owner_plus1.item())
         return ConsumeResult(consumed=False)
 
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )
@@ -475,7 +481,20 @@ class OrchardBasicNewDynamic(OrchardBasic):
             self.apples[pos[0], pos[1]] -= 1
             self.total_picked += 1
 
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
+        """Simluates agent moving using action_vector and returns the new state info
+
+        Args:
+            position: starting position of the agent
+            action_vector: movement vector for the agent
+            communal: seems like if false, agent can't pick apple.
+            agent_id: ID of the agent. Defaults to None.
+
+        Returns:
+            Tuple of (immediate_reward, next_agents_map, next_apples_map, new_position)
+        """
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )
@@ -499,7 +518,9 @@ class OrchardEuclideanRewardsNewDynamic(OrchardEuclideanRewards):
             return ConsumeResult(consumed=True, apple_pos=pos)
         return ConsumeResult(consumed=False)
 
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )
@@ -528,7 +549,9 @@ class OrchardEuclideanNegativeRewardsNewDynamic(OrchardEuclideanNegativeRewards)
             return ConsumeResult(consumed=True, apple_pos=pos)
         return ConsumeResult(consumed=False)
 
-    def calculate_ir(self, position, action_vector, communal=True, agent_id=None):
+    def get_next_state_and_reward(
+        self, position, action_vector, communal=True, agent_id=None
+    ):
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )

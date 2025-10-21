@@ -9,7 +9,7 @@ mean_distances = []
 
 
 def get_nearest_agent_apple_distance(apple_pos, agents):
-    min_distance = float('inf')
+    min_distance = float("inf")
     for agent_ in agents:
         dist = distance(agent_.position, apple_pos)
         if dist < min_distance:
@@ -24,11 +24,11 @@ def despawn_apple(env, q_despawn):
       • spawn new apples in empty cells with p_cell = r · s_target
     Call exactly once after every n micro-ticks.
     """
-    H, L = env.apples.shape            # ★ rows = width, cols = length
+    H, L = env.apples.shape  # ★ rows = width, cols = length
 
     # ---- despawn ----
-    rand_mat = np.random.rand(H, L)    # ★ same shape as env.apples
-    mask_apples = (env.apples != 0)
+    rand_mat = np.random.rand(H, L)  # ★ same shape as env.apples
+    mask_apples = env.apples != 0
     removal_mask = mask_apples & (rand_mat < q_despawn)
     total_removed = removal_mask.sum()
     env.apples[removal_mask] -= 1
@@ -40,11 +40,16 @@ def spawn_apple(env, p_cell):
 
     rand_mat = np.random.rand(H, L)  # ★ new RNG draw, same shape
     spawn_mask = rand_mat < p_cell
+    spawn_mask = spawn_mask & (
+        env.agents == 0
+    )  # KEY CHANGE: only spawn where there are no agents.
     positions = np.argwhere(spawn_mask)
     total_spawned = spawn_mask.sum()
     if total_spawned > 0:
         for position in positions:
-            mean_distances.append(get_nearest_agent_apple_distance(position, env.agents_list))
+            mean_distances.append(
+                get_nearest_agent_apple_distance(position, env.agents_list)
+            )
     env.apples[spawn_mask] += 1
     return total_spawned
 
@@ -63,7 +68,9 @@ def spawn_apple_selfless_orchard(env, p_cell):
 
         for pos, agent_id in zip(positions, assigned_agents):
             env.apples[tuple(pos)] = agent_id
-            mean_distances.append(get_nearest_agent_apple_distance(pos, env.agents_list))
+            mean_distances.append(
+                get_nearest_agent_apple_distance(pos, env.agents_list)
+            )
 
     return total_spawned
 
@@ -75,11 +82,11 @@ def despawn_apple_selfless_orchard(env, q_despawn):
       • spawn new apples in empty cells with p_cell = r · s_target
     Call exactly once after every n micro-ticks.
     """
-    H, L = env.apples.shape            # ★ rows = width, cols = length
+    H, L = env.apples.shape  # ★ rows = width, cols = length
 
     # ---- despawn ----
-    rand_mat = np.random.rand(H, L)    # ★ same shape as env.apples
-    mask_apples = (env.apples != 0)
+    rand_mat = np.random.rand(H, L)  # ★ same shape as env.apples
+    mask_apples = env.apples != 0
     removal_mask = mask_apples & (rand_mat < q_despawn)
     total_removed = removal_mask.sum()
     env.apples[removal_mask] = 0

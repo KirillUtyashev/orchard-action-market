@@ -24,7 +24,7 @@ class AgentController:
         raise NotImplementedError
 
     def get_agent_obs(self, state, agent_pos, agent_id=None):
-        return self.critic_view_controller.process_state(state, agent_pos, agent_id)
+        return self.critic_view_controller.state_to_nn_input(state, agent_pos, agent_id)
 
     def get_all_agent_obs(self, state, positions):
         obs = []
@@ -63,7 +63,7 @@ class AgentControllerValue(AgentController):
             self.count_random_actions = 0
 
     @abstractmethod
-    def get_collective_value(self, processed_state, agent_id):
+    def get_collective_value(self, processed_states, agent_id) -> float:
         pass
 
     def get_best_action(self, env, agent_id, **kwargs):
@@ -72,7 +72,7 @@ class AgentControllerValue(AgentController):
         best_val = -1000000
 
         for act in env.available_actions:
-            val, new_a, new_b, new_pos = env.calculate_ir(
+            val, new_a, new_b, new_pos = env.get_next_state_and_reward(
                 self.agents_list[agent_id].position, act.vector, communal, agent_id
             )
             positions = []

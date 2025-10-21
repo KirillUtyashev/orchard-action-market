@@ -24,11 +24,15 @@ class CNN(nn.Module):
     Precondition: height and width must be at least 4 due to two max-pooling layers with kernel size 2.
 
     Attributes:
+        batch_states: List of states for training.
+        batch_rewards: List of rewards for training.
+        batch_new_states: List of new states for TD-learning (only used in ValueTrainer).
 
     """
 
-    batch_states: list[np.ndarray]
     batch_rewards: list[float]
+    batch_states: list[np.ndarray]
+    batch_new_states: list[np.ndarray]
     loss_history: list[float]
 
     def __init__(
@@ -336,6 +340,7 @@ class CNNCentralized(CNN):
             num_mlp_hidden_layers=num_mlp_hidden_layers,
         )
 
+    @override
     def raw_state_to_nn_input(self, state: dict, **kwargs) -> np.ndarray:
         """
         Converts state dictionary with 2 keys and stacks them into a 2-channel numpy array.

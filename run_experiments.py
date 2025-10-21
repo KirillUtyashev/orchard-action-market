@@ -29,6 +29,7 @@ from value_function_learning.train_value_function import (
 from reward_learning.reward_learning_cnn import RewardLearningCNNDecentralized
 from value_function_learning.train_value_function_cnn import (
     CentralizedValueCNNAlgorithm,
+    DecentralizedValueFunctionCNNAlgorithm,
 )
 
 
@@ -43,6 +44,7 @@ POLICY_MAP = {
     "RewardLearningCentralized": nearest_policy,
     "RewardLearningCNNDecentralized": nearest_policy,
     "CentralizedCNN": "value_function",
+    "DecentralizedCNN": "value_function",
 }
 
 
@@ -193,6 +195,8 @@ def pick_experiment(algorithm, exp_config):
         algo = RewardLearningCNNDecentralized(exp_config)
     elif algorithm == "CentralizedCNN":  # really centralized value cnn (critique)
         algo = CentralizedValueCNNAlgorithm(exp_config)
+    elif algorithm == "DecentralizedCNN":
+        algo = DecentralizedValueFunctionCNNAlgorithm(exp_config)
     else:
         algo = None
     return algo

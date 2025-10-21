@@ -14,12 +14,14 @@ from helpers.controllers import (
 )
 from helpers.helpers import get_discounted_value
 from models.actor_network import ActorNetwork
+from models.value_cnn import ValueCNNCentralized
 from models.value_function import VNetwork
 from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
 from algorithm import Algorithm
 from orchard.environment import OrchardBasic
 from plots import graph_plots
+from value_function_learning.train_value_function_cnn import ValueFunctionCNNAlgorithm
 
 
 class ValueFunction(Algorithm, ABC):
@@ -62,6 +64,7 @@ class CentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.single_agent_env_step(tick)
+
                 processed_state = self.critic_view_controller.state_to_nn_input(
                     env_step_result.old_state, None, None
                 )

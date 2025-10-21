@@ -43,8 +43,10 @@ class AgentControllerCentralizedCNN(AgentControllerValue):
 
         for action in env.available_actions:
             # 1. Simulate the action to get the immediate reward and next raw state
-            immediate_reward, next_agents_map, next_apples_map, _ = env.calculate_ir(
-                self.agents_list[agent_id].position, action.vector
+            immediate_reward, next_agents_map, next_apples_map, _ = (
+                env.get_next_state_and_reward(
+                    self.agents_list[agent_id].position, action.vector
+                )
             )
 
             next_raw_state = {"agents": next_agents_map, "apples": next_apples_map}
@@ -57,6 +59,71 @@ class AgentControllerCentralizedCNN(AgentControllerValue):
 
             # 4. Calculate the total Q-value for this action
             q_value = immediate_reward + get_config()["discount"] * next_state_value
+
+            if q_value > max_q_value:
+                max_q_value = q_value
+                best_action_idx = action.idx
+
+        return best_action_idx
+
+
+class AgentControllerDecentralizedCNN(AgentControllerValue):
+    """An agent controller for decentralized CNN-based value functions."""
+
+    def __init__(self, agents_list, test=False):
+        super().__init__(agents_list, critic_view_controller=None, test=test)
+
+    @override
+    def get_collective_value(self, processed_states: list, agent_id):
+        """
+        Calculates the collective value by summing the individual value predictions
+        from each agent's personal network.
+
+        This is needed because our cnn use different state processing than original decentralized.
+
+        Args:
+            processed_states: A LIST of processed 3D numpy arrays, one for each agent.
+        """
+        total_value = 0
+        for i, agent in enumerate(self.agents_list):
+            # Each agent uses its own network to evaluate its own processed state.
+            value = agent.policy_value.get_value_function(processed_states[i])
+            total_value += value
+        return total_value
+
+    @override
+    def get_best_action(self, env: OrchardBasic, agent_id, **kwargs):
+        best_action_idx = env.available_actions.STAY.idx
+        max_q_value = -float("inf")
+
+        for action in env.available_actions:
+            ir, next_agents_map, next_apples_map, next_pos_acting_agent = (
+                env.get_next_state_and_reward(
+                    self.agents_list[agent_id].position, action.vector
+                )
+            )
+            next_raw_state = {"agents": next_agents_map, "apples": next_apples_map}
+
+            # --- KEY DECENTRALIZED LOGIC ---
+            # We must generate a unique, processed next-state for EACH agent.
+            processed_next_states = []
+            for i, agent in enumerate(self.agents_list):
+                network = agent.policy_value
+                # The acting agent is at a new position; others are at their old positions.
+                agent_pos_for_state = (
+                    next_pos_acting_agent if i == agent_id else agent.position
+                )
+                processed_next_states.append(
+                    network.raw_state_to_nn_input(
+                        next_raw_state, agent_pos=agent_pos_for_state
+                    )
+                )
+            # ---------------------------------
+
+            next_state_value = self.get_collective_value(
+                processed_next_states, agent_id
+            )
+            q_value = ir + get_config()["discount"] * next_state_value
 
             if q_value > max_q_value:
                 max_q_value = q_value
