@@ -192,21 +192,6 @@ class DecentralizedValueFunction(ValueFunction):
             super().__init__(config, name)
         self.network_list = []
 
-    @override
-    def generate_plots(self, eval_agents: list[Agent]):
-        """Generates plots for value function training."""
-        # This class uses the old, complex plotting function because it
-        # has all the data that function needs.
-        graph_plots(
-            self.name,
-            self.weights_plot,
-            self.critic_loss,
-            self.loss_plot,
-            self.loss_plot5,
-            self.loss_plot6,
-            self.v_weights,
-        )
-
     def build_experiment(
         self,
         view_controller_cls=ViewController,
