@@ -117,6 +117,10 @@ class CentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.single_agent_env_step(tick)
+                # remove apple if picked
+                if self.train_config.new_dynamic and env_step_result.picked:
+                    pos = self._agents_list[env_step_result.acting_agent_id].position
+                    self.env.remove_apple(pos)
 
                 processed_state = self.critic_view_controller.state_to_nn_input(
                     env_step_result.old_state, None, None
@@ -229,6 +233,10 @@ class DecentralizedValueFunction(ValueFunction):
         try:
             for tick in range(self.train_config.num_agents):
                 env_step_result = self.single_agent_env_step(tick)
+                # remove apple if picked
+                if self.train_config.new_dynamic and env_step_result.picked:
+                    pos = self._agents_list[env_step_result.acting_agent_id].position
+                    self.env.remove_apple(pos)
                 for each_agent in range(len(self._agents_list)):
                     reward = env_step_result.reward_vector[each_agent]
                     processed_state = self.critic_view_controller.state_to_nn_input(

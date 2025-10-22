@@ -120,7 +120,7 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon, inference
     # else:
     #     action = random_policy(environment.available_actions)
     if agent_controller is not None:
-        action = agent_controller.agent_get_action(environment, agent, epsilon)
+        action = agent_controller.agent_get_action(environment, agent_idx, epsilon)
     else:
         state = environment.get_state()
         action = agent.policy(state, agent.position, environment.available_actions)
@@ -132,7 +132,7 @@ def step(agents_list, environment: Orchard, agent_controller, epsilon, inference
         or isinstance(environment, OrchardEuclideanRewardsNewDynamic)
         or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic)
     ):
-        environment.remove_apple(agents_list[agent].position.copy())
+        environment.remove_apple(agents_list[agent_idx].position.copy())
     # if inference:
     #     # Update personal Q-value from given action
     #     for agent_num in range(len(agents_list)):

@@ -95,7 +95,7 @@ class AgentControllerValue(AgentController):
     def agent_get_action(self, env, agent_id, epsilon=0.1):
         action = None
         if random.random() < epsilon:
-            action = random_policy(env.available_actions)
+            action = random_policy(None, None, env.available_actions)
             if self.test:
                 self.count_random_actions += 1
         else:

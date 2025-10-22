@@ -208,6 +208,10 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
         valueCNN: ValueCNNCentralized = self._agents_list[0].policy_value
         for tick in range(self.train_config.num_agents):
             env_step_result = self.single_agent_env_step(tick)
+            # remove apple if picked
+            if self.train_config.new_dynamic and env_step_result.picked:
+                pos = self._agents_list[env_step_result.acting_agent_id].position
+                self.env.remove_apple(pos)
             reward = sum(env_step_result.reward_vector)
             processed_state = valueCNN.raw_state_to_nn_input(env_step_result.old_state)
             processed_new_state = valueCNN.raw_state_to_nn_input(
@@ -226,6 +230,10 @@ class DecentralizedValueFunctionCNNAlgorithm(ValueFunctionCNNAlgorithm):
         """Implements the multi-tick loop for decentralized experience collection."""
         for tick in range(self.train_config.num_agents):
             env_step_result = self.single_agent_env_step(tick)
+            # remove apple if picked
+            if self.train_config.new_dynamic and env_step_result.picked:
+                pos = self._agents_list[env_step_result.acting_agent_id].position
+                self.env.remove_apple(pos)
             for i, agent in enumerate(self._agents_list):
                 assert isinstance(agent.policy_value, ValueCNNDecentralized)
                 network: ValueCNNDecentralized = agent.policy_value
