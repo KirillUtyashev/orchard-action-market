@@ -10,12 +10,11 @@ from matplotlib import pyplot as plt
 
 from actor_critic.actor_critic_following_rates import ActorCriticRatesFixed
 from actor_critic.actor_critic_perfect_info import ActorCriticPerfect
-from actor_critic.actor_imperfect_critic_perfect import \
-    ActorImperfectCriticPerfect
+from actor_critic.actor_imperfect_critic_perfect import ActorImperfectCriticPerfect
 from agents.actor_critic_agent import ACAgent, ACAgentRatesFixed
 from agents.agent import AgentInfo
 from agents.simple_agent import SimpleAgent
-from config import CHECKPOINT_DIR, DEVICE
+from config import DEVICE
 from helpers.controllers import ViewController, ViewControllerOrchardSelfless
 from helpers.helpers import create_env
 from main import eval_performance
@@ -27,17 +26,17 @@ from policies.random_policy import random_policy
 from configs.config import EnvironmentConfig, ExperimentConfig, TrainingConfig
 from orchard.algorithms import spawn_apple, despawn_apple
 from run_experiments import parse_args, set_config
-from value_function_learning.train_value_function import \
-    CentralizedValueFunction, DecentralizedValueFunction, \
-    DecentralizedValueFunctionPersonal
+from value_function_learning.train_value_function import (
+    CentralizedValueFunction,
+    DecentralizedValueFunction,
+    DecentralizedValueFunctionPersonal,
+)
 from algorithm import ENV_MAP, VIEW_CONTROLLER_MAP
 
 
-def evaluate_policy(env_config,
-                    num_agents,
-                    orchard,
-                    timesteps=10000,
-                    seed=42069):
+def evaluate_policy(
+    env_config, num_agents, orchard, policy_func, timesteps=10000, seed=42069
+):
     """
     Runs `eval_performance` with agents created by `agent_factory` and
     returns a dict of metrics.
@@ -49,20 +48,25 @@ def evaluate_policy(env_config,
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    agents_list = [SimpleAgent(AgentInfo(policy=random_policy)) for _ in range(num_agents)]
+    agents_list = [
+        SimpleAgent(AgentInfo(policy=policy_func)) for _ in range(num_agents)
+    ]
 
     env = create_env(env_config, num_agents, None, None, agents_list, ENV_MAP[orchard])
 
     # run the environment
-    total_apples, total_picked, picked_per_agent, per_agent, mean_dist, apples_per_sec, same_actions, idle_actions = \
-        eval_performance(
-            num_agents,
-            None,
-            env,
-            "Random",
-            timesteps,
-            agents_list
-        )
+    (
+        total_apples,
+        total_picked,
+        picked_per_agent,
+        per_agent,
+        mean_dist,
+        apples_per_sec,
+        same_actions,
+        idle_actions,
+    ) = eval_performance(
+        num_agents, None, env, policy_func.__name__, timesteps, agents_list
+    )
 
     return {
         "total_apples": int(total_apples),
@@ -70,7 +74,7 @@ def evaluate_policy(env_config,
         "picked_per_agent": float(picked_per_agent),
         "ratio_per_agent": float(per_agent),
         "mean_distance": float(mean_dist),
-        "apples_per_sec": float(apples_per_sec)
+        "apples_per_sec": float(apples_per_sec),
     }
 
 
@@ -124,7 +128,11 @@ def load_weights_only(name, networks, agents_list, path: str):
     # Map actors (aligned with agents_list)
     act_blobs = ckpt.get("actors", [])
     for agent, blob in zip(agents_list, act_blobs):
-        if blob and hasattr(agent, "policy_network") and agent.policy_network is not None:
+        if (
+            blob
+            and hasattr(agent, "policy_network")
+            and agent.policy_network is not None
+        ):
             agent.policy_network.import_net_state(blob, device=DEVICE)
 
 
@@ -134,18 +142,11 @@ def evaluate_factory(length, width, num_agents, orchard):
     torch.manual_seed(42069)
 
     env_config = EnvironmentConfig(
-        s_target=0.16,
-        apple_mean_lifetime=5,
-        length=length,
-        width=width
+        s_target=0.16, apple_mean_lifetime=5, length=length, width=width
     )
 
     return evaluate_policy(
-        env_config,
-        num_agents=num_agents,
-        orchard=orchard,
-        timesteps=10000,
-        seed=42069
+        env_config, num_agents=num_agents, orchard=orchard, timesteps=10000, seed=42069
     )
 
 
@@ -183,7 +184,16 @@ def evaluate_network(args):
         agent.personal_q_value = 0.0
         agent.apples_picked = [[0] for _ in range(args.num_agents)]
 
-    personal_q_values, agent_distance_hist = eval_performance(args.num_agents, controller, env, algo.name, 10000, agents, train_config.epsilon, True)
+    personal_q_values, agent_distance_hist = eval_performance(
+        args.num_agents,
+        controller,
+        env,
+        algo.name,
+        10000,
+        agents,
+        train_config.epsilon,
+        True,
+    )
 
     def average_every_n(arr, n=500):
         """Average consecutive n points in 1D array."""
@@ -216,7 +226,7 @@ def evaluate_network(args):
         plt.legend()
         plt.show()
 
-    positions = np.load(f"positions/{algo.name}_pos.npy")      # shape (T, N, 2)
+    positions = np.load(f"positions/{algo.name}_pos.npy")  # shape (T, N, 2)
 
     for agent_id in range(args.num_agents):
         plot_agent_heatmap_alpha(positions, agent_ids=[agent_id], colors=["red"])

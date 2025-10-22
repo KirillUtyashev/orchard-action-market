@@ -112,12 +112,20 @@ def get_discounted_value(old, new, discount_factor=0.05):
 
 
 def step(agents_list, environment: Orchard, agent_controller, epsilon, inference=False):
-    agent = random.randint(0, environment.n - 1)
-    if agents_list[agent].policy is not random_policy:
+    agent_idx = random.randint(0, len(agents_list) - 1)
+    agent = agents_list[agent_idx]
+    action = None
+    # if agents_list[agent].policy is not random_policy:
+    #     action = agent_controller.agent_get_action(environment, agent, epsilon)
+    # else:
+    #     action = random_policy(environment.available_actions)
+    if agent_controller is not None:
         action = agent_controller.agent_get_action(environment, agent, epsilon)
     else:
-        action = random_policy(environment.available_actions)
-    environment.process_action_eval(agent, agents_list[agent].position.copy(), action)
+        state = environment.get_state()
+        action = agent.policy(state, agent.position, environment.available_actions)
+        # action = random_policy(environment.available_actions)
+    environment.process_action_eval(agent_idx, agent.position.copy(), action)
 
     if (
         isinstance(environment, OrchardBasicNewDynamic)

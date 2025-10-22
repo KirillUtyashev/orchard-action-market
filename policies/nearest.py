@@ -9,7 +9,7 @@ Synonymous with the "Greedy" algorithm.
 """
 
 
-def nearest_policy(state, agent_pos):
+def nearest_policy(state, agent_pos, available_actions):
     """
     Nearest algorithm, but only working under the assumption that the orchard is a 1d field.
     :param state:

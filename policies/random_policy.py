@@ -6,5 +6,5 @@ The RANDOM baseline policy. Every action is totally random.
 """
 
 
-def random_policy(available_actions):
+def random_policy(state, agent_pos, available_actions):
     return random.randint(0, len(available_actions) - 1)
