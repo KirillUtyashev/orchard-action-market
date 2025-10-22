@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from utils import ten_float, unwrap_state, ten, state_logger
+from utils import ten_float, unwrap_state
 from config import DEVICE
 
 import torch
@@ -210,15 +210,6 @@ class CNN(nn.Module):
         self.batch_states.append(processed_state)
         # turn reward into float32 as well
         self.batch_rewards.append(reward)
-        if False:
-            log_message = (
-                f"\n--- Interesting Experience Logged ---\n"
-                f"Reward (Target): {reward}\n"
-                f"Apples Channel (Input):\n{processed_state[0]}\n"
-                f"Other-Agents Channel (Input):\n{processed_state[1]}\n"
-                f"Self-Agent Channel (Input):\n{processed_state[2]}"
-            )
-            state_logger.debug(log_message)
 
     def export_net_state(self):
         """

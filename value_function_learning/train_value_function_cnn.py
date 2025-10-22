@@ -16,7 +16,7 @@ from models.cnn import CNN
 from models.value_cnn import ValueCNNCentralized, ValueCNNDecentralized
 from models.value_function import VNetwork
 from orchard.environment import Orchard
-from plots import add_to_plots, plot_smoothed
+from plots import add_to_plots, plot_hybrid_smoothed
 from policies.cnn_controllers import (
     AgentControllerCentralizedCNN,
     AgentControllerDecentralizedCNN,
@@ -59,33 +59,6 @@ class ValueFunctionCNNAlgorithm(Algorithm):
         self.loss_plot5.append(v2)
         self.loss_plot6.append(v3)
 
-    def perform_single_agent_step(self) -> EnvStep:
-        """
-        Selects one random agent, gets its action, and processes it in the environment.
-        """
-        agent_id = randint(0, self.train_config.num_agents - 1)
-
-        state = self.env.get_state()
-        positions = [agent.position.copy() for agent in self._agents_list]
-
-        action_idx = self.agent_controller.agent_get_action(
-            self.env, agent_id, self.train_config.epsilon
-        )
-
-        action_result = self.env.process_action(
-            agent_id, self._agents_list[agent_id].position.copy(), action_idx
-        )
-
-        return EnvStep(
-            old_state=state,
-            new_state=self.env.get_state(),
-            acting_agent_id=agent_id,
-            old_positions=positions,
-            action=action_idx,
-            reward_vector=action_result.reward_vector,
-            picked=action_result.picked,
-        )
-
     @override
     def generate_plots(self):
         """
@@ -94,7 +67,7 @@ class ValueFunctionCNNAlgorithm(Algorithm):
         """
         # --- 1. Plot the Critic's Training Loss ---
         if self.critic_loss:
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [self.critic_loss],
                 labels=["Critic Training MSE Loss"],
                 title="Critic Training Loss (Smoothed)",
@@ -125,7 +98,7 @@ class ValueFunctionCNNAlgorithm(Algorithm):
 
         # --- 3. Plot the Apple Count History ---
         if self.apple_count_history:
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [self.apple_count_history],
                 labels=["Apple Count"],
                 title="Number of Apples in Orchard During Training",
@@ -163,8 +136,6 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
             self.train_config.discount,
             self.train_config.hidden_dimensions,
             self.train_config.num_layers,
-            self.train_config.batch_size,
-            self.train_config.debug_log_states,
         )
         return [network for _ in range(self.train_config.num_agents)]
 
@@ -278,8 +249,6 @@ class DecentralizedValueFunctionCNNAlgorithm(ValueFunctionCNNAlgorithm):
                 self.train_config.discount,
                 self.train_config.hidden_dimensions,
                 self.train_config.num_layers,
-                self.train_config.batch_size,
-                self.train_config.debug_log_states,
             )
             networks.append(net)
         return networks

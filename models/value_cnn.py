@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-from config import DEVICE, STATES_DIR
+from config import DEVICE
 from helpers.states_logger import HtmlDataLogger
 from models.cnn import CNNCentralized, CNNDecentralized, CNN
 from typing_extensions import override
@@ -12,30 +12,23 @@ from utils import ten_float
 class ValueTrainer:
     """
     A helper class that encapsulates TD-learning logic for a CNN.
-    This class is composed within a CNN and is not a Mixin.
+    This class is composed within a CNN.
     """
 
     def __init__(
         self,
         network: CNN,
         discount: float,
-        batch_size: int = 0,
-        log_states: bool = False,
     ):
         # Store a direct reference to the network we are training.
         self.network = network
         self.discount = discount
-        self.data_logger = (
-            HtmlDataLogger(STATES_DIR / "log.html", batch_size) if log_states else None
-        )
 
         # The trainer now explicitly manages the buffers on the network object.
         self.network.batch_new_states = []
 
     def add_experience(self, state, new_state, reward):
         """Adds an experience to the network's buffers and logs it."""
-        if self.data_logger:
-            self.data_logger.log_experience(state, new_state, reward)
         self.network.batch_states.append(state)
         self.network.batch_new_states.append(new_state)
         self.network.batch_rewards.append(reward)
@@ -72,9 +65,6 @@ class ValueTrainer:
         return loss_val
 
 
-# --- Concrete Classes using Composition ---
-
-
 class ValueCNNCentralized(CNNCentralized):
     """A centralized CNN for learning a value function."""
 
@@ -86,14 +76,10 @@ class ValueCNNCentralized(CNNCentralized):
         discount: float,
         mlp_hidden_features: int,
         mlp_hidden_layers: int,
-        batch_size: int = 0,
-        log_states: bool = False,
     ):
         super().__init__(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
         # Create and hold an instance of the trainer. Pass `self` as the network.
-        self.trainer = ValueTrainer(
-            self, discount=discount, batch_size=batch_size, log_states=log_states
-        )
+        self.trainer = ValueTrainer(self, discount=discount)
 
     # Delegate the training and experience calls to the trainer helper.
     def add_experience(self, state, new_state, reward):
@@ -120,14 +106,10 @@ class ValueCNNDecentralized(CNNDecentralized):
         discount: float,
         mlp_hidden_features: int,
         mlp_hidden_layers: int,
-        batch_size: int = 0,
-        log_states: bool = False,
         **kwargs
     ):
         super().__init__(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
-        self.trainer = ValueTrainer(
-            self, discount=discount, batch_size=batch_size, log_states=log_states
-        )
+        self.trainer = ValueTrainer(self, discount=discount)
 
     def add_experience(self, state, new_state, reward):
         self.trainer.add_experience(state, new_state, reward)

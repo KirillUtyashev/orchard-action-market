@@ -11,7 +11,6 @@ from agents.agent import Agent
 from agents.agent import Agent
 from agents.reward_agent import RewardAgent
 from algorithm import EnvStep, EvalResult
-from config import FINAL_DIR
 from configs.config import ExperimentConfig
 from helpers.controllers import AgentController, AgentControllerUsingPolicy
 from helpers.helpers import (
@@ -28,7 +27,7 @@ from orchard.environment import (
     OrchardEuclideanNegativeRewards,
     OrchardEuclideanRewards,
 )
-from plots import plot_smoothed
+from plots import plot_hybrid_smoothed
 from reward_learning.reward_learning import RewardLearningDecentralized
 from agents.reward_agent import (
     RewardType,
@@ -170,7 +169,7 @@ class RewardLearningCNNDecentralized(RewardLearningDecentralized):
 
     def generate_plots(self):  # BOOKMARK
         """Generates plots for training loss, final prediction accuracy."""
-        output_graph_dir = FINAL_DIR / f"{self.name}_{date.today()}"
+        output_graph_dir = self.graphs_out_path
         output_graph_dir.mkdir(parents=True, exist_ok=True)
         # Create an x-axis representing the evaluation checkpoints
         num_evaluations = len(self.prediction_error_over_time)

@@ -4,7 +4,6 @@ from collections import deque
 
 from agents.simple_agent import SimpleAgent
 from algorithm import Algorithm
-from config import CHECKPOINT_DIR
 from matplotlib import pyplot as plt
 from actor_critic.actor_critic import ActorCritic
 from agents.actor_critic_agent import ACAgentRates, ACAgentRatesFixed
@@ -18,7 +17,7 @@ from helpers.controllers import (
     AgentControllerCentralized,
     ViewController,
 )
-from plots import plot_smoothed
+from plots import plot_hybrid_smoothed
 from models.actor_network import ActorNetwork
 from models.value_function import VNetwork
 
@@ -170,7 +169,7 @@ class ActorCriticRates(ActorCritic):
 
     # === save to disk (convert deques -> arrays only here), compressed ===
     def _save_follow_rates_arrays(self):
-        path = os.path.join(CHECKPOINT_DIR, self.name)
+        path = self.checkpoint_path
         os.makedirs(path, exist_ok=True)
         out = {}
         for i in range(self.train_config.num_agents):
@@ -184,7 +183,7 @@ class ActorCriticRates(ActorCritic):
         np.savez_compressed(os.path.join(path, "follow_rates.npz"), **out)
 
     def _save_alpha_arrays(self):
-        path = os.path.join(CHECKPOINT_DIR, self.name)
+        path = self.checkpoint_path
         os.makedirs(path, exist_ok=True)
         out = {}
         for i in range(self.train_config.num_agents):
@@ -318,7 +317,7 @@ class ActorCriticRates(ActorCritic):
                 labels = [
                     f"Distance to {j}" for j in range(self.train_config.num_agents)
                 ]
-                fig = plot_smoothed(
+                fig = plot_hybrid_smoothed(
                     series_list,
                     labels,
                     title=f"Distance to Agent {agent_id}",
@@ -455,7 +454,7 @@ class ActorCriticRatesAdvantage(ActorCriticRates):
                 labels = [
                     f"Distance to {j}" for j in range(self.train_config.num_agents)
                 ]
-                fig = plot_smoothed(
+                fig = plot_hybrid_smoothed(
                     series_list,
                     labels,
                     title=f"Distance to Agent {agent_id}",

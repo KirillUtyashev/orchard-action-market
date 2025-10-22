@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from models.cnn import CNN
 from models.reward_network import RewardNetwork
 from orchard.environment import OrchardBasic
-from plots import plot_smoothed
+from plots import plot_hybrid_smoothed
 
 
 class RewardLearning(Algorithm, ABC):
@@ -143,7 +143,7 @@ class RewardLearningCentralized(RewardLearning):
             else:
                 self._agents_list[0].prediction_accuracy_by_reward[key].append(0)
 
-        fig = plot_smoothed(
+        fig = plot_hybrid_smoothed(
             [self._agents_list[0].prediction_accuracy_history],
             labels=[f"Centralized"],
             title=f"Immediate Reward Prediction Accuracy",
@@ -154,7 +154,7 @@ class RewardLearningCentralized(RewardLearning):
         fig.savefig(self.graphs_out_path / f"reward_loss.png")
         plt.close(fig)
 
-        fig = plot_smoothed(
+        fig = plot_hybrid_smoothed(
             [self._agents_list[0].prediction_accuracy_by_reward["1.0"]],
             labels=[f"Centralized"],
             title=f"Immediate Reward Prediction Accuracy",
@@ -165,7 +165,7 @@ class RewardLearningCentralized(RewardLearning):
         fig.savefig(self.graphs_out_path / f"reward_loss_1.png")
         plt.close(fig)
 
-        fig = plot_smoothed(
+        fig = plot_hybrid_smoothed(
             [self._agents_list[0].prediction_accuracy_by_reward["0.0"]],
             labels=[f"Centralized"],
             title=f"Immediate Reward Prediction Accuracy",
@@ -319,7 +319,7 @@ class RewardLearningDecentralized(RewardLearning):
                 else:
                     self.agents_list[num].prediction_accuracy_by_reward[key].append(0)
 
-        fig = plot_smoothed(
+        fig = plot_hybrid_smoothed(
             [self.same_cell_no_reward],
             labels=[f"Same Cell, No Reward"],
             title=f"Number of states",
@@ -331,7 +331,7 @@ class RewardLearningDecentralized(RewardLearning):
         plt.close(fig)
 
         for agent in self.agents_list:
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [agent.prediction_accuracy_history],
                 labels=[f"Agent {agent.id}"],
                 title=f"Agent {agent.id} – Reward Prediction Accuracy over time",
@@ -344,7 +344,7 @@ class RewardLearningDecentralized(RewardLearning):
                 / f"{agent.id}_reward_prediction_accuracy_over_time.png"
             )
             plt.close(fig)
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [agent.prediction_accuracy_by_reward["1.0"]],
                 labels=[f"Agent {agent.id}"],
                 title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is 1.0",
@@ -358,7 +358,7 @@ class RewardLearningDecentralized(RewardLearning):
             )
             plt.close(fig)
 
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [agent.prediction_accuracy_by_reward["0.0"]],
                 labels=[f"Agent {agent.id}"],
                 title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is 0.0",
@@ -372,7 +372,7 @@ class RewardLearningDecentralized(RewardLearning):
             )
             plt.close(fig)
 
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [agent.prediction_accuracy_by_reward["other"]],
                 labels=[f"Agent {agent.id}"],
                 title=f"Agent {agent.id} – Immediate Reward Prediction Accuracy when Reward is other",
@@ -386,7 +386,7 @@ class RewardLearningDecentralized(RewardLearning):
             )
             plt.close(fig)
 
-            fig = plot_smoothed(
+            fig = plot_hybrid_smoothed(
                 [agent.prediction_accuracy_by_reward["-1.0"]],
                 labels=[f"Agent {agent.id}"],
                 title=f"Agent {agent.id} – Immediate Reward Prediction when Reward is -1.0",

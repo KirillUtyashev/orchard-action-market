@@ -11,11 +11,6 @@ from orchard.algorithms import mean_distances
 from policies.random_policy import random_policy
 from metrics.metrics import (
     PositionRecorder,
-    append_positional_metrics,
-    append_y_coordinates,
-    plot_agent_heatmap_alpha,
-    plot_agent_specific_metrics,
-    plot_agents_trajectories,
 )
 
 adv_plot = []

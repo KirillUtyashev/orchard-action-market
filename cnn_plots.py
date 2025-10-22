@@ -1,4 +1,4 @@
-from plots import add_to_plots, plot_smoothed
+from plots import add_to_plots, plot_hybrid_smoothed
 
 from pathlib import Path
 
@@ -23,7 +23,7 @@ def plot_reward_learning_progress(name: str, network):
     # We get the loss history directly from the network object.
     loss_history = network.loss_history
     if loss_history:
-        fig = plot_smoothed(
+        fig = plot_hybrid_smoothed(
             [loss_history],
             labels=["Training MSE Loss"],
             title="Reward Prediction Training Loss",

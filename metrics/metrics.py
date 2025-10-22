@@ -7,8 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import to_rgba
 
-from config import INFERENCE_DIR
-
 graph = 0
 
 
@@ -398,50 +396,50 @@ def plot_metrics(metrics, name, experiment):
         plt.savefig(str(filename))
 
 
-def plot_agent_specific_metrics(agent_metrics, apples, name, vector):
-    """Plot per-agent x-coords and overlay apples as a scatter cloud.
+# def plot_agent_specific_metrics(agent_metrics, apples, name, vector):
+#     """Plot per-agent x-coords and overlay apples as a scatter cloud.
 
-    Parameters
-    ----------
-    agent_metrics : list[list[float]]
-        Outer list = agents.  Inner list = episode values of the metric.
-    apples : list[float] or np.ndarray
-        Same episode index as agent_metrics.  One value per episode.
-    experiment : str
-        Experiment name for the figure handle / file name.
-    name : str
-        Extra tag for the plot title and file name.
-    """
-    global graph
-    graph += 1
-    graph_folder = INFERENCE_DIR / f"{name}"
-    graph_folder.mkdir(parents=True, exist_ok=True)
-    fig_id = f"graph_{name}_{str(graph)}"
-    plt.figure(fig_id, figsize=(6, 5))
+#     Parameters
+#     ----------
+#     agent_metrics : list[list[float]]
+#         Outer list = agents.  Inner list = episode values of the metric.
+#     apples : list[float] or np.ndarray
+#         Same episode index as agent_metrics.  One value per episode.
+#     experiment : str
+#         Experiment name for the figure handle / file name.
+#     name : str
+#         Extra tag for the plot title and file name.
+#     """
+#     global graph
+#     graph += 1
+#     graph_folder = INFERENCE_DIR / f"{name}"
+#     graph_folder.mkdir(parents=True, exist_ok=True)
+#     fig_id = f"graph_{name}_{str(graph)}"
+#     plt.figure(fig_id, figsize=(6, 5))
 
-    # --- agents: keep as connected lines ------------------------------
-    for i, series in enumerate(agent_metrics):
-        series1 = series[8000:10000]  # or whatever window you like
-        plt.plot(series1, label=f"agent {i}")
+#     # --- agents: keep as connected lines ------------------------------
+#     for i, series in enumerate(agent_metrics):
+#         series1 = series[8000:10000]  # or whatever window you like
+#         plt.plot(series1, label=f"agent {i}")
 
-    check = apples[8000:10000]
+#     check = apples[8000:10000]
 
-    xs, ys = [], []
+#     xs, ys = [], []
 
-    for t, vals in enumerate(check):
-        xs.extend([t] * len(vals))  # repeat the timestep for *each* value
-        ys.extend(vals)  # append every number in the list
+#     for t, vals in enumerate(check):
+#         xs.extend([t] * len(vals))  # repeat the timestep for *each* value
+#         ys.extend(vals)  # append every number in the list
 
-    # --- apples: unconnected scatter ---------------------------------
-    plt.scatter(xs, ys, c=ys, cmap="tab10", s=30, alpha=0.1, edgecolors="none")
+#     # --- apples: unconnected scatter ---------------------------------
+#     plt.scatter(xs, ys, c=ys, cmap="tab10", s=30, alpha=0.1, edgecolors="none")
 
-    # -----------------------------------------------------------------
-    if vector == "x":
-        plt.title(f"Agent X-Axis Coordinates")
-    else:
-        plt.title(f"Agent Y-Axis Coordinates")
-    plt.legend()
-    filename = graph_folder / f"graph_{name}_distances_{str(graph)}_{vector}.png"
-    plt.tight_layout()
-    plt.savefig(filename, dpi=150)
-    plt.close("all")
+#     # -----------------------------------------------------------------
+#     if vector == "x":
+#         plt.title(f"Agent X-Axis Coordinates")
+#     else:
+#         plt.title(f"Agent Y-Axis Coordinates")
+#     plt.legend()
+#     filename = graph_folder / f"graph_{name}_distances_{str(graph)}_{vector}.png"
+#     plt.tight_layout()
+#     plt.savefig(filename, dpi=150)
+#     plt.close("all")

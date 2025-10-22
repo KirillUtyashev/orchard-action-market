@@ -1,3 +1,4 @@
+import csv
 import glob
 import logging
 import re
@@ -8,7 +9,7 @@ from numpy import floating
 
 from agents.agent import Agent, AgentInfo
 from agents.simple_agent import SimpleAgent
-from config import CHECKPOINT_DIR, DEVICE, OUT_DIR
+from config import DEVICE, OUT_DIR
 from configs.config import EnvironmentConfig, TrainingConfig
 from helpers.controllers import (
     AgentController,
@@ -196,12 +197,27 @@ class Algorithm:
         self.debug = config.debug
         self.rng_state = None
 
-        algo_dir = OUT_DIR / "algo_dir"
-        log_folder = algo_dir / "algo_logs"
-        log_folder.mkdir(parents=True, exist_ok=True)
+        key_params = (
+            f"h{self.train_config.hidden_dimensions}_"
+            f"l{self.train_config.num_layers}_"
+            f"a{self.train_config.num_agents}_"
+            f"{self.env_config.width}x{self.env_config.length}_"
+        )
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
 
-        self.graphs_out_path = algo_dir / "graphs" / self.name
+        # unique id so folders don't overwrite each other.
+        self.run_id = f"{self.name}_{key_params}_{timestamp}_{os.getpid()}"
+        self.run_output_dir = OUT_DIR / self.run_id
+
+        log_folder = self.run_output_dir / "algo_logs"
+
+        log_folder.mkdir(parents=True, exist_ok=True)
+        self.run_output_dir.mkdir(parents=True, exist_ok=True)
+
+        self.graphs_out_path = self.run_output_dir / "graphs" / self.name
         self.graphs_out_path.mkdir(parents=True, exist_ok=True)
+
+        self.checkpoint_path = self.run_output_dir / "checkpoints"
 
         filename = log_folder / f"{name}.log"
 
@@ -385,7 +401,7 @@ class Algorithm:
     def _save_best_networks(self):
         """Save the current best networks"""
         print("saving best")
-        path = os.path.join(CHECKPOINT_DIR, self.name)
+        path = self.checkpoint_path
         if not os.path.isdir(path):
             print("new_path")
             os.makedirs(path)
@@ -405,7 +421,7 @@ class Algorithm:
         positions = np.asarray(
             [a.position for a in self._agents_list], dtype=np.int32
         )  # shape: [num_agents, 2] (or whatever your position shape is)
-        out_dir = Path(CHECKPOINT_DIR) / self.name
+        out_dir = self.checkpoint_path
         out_dir.mkdir(parents=True, exist_ok=True)
 
         np.save(out_dir / f"agent_positions_{when}.npy", positions)
@@ -428,7 +444,7 @@ class Algorithm:
             self.logger.error("Environment state missing 'agents' or 'apples' keys.")
             return
 
-        out_dir = Path(CHECKPOINT_DIR) / self.name
+        out_dir = self.checkpoint_path
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # Apples
@@ -660,7 +676,9 @@ class Algorithm:
 
         self.apple_count_history.append(self.env.apples.sum())
 
-        for agent in self._agents_list:
+        for (
+            agent
+        ) in self._agents_list:  # IMPORTANT test for mlp where the primary_network is
             agent_network = agent.get_primary_network()
             if (
                 agent_network
@@ -729,16 +747,25 @@ class Algorithm:
             )
             for i, key in enumerate(mean_metrics.keys()):
                 mean_metrics[key].append(getattr(result, key))
-
+        avg_total_apples = np.mean(mean_metrics["total_apples"])
+        avg_total_picked = np.mean(mean_metrics["total_picked"])
+        avg_picked_per_agent = np.mean(mean_metrics["picked_per_agent"])
+        avg_per_agent = np.mean(mean_metrics["per_agent"])
+        avg_average_distance = np.mean(mean_metrics["average_distance"])
         # Log final averages
-        self.logger.info(f"Ratio picked: {np.mean(mean_metrics['per_agent'])}")
-        self.logger.info(f"Mean distance: {np.mean(mean_metrics['average_distance'])}")
-        self.logger.info(f"Total apples: {np.mean(mean_metrics['total_apples'])}")
-        self.logger.info(f"Total picked: {np.mean(mean_metrics['total_picked'])}")
-        self.logger.info(
-            f"Picked per agents: {np.mean(mean_metrics['picked_per_agent'])}"
-        )
+        self.logger.info(f"Ratio picked: {avg_total_apples}")
+        self.logger.info(f"Mean distance: {avg_average_distance}")
+        self.logger.info(f"Total apples: {avg_total_apples}")
+        self.logger.info(f"Total picked: {avg_total_picked}")
+        self.logger.info(f"Picked per agents: {avg_picked_per_agent}")
 
+        self.log_results_to_csv(
+            avg_total_apples,
+            avg_total_picked,
+            avg_picked_per_agent,
+            avg_per_agent,
+            avg_average_distance,
+        )
         return tuple(np.mean(val) for val in mean_metrics.values())
 
     @abstractmethod
@@ -781,6 +808,51 @@ class Algorithm:
                 self.env_cls,
                 debug=self.debug,
             )
+
+    def log_results_to_csv(
+        self,
+        avg_total_apples,
+        avg_total_picked,
+        avg_picked_per_agent,
+        avg_per_agent,
+        avg_average_distance,
+    ):
+        """Appends the key results of an evaluation to a master CSV file."""
+        results_file = OUT_DIR / "results_summary.csv"
+
+        # Prepare the data row
+        data_row = {
+            "run_id": self.run_id,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "algorithm": self.name,
+            "num_agents": self.train_config.num_agents,
+            "learning_rate": self.train_config.alpha,
+            "discount_factor": self.train_config.discount,
+            "batch_size": self.train_config.batch_size,
+            "training_timesteps": self.train_config.timesteps,
+            "eval_timesteps": self.train_config.eval_timesteps,
+            "width": self.env_config.width,
+            "length": self.env_config.length,
+            "hidden_dim": self.train_config.hidden_dimensions,
+            "num_layers": self.train_config.num_layers,
+            "env_cls": self.env_config.env_cls,
+            "ratio_picked": avg_per_agent,
+            "apples_per_agent": avg_picked_per_agent,
+            "total_picked": avg_total_picked,
+            "total_spawned": avg_total_apples,
+            "avg_distance": avg_average_distance,
+        }
+
+        # Write to CSV
+        file_exists = results_file.exists()
+        results_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(results_file, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=data_row.keys())
+            if not file_exists:
+                writer.writeheader()  # Write header only once
+            writer.writerow(data_row)
+
+        print(f"--- Results logged to {results_file} ---")
 
     def _init_agents_for_training(
         self, agent_cls, value_networks, actor_networks, reward_networks

@@ -19,19 +19,3 @@ print(f"--- PyTorch is configured to use: {DEVICE} ---")
 
 OUT_DIR = PROJECT_ROOT / "out"
 OUT_DIR.mkdir(exist_ok=True)
-LOG_DIR = OUT_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
-MODEL_DIR = OUT_DIR / "models"
-MODEL_DIR.mkdir(exist_ok=True)
-PLOTS_DIR = OUT_DIR / "plots"
-PLOTS_DIR.mkdir(exist_ok=True)
-FINAL_DIR = OUT_DIR / "final"
-FINAL_DIR.mkdir(exist_ok=True)
-CHECKPOINT_DIR = OUT_DIR / "checkpoints"
-CHECKPOINT_DIR.mkdir(exist_ok=True)
-OUT_DATA_DIR = OUT_DIR / "data"
-OUT_DATA_DIR.mkdir(exist_ok=True)
-INFERENCE_DIR = OUT_DIR / "inference"
-INFERENCE_DIR.mkdir(exist_ok=True)
-STATES_DIR = OUT_DIR / "states"
-STATES_DIR.mkdir(exist_ok=True)

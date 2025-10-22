@@ -1,5 +1,6 @@
 from abc import ABC
 from typing import List, Tuple
+from matplotlib import pyplot as plt
 from typing_extensions import override
 import numpy as np
 from agents.agent import Agent
@@ -20,7 +21,7 @@ from agents.simple_agent import SimpleAgent
 from agents.communicating_agent import CommAgent
 from algorithm import Algorithm
 from orchard.environment import OrchardBasic
-from plots import graph_plots
+from plots import graph_plots, plot_hybrid_smoothed
 from value_function_learning.train_value_function_cnn import ValueFunctionCNNAlgorithm
 
 
@@ -38,6 +39,58 @@ class ValueFunction(Algorithm, ABC):
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
         return []
 
+    @override
+    def generate_plots(self):
+        """
+        Generates and saves plots specific to this algorithm's training progress.
+        This provides a clean alternative to the generic `graph_plots` function.
+        """
+        # --- 1. Plot the Critic's Training Loss ---
+        if self.critic_loss:
+            fig = plot_hybrid_smoothed(
+                [self.critic_loss],
+                labels=["Critic Training MSE Loss"],
+                title="Critic Training Loss (Smoothed)",
+                xlabel="Training Step",
+                ylabel="MSE Loss",
+            )
+            # Use a log scale for loss plots, it's almost always better
+            ax = fig.gca()
+            ax.set_yscale("log")
+            ax.grid(True)
+            # self.graphs_out_path is defined in the base Algorithm class
+            fig.savefig(self.graphs_out_path / "Critic_Training_Loss.png")
+            plt.close(fig)
+
+        # --- 2. Plot the Sample State Convergence ---
+        if self.loss_plot:  # Check if log_progress was actually run
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.loss_plot, label="Sample State 1 Value")
+            plt.plot(self.loss_plot5, label="Sample State 2 Value")
+            plt.plot(self.loss_plot6, label="Sample State 3 Value")
+            plt.title("Value of Fixed Sample States During Training")
+            plt.xlabel("Logging Step")
+            plt.ylabel("Predicted Value")
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(self.graphs_out_path / "Sample_State_Values.png")
+            plt.close()
+
+        # --- 3. Plot the Apple Count History ---
+        if self.apple_count_history:
+            fig = plot_hybrid_smoothed(
+                [self.apple_count_history],
+                labels=["Apple Count"],
+                title="Number of Apples in Orchard During Training",
+                xlabel="Training Step",
+                ylabel="Total Apples",
+            )
+            ax = fig.gca()
+            ax.grid(True)
+            # save the figure
+            fig.savefig(self.graphs_out_path / "Apple_Count_During_Training.png")
+            plt.close(fig)
+
 
 class CentralizedValueFunction(ValueFunction):
     """Centralized implementation of a value function."""
@@ -46,7 +99,7 @@ class CentralizedValueFunction(ValueFunction):
         """Initialize the value function algorithm."""
         super().__init__(
             config,
-            f"Centralized-<{config.train_config.num_agents}>-<{config.env_config.length}>-<{config.env_config.width}-<{config.env_config.s_target}>-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.alpha}>-<{config.train_config.discount}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-<{config.train_config.critic_vision}>-<{config.train_config.epsilon}>-<{config.train_config.batch_size}>-<{config.env_config.env_cls}>",
+            f"CentralizedValue",
         )
 
     def init_agents_for_eval(self) -> Tuple[List[SimpleAgent], AgentController]:
@@ -133,7 +186,7 @@ class DecentralizedValueFunction(ValueFunction):
         if name is None:
             super().__init__(
                 config,
-                f"Decentralized-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-vision-<{config.train_config.critic_vision}>-<{config.train_config.new_input}>-batch_size-<{config.train_config.batch_size}>-env-<{config.env_config.env_cls}>-<{config.train_config.new_dynamic}>",
+                f"DecentralizedValue",
             )
         else:
             super().__init__(config, name)
