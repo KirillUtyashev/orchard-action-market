@@ -39,57 +39,57 @@ class ValueFunction(Algorithm, ABC):
     def _init_actor_networks(self, actor_network_cls=ActorNetwork):
         return []
 
-    @override
-    def generate_plots(self):
-        """
-        Generates and saves plots specific to this algorithm's training progress.
-        This provides a clean alternative to the generic `graph_plots` function.
-        """
-        # --- 1. Plot the Critic's Training Loss ---
-        if self.critic_loss:
-            fig = plot_hybrid_smoothed(
-                [self.critic_loss],
-                labels=["Critic Training MSE Loss"],
-                title="Critic Training Loss (Smoothed)",
-                xlabel="Training Step",
-                ylabel="MSE Loss",
-            )
-            # Use a log scale for loss plots, it's almost always better
-            ax = fig.gca()
-            ax.set_yscale("log")
-            ax.grid(True)
-            # self.graphs_out_path is defined in the base Algorithm class
-            fig.savefig(self.graphs_out_path / "Critic_Training_Loss.png")
-            plt.close(fig)
+    # @override
+    # def generate_plots(self):
+    #     """
+    #     Generates and saves plots specific to this algorithm's training progress.
+    #     This provides a clean alternative to the generic `graph_plots` function.
+    #     """
+    #     # --- 1. Plot the Critic's Training Loss ---
+    #     if self.critic_loss:
+    #         fig = plot_hybrid_smoothed(
+    #             [self.critic_loss],
+    #             labels=["Critic Training MSE Loss"],
+    #             title="Critic Training Loss (Smoothed)",
+    #             xlabel="Training Step",
+    #             ylabel="MSE Loss",
+    #         )
+    #         # Use a log scale for loss plots, it's almost always better
+    #         ax = fig.gca()
+    #         ax.set_yscale("log")
+    #         ax.grid(True)
+    #         # self.graphs_out_path is defined in the base Algorithm class
+    #         fig.savefig(self.graphs_out_path / "Critic_Training_Loss.png")
+    #         plt.close(fig)
 
-        # --- 2. Plot the Sample State Convergence ---
-        if self.loss_plot:  # Check if log_progress was actually run
-            plt.figure(figsize=(10, 6))
-            plt.plot(self.loss_plot, label="Sample State 1 Value")
-            plt.plot(self.loss_plot5, label="Sample State 2 Value")
-            plt.plot(self.loss_plot6, label="Sample State 3 Value")
-            plt.title("Value of Fixed Sample States During Training")
-            plt.xlabel("Logging Step")
-            plt.ylabel("Predicted Value")
-            plt.legend()
-            plt.grid(True)
-            plt.savefig(self.graphs_out_path / "Sample_State_Values.png")
-            plt.close()
+    #     # --- 2. Plot the Sample State Convergence ---
+    #     if self.loss_plot:  # Check if log_progress was actually run
+    #         plt.figure(figsize=(10, 6))
+    #         plt.plot(self.loss_plot, label="Sample State 1 Value")
+    #         plt.plot(self.loss_plot5, label="Sample State 2 Value")
+    #         plt.plot(self.loss_plot6, label="Sample State 3 Value")
+    #         plt.title("Value of Fixed Sample States During Training")
+    #         plt.xlabel("Logging Step")
+    #         plt.ylabel("Predicted Value")
+    #         plt.legend()
+    #         plt.grid(True)
+    #         plt.savefig(self.graphs_out_path / "Sample_State_Values.png")
+    #         plt.close()
 
-        # --- 3. Plot the Apple Count History ---
-        if self.apple_count_history:
-            fig = plot_hybrid_smoothed(
-                [self.apple_count_history],
-                labels=["Apple Count"],
-                title="Number of Apples in Orchard During Training",
-                xlabel="Training Step",
-                ylabel="Total Apples",
-            )
-            ax = fig.gca()
-            ax.grid(True)
-            # save the figure
-            fig.savefig(self.graphs_out_path / "Apple_Count_During_Training.png")
-            plt.close(fig)
+    #     # --- 3. Plot the Apple Count History ---
+    #     if self.apple_count_history:
+    #         fig = plot_hybrid_smoothed(
+    #             [self.apple_count_history],
+    #             labels=["Apple Count"],
+    #             title="Number of Apples in Orchard During Training",
+    #             xlabel="Training Step",
+    #             ylabel="Total Apples",
+    #         )
+    #         ax = fig.gca()
+    #         ax.grid(True)
+    #         # save the figure
+    #         fig.savefig(self.graphs_out_path / "Apple_Count_During_Training.png")
+    #         plt.close(fig)
 
 
 class CentralizedValueFunction(ValueFunction):

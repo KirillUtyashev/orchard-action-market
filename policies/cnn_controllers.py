@@ -1,5 +1,6 @@
 # --- START OF FILE helpers/controllers_cnn.py ---
 
+import numpy as np
 from typing_extensions import override
 import torch
 import random
@@ -7,6 +8,7 @@ from config import get_config
 from helpers.controllers import AgentControllerValue
 from orchard.environment import OrchardBasic
 from policies.random_policy import random_policy
+from helpers.controllers import AgentController
 
 
 class AgentControllerCentralizedCNN(AgentControllerValue):
@@ -130,3 +132,37 @@ class AgentControllerDecentralizedCNN(AgentControllerValue):
                 best_action_idx = action.idx
 
         return best_action_idx
+
+
+class AgentControllerActorCriticCNN(AgentController):
+    def __init__(self, agents_list):
+        # No ViewController is needed for CNNs
+        super().__init__(
+            agents_list, critic_view_controller=None, actor_view_controller=None
+        )
+
+    @override
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        """
+        Gets an action by processing the state with the agent's personal ActorCNN
+        and sampling from the resulting probability distribution.
+        """
+        agent = self.agents_list[agent_id]
+
+        # The actor network is now a CNN
+        actor_network = agent.policy_network
+
+        # 1. Process the raw state using the actor's own method
+        processed_state = actor_network.raw_state_to_nn_input(
+            env.get_state(), agent_pos=agent.position
+        )
+
+        # 2. Get action probabilities from the actor network
+        with torch.no_grad():
+            action_probs = actor_network.get_action_probabilities(processed_state)
+
+        # 3. Sample an action from the distribution
+        num_actions = len(env.available_actions)
+        action_idx = np.random.choice(num_actions, p=action_probs)
+
+        return action_idx

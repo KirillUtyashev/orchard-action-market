@@ -144,7 +144,8 @@ class Orchard(ABC):
 
         # stats
         self.total_apples = 0
-        self.apples_despawned = 0
+        self.total_despawned = 0
+        self.apples_spawned = 0
         self.total_picked = 0
 
         # spawn/despawn rates (unchanged logic)
@@ -275,8 +276,10 @@ class Orchard(ABC):
         raise NotImplementedError
 
     def spawn_despawn(self):
-        self.despawn_algorithm(self, self.despawn_rate)
-        self.spawn_algorithm(self, self.spawn_rate)
+        num_despawned = self.despawn_algorithm(self, self.despawn_rate)
+        self.total_despawned += num_despawned
+        num_spawned = self.spawn_algorithm(self, self.spawn_rate)
+        self.total_apples += num_spawned
 
     @abstractmethod
     def get_sum_apples(self):

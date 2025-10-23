@@ -10,7 +10,7 @@ from numpy import floating
 from agents.agent import Agent, AgentInfo
 from agents.simple_agent import SimpleAgent
 from config import DEVICE, OUT_DIR
-from configs.config import EnvironmentConfig, TrainingConfig
+from configs.config import EnvironmentConfig, ExperimentConfig, TrainingConfig
 from helpers.controllers import (
     AgentController,
     AgentControllerCentralized,
@@ -23,7 +23,7 @@ from models.actor_network import ActorNetwork
 from models.cnn import CNN
 from models.reward_network import RewardNetwork
 from models.value_function import VNetwork
-from plots import add_to_plots, graph_plots
+from plots import add_to_plots, graph_plots, plot_hybrid_smoothed
 from orchard.environment import *
 from helpers.helpers import create_env, generate_sample_states
 import os
@@ -190,13 +190,7 @@ class Algorithm:
     - training_loop
     """
 
-    def __init__(self, config, name):
-        self.train_config: TrainingConfig = config.train_config
-        self.env_config: EnvironmentConfig = config.env_config
-        self.name = name
-        self.debug = config.debug
-        self.rng_state = None
-
+    def create_folders(self):
         key_params = (
             f"h{self.train_config.hidden_dimensions}_"
             f"l{self.train_config.num_layers}_"
@@ -209,9 +203,9 @@ class Algorithm:
         self.run_id = f"{self.name}_{key_params}_{timestamp}_{os.getpid()}"
         self.run_output_dir = OUT_DIR / self.run_id
 
-        log_folder = self.run_output_dir / "algo_logs"
+        self.log_folder = self.run_output_dir / "algo_logs"
 
-        log_folder.mkdir(parents=True, exist_ok=True)
+        self.log_folder.mkdir(parents=True, exist_ok=True)
         self.run_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.graphs_out_path = self.run_output_dir / "graphs" / self.name
@@ -219,7 +213,26 @@ class Algorithm:
 
         self.checkpoint_path = self.run_output_dir / "checkpoints"
 
-        filename = log_folder / f"{name}.log"
+    def __init__(self, config: ExperimentConfig, name):
+        self.train_config: TrainingConfig = config.train_config
+        self.env_config: EnvironmentConfig = config.env_config
+        self.name = name
+        self.debug = config.debug
+        self.rng_state = None
+
+        self.create_folders()
+        # Create simple file containing all detailed parameters of this run
+        self.params_file = self.run_output_dir / "params.txt"
+        with open(self.params_file, "w") as f:
+            f.write(f"Experiment Name: {self.name}\n")
+            f.write(f"[Training Config]\n")
+            for field_name, value in vars(self.train_config).items():
+                f.write(f"{field_name}: {value}\n")
+            f.write(f"[Environment Config]\n")
+            for field_name, value in vars(self.env_config).items():
+                f.write(f"{field_name}: {value}\n")
+
+        filename = self.log_folder / f"{self.name}.log"
 
         logging.basicConfig(
             level=logging.INFO,
@@ -239,6 +252,8 @@ class Algorithm:
         self.weights_plot: dict[str, Any] = {}
         self.critic_loss = []
         self.apple_count_history: list[int] = []
+        self.despawn_to_pick_ratio_history: list[float] = []
+        self.apples_spawned_per_step_history: list[int] = []
 
         self.max_ratio = 0
 
@@ -257,17 +272,81 @@ class Algorithm:
         if self.train_config.test:
             self.count_random_actions = 0
 
-    @abstractmethod
     def generate_plots(
         self,
     ):  # NOTE The reason for this is because different algorithms generate plots
         # differently so we cannot use a general graph_plots function for every algorithm.
         """
-        Subclasses must implement this to generate and save any plots
-        relevant to their specific training progress. This is called
-        periodically by the training_loop.
+        Generates base plots. Subclasses can generate more plots.
         """
-        raise NotImplementedError
+
+        # --- 1. Plot the Critic's Training Loss ---
+        if self.critic_loss:
+            fig = plot_hybrid_smoothed(
+                [self.critic_loss],
+                labels=["Critic Training MSE Loss"],
+                title="Critic Training Loss (Smoothed)",
+                xlabel="Training Step",
+                ylabel="MSE Loss",
+            )
+            ax = fig.gca()
+            ax.set_yscale("log")
+            ax.grid(True)
+            fig.savefig(self.graphs_out_path / "Critic_Training_Loss.png")
+            plt.close(fig)
+
+        # --- 2. Plot the Sample State Convergence (Value Function) ---
+        if self.loss_plot:
+            plt.figure(figsize=(10, 6))
+            plt.plot(self.loss_plot, label="Sample State 1 Value")
+            plt.plot(self.loss_plot5, label="Sample State 2 Value")
+            plt.plot(self.loss_plot6, label="Sample State 3 Value")
+            plt.title("Value of Fixed Sample States During Training")
+            plt.xlabel("Logging Step")
+            plt.ylabel("Predicted Value")
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(self.graphs_out_path / "Sample_State_Values.png")
+            plt.close()
+
+        # --- 3. Plot the Apple Count History ---
+        if self.apple_count_history:
+            fig = plot_hybrid_smoothed(
+                [self.apple_count_history],
+                labels=["Apple Count"],
+                title="Number of Apples in Orchard During Training",
+                xlabel="Training Step",
+                ylabel="Total Apples",
+            )
+            ax = fig.gca()
+            ax.grid(True)
+            fig.savefig(self.graphs_out_path / "Apple_Count_During_Training.png")
+            plt.close(fig)
+
+        # --- 4. Plot the Despawn-to-Pick Ratio ---
+        if self.despawn_to_pick_ratio_history:
+            fig = plot_hybrid_smoothed(
+                [self.despawn_to_pick_ratio_history],
+                labels=["Despawn-to-Pick Ratio"],
+                title="Apple Collection Efficiency During Training",
+            )
+            ax = fig.gca()
+            ax.set_ylabel("Apples Despawned / Apples Picked")
+            ax.grid(True)
+            fig.savefig(self.graphs_out_path / "Despawn_to_Pick_Ratio.png")
+            plt.close(fig)
+
+        if self.apples_spawned_per_step_history:
+            fig = plot_hybrid_smoothed(
+                [self.apples_spawned_per_step_history],
+                labels=["Apples Spawned"],
+                title="Apples Spawned Per Timestep",
+            )
+            ax = fig.gca()
+            ax.set_ylabel("Count")
+            ax.grid(True)
+            fig.savefig(self.graphs_out_path / "Apples_Spawned_Per_Step.png")
+            plt.close(fig)
 
     @property
     def agents_list(self) -> Sequence[Agent]:
@@ -331,9 +410,8 @@ class Algorithm:
         self.loss_plot5.append(v_value5.item())
         self.loss_plot6.append(v_value6.item())
 
-    @abstractmethod
     def update_lr(self, step):
-        raise NotImplementedError
+        pass
 
     def evaluate_checkpoint(self, step: int, seed: int) -> EvalResult:
         """Evaluate agents based on current model parameters and plot the graphs for it."""
@@ -702,6 +780,8 @@ class Algorithm:
             for step in range(self.train_config.timesteps):
                 self.training_step(step)
 
+                self.record_spawn_despawn_stats()
+
                 # Log progress and update a learning rate
                 if step % log_constant == 0:
                     self.log_progress(sample_state, sample_state5, sample_state6)
@@ -728,6 +808,25 @@ class Algorithm:
             self.logger.error(f"Failed during training: {e}")
             return None
 
+    def record_spawn_despawn_stats(self):
+        apples_despawned_before = self.env.total_despawned
+        apples_spawned_before = (
+            self.env.total_apples
+        )  # Using total_apples for spawn count
+
+        # 2. Run the environment's spawn/despawn logic
+        # This will now correctly increment the cumulative counters inside the env
+        self.env.spawn_despawn()
+        apples_despawned_this_step = self.env.total_despawned - apples_despawned_before
+        apples_spawned_this_step = self.env.total_apples - apples_spawned_before
+
+        self.apples_spawned_per_step_history.append(apples_spawned_this_step)
+        if self.env.total_picked > 0:
+            ratio = self.env.total_despawned / self.env.total_picked
+            self.despawn_to_pick_ratio_history.append(ratio)
+        else:
+            self.despawn_to_pick_ratio_history.append(0.0)
+
     def _evaluate_final(self) -> Tuple[floating, ...]:
         """Perform final evaluation."""
         mean_metrics = {
@@ -753,7 +852,7 @@ class Algorithm:
         avg_per_agent = np.mean(mean_metrics["per_agent"])
         avg_average_distance = np.mean(mean_metrics["average_distance"])
         # Log final averages
-        self.logger.info(f"Ratio picked: {avg_total_apples}")
+        self.logger.info(f"Ratio picked: {avg_per_agent}")
         self.logger.info(f"Mean distance: {avg_average_distance}")
         self.logger.info(f"Total apples: {avg_total_apples}")
         self.logger.info(f"Total picked: {avg_total_picked}")
@@ -921,6 +1020,9 @@ class Algorithm:
                     actor_input_dim = self.train_config.actor_vision**2 + 1
                 else:
                     actor_input_dim = self.train_config.actor_vision + 1
+            elif self.train_config.new_input:
+                # This branch was missing. Add it to handle the new input format.
+                actor_input_dim = 3 * self.env_config.length * self.env_config.width
             else:
                 actor_input_dim = self.env_config.length * self.env_config.width + 1
             actor_networks.append(

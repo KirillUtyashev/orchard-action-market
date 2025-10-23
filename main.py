@@ -164,7 +164,7 @@ def eval_performance(
             ### IGNORE END #####
             if i % 1000 == 0:
                 print(i)
-            env.apples_despawned += env.despawn_algorithm(env, env.despawn_rate)
+            env.total_despawned += env.despawn_algorithm(env, env.despawn_rate)
             env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
     print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
     print("Average distance:", np.mean(nearest_neighbour_mean_distance))

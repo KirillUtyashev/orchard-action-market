@@ -148,7 +148,7 @@ class AgentControllerActorCritic(AgentControllerDecentralized):
 
     def get_best_action(self, env, agent_id, communal=True):
         probs = self.agents_list[agent_id].policy_network.get_function_output(
-            self.actor_view_controller.process_state(
+            self.actor_view_controller.state_to_nn_input(
                 env.get_state(), self.agents_list[agent_id].position
             )
         )

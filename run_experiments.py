@@ -3,6 +3,7 @@ import sys
 import numpy as np
 import random
 import torch
+from actor_critic.actor_critic_cnn import ActorCriticCNNAlgorithm
 from policies.random_policy import random_policy
 from policies.nearest import nearest_policy
 from actor_critic.actor_critic_following_rates import (
@@ -31,7 +32,10 @@ from value_function_learning.train_value_function_cnn import (
     CentralizedValueCNNAlgorithm,
     DecentralizedValueFunctionCNNAlgorithm,
 )
-
+from value_function_learning.train_value_function_cnn import (
+    CentralizedValueCNNAlgorithm,
+    DecentralizedValueFunctionCNNAlgorithm,
+)
 
 POLICY_MAP = {
     "ActorCritic": "policy_network",
@@ -45,6 +49,7 @@ POLICY_MAP = {
     "RewardLearningCNNDecentralized": nearest_policy,
     "CentralizedCNN": "value_function",  # cnn doesn't use this but here for consistency
     "DecentralizedCNN": "value_function",  # cnn doesn't use this but here for consistency
+    "ActorCriticCNN": "policy_network",
 }
 
 
@@ -197,6 +202,8 @@ def pick_experiment(algorithm, exp_config):
         algo = CentralizedValueCNNAlgorithm(exp_config)
     elif algorithm == "DecentralizedCNN":
         algo = DecentralizedValueFunctionCNNAlgorithm(exp_config)
+    elif algorithm == "ActorCriticCNN":
+        algo = ActorCriticCNNAlgorithm(exp_config)
     else:
         algo = None
     return algo

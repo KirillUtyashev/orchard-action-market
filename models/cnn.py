@@ -54,7 +54,6 @@ class CNN(nn.Module):
             hidden_dim: Not used in CNN layers but used in the MLP head after convolutions.
         """
         super().__init__()
-
         self.conv1 = nn.Conv2d(
             in_channels=input_channels, out_channels=16, kernel_size=3, padding=1
         )
@@ -113,7 +112,12 @@ class CNN(nn.Module):
         """
         # Create a dummy tensor and pass it through the conv layers to find the output size
         with torch.no_grad():
-            x: Tensor = torch.zeros(1, input_channels, height, width)
+            layer_device = self.conv1.weight.device
+            layer_dtype = self.conv1.weight.dtype
+            x: Tensor = torch.zeros(
+                1, input_channels, height, width, device=layer_device, dtype=layer_dtype
+            )
+
             x = self.pool1(F.relu(self.conv1(x)))
             x = self.pool2(F.relu(self.conv2(x)))
             return x.numel()  # Total number of elements

@@ -11,7 +11,7 @@ class ActorCriticPerfect(ActorCritic):
     def __init__(self, config: ExperimentConfig):
         super().__init__(
             config,
-            f"""ActorCritic-<{config.train_config.num_agents}>_agents-_length-<{config.env_config.length}>_width-<{config.env_config.width}>_s_target-<{config.env_config.s_target}>-alpha-<{config.train_config.alpha}>-apple_mean_lifetime-<{config.env_config.apple_mean_lifetime}>-<{config.train_config.hidden_dimensions}>-<{config.train_config.num_layers}>-critic_vision-<{config.train_config.critic_vision}>-actor_vision-<{config.train_config.actor_vision}>-batch_size-<{config.train_config.batch_size}>-actor_alpha-<{config.train_config.actor_alpha}>-actor_hidden-<{config.train_config.hidden_dimensions_actor}>-actor_layers-<{config.train_config.num_layers_actor}>""",
+            f"""ActorCriticPerfect""",
         )
 
     def init_agents_for_eval(self):
@@ -33,7 +33,7 @@ class ActorCriticPerfect(ActorCritic):
                 if env_step_result.action is not None:
                     for each_agent in range(len(self._agents_list)):
                         reward = (
-                            env_step_result.picker_reward
+                            env_step_result.reward_vector
                             if each_agent == env_step_result.acting_agent_id
                             else (
                                 (env_step_result.apple_owner_reward)
