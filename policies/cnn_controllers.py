@@ -99,8 +99,8 @@ class AgentControllerDecentralizedCNN(AgentControllerValue):
         max_q_value = -float("inf")
 
         for action in env.available_actions:
-            ir, next_agents_map, next_apples_map, next_pos_acting_agent = (
-                env.get_next_state_and_reward(
+            team_reward, next_agents_map, next_apples_map, next_pos_acting_agent = (
+                env.get_next_state_and_reward(  # NOTE the ir is 0, or 1 so it is really the team reward.
                     self.agents_list[agent_id].position, action.vector
                 )
             )
@@ -124,7 +124,7 @@ class AgentControllerDecentralizedCNN(AgentControllerValue):
             next_state_sum_over_all_agents = self.get_collective_value(
                 processed_next_states, agent_id
             )
-            q_value = ir + get_config()["discount"] * next_state_sum_over_all_agents
+            q_value = team_reward + get_config()["discount"] * next_state_sum_over_all_agents
 
             if q_value > max_q_value:
                 max_q_value = q_value

@@ -192,15 +192,16 @@ class Algorithm:
 
     def create_folders(self):
         key_params = (
-            f"h{self.train_config.hidden_dimensions}_"
-            f"l{self.train_config.num_layers}_"
-            f"a{self.train_config.num_agents}_"
+            f"{self.train_config.alpha}lr_"
+            f"{self.train_config.hidden_dimensions}h_"
+            f"{self.train_config.num_layers}l_"
+            f"{self.train_config.num_agents}a_"
             f"{self.env_config.width}x{self.env_config.length}_"
         )
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = time.strftime("%Yy-%mm-%dd_%Hh-%Mm-%Ss")
 
         # unique id so folders don't overwrite each other.
-        self.run_id = f"{self.name}_{key_params}_{timestamp}_{os.getpid()}"
+        self.run_id = f"{self.name}_{key_params}_{timestamp}_{os.getpid()}pid"
         self.run_output_dir = OUT_DIR / self.run_id
 
         self.log_folder = self.run_output_dir / "algo_logs"
