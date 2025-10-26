@@ -137,10 +137,6 @@ class CentralizedValueFunction(ValueFunction):
                     rewards_sum,
                 )
 
-                if self.train_config.new_dynamic:
-                    self.env.remove_apple(
-                        self._agents_list[env_step_result.acting_agent_id].position
-                    )
         except Exception as e:
             self.logger.error(f"Error collecting observations: {e}")
             raise

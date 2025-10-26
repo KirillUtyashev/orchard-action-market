@@ -120,12 +120,11 @@ class AgentControllerDecentralizedCNN(AgentControllerValue):
                         next_raw_state, agent_pos=agent_pos_for_state
                     )
                 )
-            # ---------------------------------
 
-            next_state_value = self.get_collective_value(
+            next_state_sum_over_all_agents = self.get_collective_value(
                 processed_next_states, agent_id
             )
-            q_value = ir + get_config()["discount"] * next_state_value
+            q_value = ir + get_config()["discount"] * next_state_sum_over_all_agents
 
             if q_value > max_q_value:
                 max_q_value = q_value
