@@ -46,7 +46,7 @@ class ActorCNN(CNNDecentralized):
         self.mlp_head = nn.Sequential(*layers)
 
         # Re-initialize the optimizer to include the new mlp_head parameters
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=alpha, amsgrad=True)
         self.mlp_head.float()
         self.mlp_head.to(DEVICE)
         # Buffers for actor-specific experiences

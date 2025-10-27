@@ -172,15 +172,17 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
         **kwargs not needed
         """
         # 1. Initialize our CNN critic network.
-        critic_networks = self._init_critic_networks()
-
-        # 2. This creates self._agents_list where each agent is a SimpleAgent with policy_value set to ValueCNNCentralized
-        self._init_agents_for_training(SimpleAgent, critic_networks, [], [])
+        critic_networks = (
+            self._init_critic_networks()
+        )  # it's a list but each element is the same network.
 
         # 3. Initialize OUR agent controller. ignore test flag.
         self.agent_controller = AgentControllerCentralizedCNN(
             self._agents_list, test=self.train_config.test
         )
+
+        # 2. This creates self._agents_list where each agent is a SimpleAgent with policy_value set to ValueCNNCentralized
+        self._init_agents_for_training(SimpleAgent, critic_networks, [], [])
 
         # 4. Create the environment.
         self.env = create_env(
@@ -204,7 +206,9 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
         Takes the result of a single, clean environment step and adds the
         corresponding experience to the training buffer.
         """
-        assert isinstance(self._agents_list[0].policy_value, ValueCNNCentralized)
+        assert isinstance(
+            self._agents_list[0].policy_value, ValueCNNCentralized
+        )  # NOTE mlp uses self.network_for_eval[0] but it should be same
         valueCNN: ValueCNNCentralized = self._agents_list[0].policy_value
         for tick in range(self.train_config.num_agents):
             env_step_result = self.single_agent_env_step(tick)
@@ -212,7 +216,9 @@ class CentralizedValueCNNAlgorithm(ValueFunctionCNNAlgorithm):
             if self.train_config.new_dynamic and env_step_result.picked:
                 pos = self._agents_list[env_step_result.acting_agent_id].position
                 self.env.remove_apple(pos)
-            reward = sum(env_step_result.reward_vector)
+            reward = sum(
+                env_step_result.reward_vector
+            )  # Note mlp uses np.sum instead but is dhoul be the same.
             processed_state = valueCNN.raw_state_to_nn_input(env_step_result.old_state)
             processed_new_state = valueCNN.raw_state_to_nn_input(
                 env_step_result.new_state
