@@ -7,6 +7,26 @@ from helpers.states_logger import HtmlDataLogger
 from models.cnn import CNNCentralized, CNNDecentralized, CNN
 from typing_extensions import override
 from utils import ten_float
+import random
+import collections
+from collections import namedtuple
+
+Transition = namedtuple("Transition", ("state", "new_state", "reward"))
+
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.memory = collections.deque([], maxlen=capacity)
+
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 
 class ValueTrainer:
@@ -75,10 +95,16 @@ class ValueCNNCentralized(CNNCentralized):
         discount: float,
         mlp_hidden_features: int,
         mlp_hidden_layers: int,
+        replay_buffer_capacity: int = 10000,
     ):
         super().__init__(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
         # Create and hold an instance of the trainer. Pass `self` as the network.
         self.trainer = ValueTrainer(self, discount=discount)
+        
+        self.memory = ReplayBuffer(replay_buffer_capacity)
+        self.target_net = CNNCentralized(height, width, alpha, mlp_hidden_features, mlp_hidden_layers)
+        self.target_net.load_state_dict(self.state_dict())
+        self.target_net.eval()  # Target network is only for evaluation/inference
 
     # Delegate the training and experience calls to the trainer helper.
     def add_experience(self, state, new_state, reward):

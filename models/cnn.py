@@ -81,7 +81,7 @@ class CNN(nn.Module):
         self.mlp_head = nn.Sequential(*layers)
 
         # use all parameters of the model
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=alpha)
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=alpha, amsgrad=True)
 
         self.batch_states = []
         self.batch_rewards = []
