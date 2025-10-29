@@ -48,7 +48,6 @@ class ValueTrainer:
             target_v = net.forward(next_states).squeeze(1)
             rewards = ten_float(np.array(net.batch_rewards, dtype=np.float32), DEVICE)
             y = rewards + self.discount * target_v
-
         criterion = torch.nn.MSELoss()
         net.optimizer.zero_grad()
         loss = criterion(approx, y)

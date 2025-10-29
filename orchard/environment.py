@@ -1,7 +1,7 @@
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import random
@@ -97,6 +97,10 @@ class Action2D(ActionMixin, Enum):
         self._idx = idx
         self._vector = vector
 
+    @classmethod
+    def get_random_action(cls):
+        return random.choice(list(cls))
+
 
 @dataclass
 class ProcessAction:
@@ -121,6 +125,8 @@ class Orchard(ABC):
         action_algo=None,
         spawn_algo=spawn_apple,
         despawn_algo=despawn_apple,
+        start_agents_map: np.ndarray | None = None,
+        start_apples_map: np.ndarray | None = None,
         s_target=0.1,
         apple_mean_lifetime=None,
         debug=False,
@@ -129,13 +135,19 @@ class Orchard(ABC):
         self.width = width
         self.available_actions = Action1D if width == 1 else Action2D
 
-        self.n = num_agents
-        assert agents_list is not None and self.n == len(agents_list)
+        self.n: Any = num_agents
+        # assert agents_list is not None and self.n == len(agents_list)
         self.agents_list = agents_list
 
         # state grids
-        self.agents = np.zeros((self.width, self.length), dtype=int)
-        self.apples = np.zeros((self.width, self.length), dtype=int)
+        if start_agents_map is not None:
+            self.agents = start_agents_map
+        else:
+            self.agents = np.zeros((self.width, self.length), dtype=int)
+        if start_apples_map is not None:
+            self.apples = start_apples_map
+        else:
+            self.apples = np.zeros((self.width, self.length), dtype=int)
 
         # plug-ins
         self.spawn_algorithm = spawn_algo
@@ -318,6 +330,17 @@ class OrchardBasic(Orchard):
     def get_next_state_and_reward(
         self, position, action_vector, communal=True, agent_id=None
     ):
+        """Get (immediate_reward, agent_positions, apple_positions, new_agent_pos)
+
+        Args:
+            position: The current position of the agent.
+            action_vector: The action vector to apply.
+            communal: Whether the action is communal. Defaults to True.
+            agent_id: The ID of the agent performing the action. Defaults to None.
+
+        Returns:
+            Tuple: (immediate_reward, next_agents_map, next_apples_map, new_position: np.ndarray(2,))
+        """
         new_position = np.clip(
             position + action_vector, [0, 0], self.agents.shape - np.array([1, 1])
         )
