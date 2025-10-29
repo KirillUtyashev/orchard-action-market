@@ -149,7 +149,7 @@ class CNN(nn.Module):
         processed_state = self.raw_state_to_nn_input(raw_state, **kwargs)
         return self.get_model_reward_prediction_from_proccessed_state(processed_state)
 
-    def train_batch(self):
+    def train_batch(self, batch_size):
         """Train the CNN model on the current batch of states and rewards. Note by batch we mean mini-batch training.
 
         Preconditions:
