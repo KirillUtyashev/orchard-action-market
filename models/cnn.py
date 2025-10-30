@@ -57,7 +57,10 @@ class CNN(nn.Module):
             num_mlp_hidden_layers: Number of hidden layers in the MLP head.
         """
         super().__init__()
-
+        self.initial_height = height
+        self.initial_width = width
+        
+        
         self.conv_layers = nn.ModuleList()
         in_channels = input_channels
         # Dynamically create convolutional and pooling layers
@@ -72,7 +75,8 @@ class CNN(nn.Module):
                 height //= 2
                 width //= 2
             in_channels = out_channels
-        conv_output_size = self._get_conv_output_size(input_channels, height, width)
+
+        conv_output_size = self._get_conv_output_size(input_channels, self.initial_height, self.initial_width)
 
         layers = []
         input_features = conv_output_size
