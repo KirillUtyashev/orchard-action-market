@@ -41,6 +41,7 @@ class CNN(nn.Module):
         height: int,
         width: int,
         alpha: float,
+        conv_channels: list[int] = [16, 32],
         mlp_hidden_features: int = 128,
         num_mlp_hidden_layers: int = 1,
     ):
@@ -51,19 +52,26 @@ class CNN(nn.Module):
             height: Height of the input images
             width: Width of the input images
             alpha: Learning rate for the optimizer
-            hidden_dim: Not used in CNN layers but used in the MLP head after convolutions.
+            conv_channels: List specifying the number of output channels for each convolutional layer.
+            mlp_hidden_features: Number of features in each hidden layer of the MLP head.
+            num_mlp_hidden_layers: Number of hidden layers in the MLP head.
         """
         super().__init__()
-        self.conv1 = nn.Conv2d(
-            in_channels=input_channels, out_channels=16, kernel_size=3, padding=1
-        )
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(
-            in_channels=16, out_channels=32, kernel_size=3, padding=1
-        )
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        # Calculate the size of the flattened layer after convolutions and pooling
-        # This is a robust way to handle different input sizes
+
+        self.conv_layers = nn.ModuleList()
+        in_channels = input_channels
+        # Dynamically create convolutional and pooling layers
+        for out_channels in conv_channels:
+            self.conv_layers.append(
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+            )
+            # Important: Check if the current feature map size allows for another pooling layer
+            # After a 2x2 pooling, dimensions are halved.
+            if height >= 2 and width >= 2:
+                self.conv_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+                height //= 2
+                width //= 2
+            in_channels = out_channels
         conv_output_size = self._get_conv_output_size(input_channels, height, width)
 
         layers = []
@@ -91,36 +99,37 @@ class CNN(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         """Defines the forward pass of the data through the network."""
-        features = self.pool1(F.relu(self.conv1(x)))
-        features = self.pool2(F.relu(self.conv2(features)))
-        feature_vector = torch.flatten(features, 1)
+        for layer in self.conv_layers:
+            # Apply ReLU after each Conv2d layer
+            if isinstance(layer, nn.Conv2d):
+                x = F.relu(layer(x))
+            else:  # Apply pooling layer directly
+                x = layer(x)
+
+        feature_vector = torch.flatten(x, 1)
         prediction = self.mlp_head(feature_vector)
         return prediction
 
     def _get_conv_output_size(
-        self, input_channels: int, height: int, width: int
+        self, input_channels: int, initial_height: int, initial_width: int
     ) -> int:
         """Get the number of features after the conv and pooling layers
 
         Args:
             input_channels: Number of input channels
-            height: Height of the input images
-            width: Width of the input images
+            initial_height: Height of the input images
+            initial_width: Width of the input images
 
         Returns:
             The number of features after the conv and pooling layers
         """
         # Create a dummy tensor and pass it through the conv layers to find the output size
         with torch.no_grad():
-            layer_device = self.conv1.weight.device
-            layer_dtype = self.conv1.weight.dtype
-            x: Tensor = torch.zeros(
-                1, input_channels, height, width, device=layer_device, dtype=layer_dtype
-            )
-
-            x = self.pool1(F.relu(self.conv1(x)))
-            x = self.pool2(F.relu(self.conv2(x)))
-            return x.numel()  # Total number of elements
+            x = torch.zeros(1, input_channels, initial_height, initial_width)
+            # Pass the dummy tensor through the same layers as in forward()
+            for layer in self.conv_layers:
+                x = layer(x)
+            return x.numel()
 
     def get_model_reward_prediction_from_proccessed_state(self, x) -> np.ndarray:
         # x is a single numpy array of shape [channels, height, width]
@@ -252,6 +261,7 @@ class CNNDecentralized(CNN):
         alpha: float,
         mlp_hidden_features: int = 256,
         num_mlp_hidden_layers: int = 2,
+        conv_channels: list[int] = [16, 32],
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
@@ -261,6 +271,7 @@ class CNNDecentralized(CNN):
             alpha=alpha,
             mlp_hidden_features=mlp_hidden_features,
             num_mlp_hidden_layers=num_mlp_hidden_layers,
+            conv_channels=conv_channels,
         )
 
     @override
@@ -324,6 +335,7 @@ class CNNCentralized(CNN):
         alpha: float,
         mlp_hidden_features: int = 128,
         num_mlp_hidden_layers: int = 1,
+        conv_channels=[16, 32],
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
@@ -333,6 +345,7 @@ class CNNCentralized(CNN):
             alpha=alpha,
             mlp_hidden_features=mlp_hidden_features,
             num_mlp_hidden_layers=num_mlp_hidden_layers,
+            conv_channels=conv_channels,
         )
 
     @override
