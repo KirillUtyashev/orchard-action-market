@@ -1,6 +1,0 @@
-run_name,conv_channels,mlp_layers,width,height,mean_random_reward,mean_nearest_reward,mean_learned_reward
-Centralized,16-32,4,4,4,0.14,0.457,0.325
-Centralized,16-32,4,4,4,0.125,0.415,0.289
-Centralized,16-32,4,4,4,0.144,0.415,0.309
-Centralized,16-32,4,12,12,0.175,0.643,0.675
-Centralized,16-32,4,12,12,0.208,0.627,0.628

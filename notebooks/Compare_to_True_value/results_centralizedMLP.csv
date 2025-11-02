@@ -1,0 +1,2 @@
+hidden dimensions,hidden layers,width,height,num_agents,mean_random_reward,mean_nearest_reward,mean_learned_reward
+128,4,12,12,7,0.216,0.603,0.651
