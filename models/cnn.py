@@ -59,8 +59,7 @@ class CNN(nn.Module):
         super().__init__()
         self.initial_height = height
         self.initial_width = width
-        
-        
+
         self.conv_layers = nn.ModuleList()
         in_channels = input_channels
         # Dynamically create convolutional and pooling layers
@@ -68,6 +67,7 @@ class CNN(nn.Module):
             self.conv_layers.append(
                 nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
             )
+            self.conv_layers.append(nn.ReLU())
             # Important: Check if the current feature map size allows for another pooling layer
             # After a 2x2 pooling, dimensions are halved.
             if height >= 2 and width >= 2:
@@ -76,7 +76,9 @@ class CNN(nn.Module):
                 width //= 2
             in_channels = out_channels
 
-        conv_output_size = self._get_conv_output_size(input_channels, self.initial_height, self.initial_width)
+        conv_output_size = self._get_conv_output_size(
+            input_channels, self.initial_height, self.initial_width
+        )
 
         layers = []
         input_features = conv_output_size
@@ -104,11 +106,7 @@ class CNN(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         """Defines the forward pass of the data through the network."""
         for layer in self.conv_layers:
-            # Apply ReLU after each Conv2d layer
-            if isinstance(layer, nn.Conv2d):
-                x = F.relu(layer(x))
-            else:  # Apply pooling layer directly
-                x = layer(x)
+            x = layer(x)
 
         feature_vector = torch.flatten(x, 1)
         prediction = self.mlp_head(feature_vector)

@@ -86,7 +86,7 @@ class Action1D(ActionMixin, Enum):
         self._vector = vector
 
 
-class Action2D(ActionMixin, Enum):
+class MoveAction(ActionMixin, Enum):
     LEFT = (0, [0, -1])
     RIGHT = (1, [0, 1])
     STAY = (2, [0, 0])
@@ -133,7 +133,7 @@ class Orchard(ABC):
     ):
         self.length = length
         self.width = width
-        self.available_actions = Action1D if width == 1 else Action2D
+        self.available_actions = Action1D if width == 1 else MoveAction
 
         self.n: Any = num_agents
         # assert agents_list is not None and self.n == len(agents_list)

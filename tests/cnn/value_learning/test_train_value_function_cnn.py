@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from orchard.environment import Action2D
+from orchard.environment import MoveAction
 from value_function_learning.train_value_function_cnn import (
     DecentralizedValueFunctionCNNAlgorithm,
 )
@@ -70,7 +70,7 @@ def test_decentralized_cnn_single_step_stores_correct_experience(default_config)
     # Mock the controller to force Agent 0 to move right (action=1)
     class MockController(AgentControllerDecentralizedCNN):
         def agent_get_action(self, env, agent_id, epsilon=None):
-            return Action2D.RIGHT.idx  # Always move RIGHT
+            return MoveAction.RIGHT.idx  # Always move RIGHT
 
     algo.agent_controller = MockController(algo.agents_list)
 

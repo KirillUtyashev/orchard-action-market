@@ -8,7 +8,7 @@ from models.actor_cnn import ActorCNN
 from policies.cnn_controllers import AgentControllerActorCriticCNN
 from actor_critic.actor_critic_cnn import ActorCriticCNNAlgorithm
 from configs.config import ExperimentConfig, EnvironmentConfig, TrainingConfig
-from orchard.environment import Action2D
+from orchard.environment import MoveAction
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ def test_ac_cnn_step_and_collect_observation(ac_cnn_config):
 
     # Mock the controller to force the action
     algo.agent_controller.agent_get_action = (
-        lambda env, agent_id, epsilon: Action2D.RIGHT.idx
+        lambda env, agent_id, epsilon: MoveAction.RIGHT.idx
     )
 
     # 1. Simulate a single agent step
@@ -160,7 +160,7 @@ def test_ac_cnn_step_and_collect_observation(ac_cnn_config):
     assert len(other_agent.policy_network.batch_states) == 0
 
     # Check the content for the acting agent's actor
-    assert acting_agent.policy_network.batch_actions[0] == Action2D.RIGHT.idx
+    assert acting_agent.policy_network.batch_actions[0] == MoveAction.RIGHT.idx
 
     # Check that the advantage was calculated and is a float
     advantage = acting_agent.policy_network.batch_advantages[0]
