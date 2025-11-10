@@ -44,6 +44,7 @@ class CNN(nn.Module):
         conv_channels: list[int] = [16, 32],
         mlp_hidden_features: int = 128,
         num_mlp_hidden_layers: int = 1,
+        kernel_size: int = 3,
     ):
         """Convolutional Neural Network for Reward Prediction
 
@@ -57,28 +58,29 @@ class CNN(nn.Module):
             num_mlp_hidden_layers: Number of hidden layers in the MLP head.
         """
         super().__init__()
-        self.initial_height = height
-        self.initial_width = width
+        current_height = height
+        current_width = width
 
         self.conv_layers = nn.ModuleList()
         in_channels = input_channels
         # Dynamically create convolutional and pooling layers
         for out_channels in conv_channels:
+            padding = (kernel_size - 1) // 2
             self.conv_layers.append(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+                nn.Conv2d(
+                    in_channels, out_channels, kernel_size=kernel_size, padding=padding
+                )
             )
             self.conv_layers.append(nn.ReLU())
             # Important: Check if the current feature map size allows for another pooling layer
             # After a 2x2 pooling, dimensions are halved.
-            if height >= 2 and width >= 2:
+            if current_width >= 2 and current_height >= 2:
                 self.conv_layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
-                height //= 2
-                width //= 2
+                current_height //= 2
+                current_width //= 2
             in_channels = out_channels
 
-        conv_output_size = self._get_conv_output_size(
-            input_channels, self.initial_height, self.initial_width
-        )
+        conv_output_size = self._get_conv_output_size(input_channels, height, width)
 
         layers = []
         input_features = conv_output_size
@@ -264,6 +266,7 @@ class CNNDecentralized(CNN):
         mlp_hidden_features: int = 256,
         num_mlp_hidden_layers: int = 2,
         conv_channels: list[int] = [16, 32],
+        kernel_size: int = 3,
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
@@ -274,6 +277,7 @@ class CNNDecentralized(CNN):
             mlp_hidden_features=mlp_hidden_features,
             num_mlp_hidden_layers=num_mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
 
     @override
@@ -338,6 +342,7 @@ class CNNCentralized(CNN):
         mlp_hidden_features: int = 128,
         num_mlp_hidden_layers: int = 1,
         conv_channels=[16, 32],
+        kernel_size: int = 3,
     ):
         # Centralized model only has 2 channels: apples and all agents (not distinguishing between different agents)
         super().__init__(
@@ -348,6 +353,7 @@ class CNNCentralized(CNN):
             mlp_hidden_features=mlp_hidden_features,
             num_mlp_hidden_layers=num_mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
 
     @override

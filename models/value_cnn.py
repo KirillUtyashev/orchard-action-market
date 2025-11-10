@@ -43,6 +43,7 @@ class ValueCNNCentralized(CNNCentralized):
         mlp_hidden_layers: int,
         conv_channels: list[int] = [16, 32],
         replay_buffer_capacity: int = 10000,
+        kernel_size: int = 3,
     ):
         super().__init__(
             height,
@@ -51,6 +52,7 @@ class ValueCNNCentralized(CNNCentralized):
             mlp_hidden_features,
             mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
         self.discount = discount
         # Create the target network, which is a clone of the policy network
@@ -62,6 +64,7 @@ class ValueCNNCentralized(CNNCentralized):
             mlp_hidden_features,
             mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
         policy_net_state_dict = self.state_dict()
 
@@ -127,7 +130,7 @@ class ValueCNNDecentralized(CNNDecentralized):
         mlp_hidden_layers: int,
         conv_channels: list[int] = [16, 32],
         replay_buffer_capacity: int = 10000,
-        **kwargs
+        kernel_size: int = 3,
     ):
         super().__init__(
             height,
@@ -136,6 +139,7 @@ class ValueCNNDecentralized(CNNDecentralized):
             mlp_hidden_features,
             mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
         self.discount = discount
         # Create the target network, which is a clone of the policy network
@@ -147,6 +151,7 @@ class ValueCNNDecentralized(CNNDecentralized):
             mlp_hidden_features,
             mlp_hidden_layers,
             conv_channels=conv_channels,
+            kernel_size=kernel_size,
         )
         policy_net_state_dict = self.state_dict()
 
