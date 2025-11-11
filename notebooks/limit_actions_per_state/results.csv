@@ -1,3 +1,0 @@
-run_name,num_agents,width,height,kernel_size,conv_channels,mlp_features,mlp_layers,learning_rate,mean_random_reward,mean_nearest_reward,mean_learned_reward
-Decentralized,2,4,4,3,16-32,128,2,2e-05,0.05,0.2,0.05
-Decentralized,2,4,4,3,16-32,128,2,2e-05,0.1,0.2,0.1
