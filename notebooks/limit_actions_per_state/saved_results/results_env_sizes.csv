@@ -1,0 +1,5 @@
+run_name,num_agents,width,height,kernel_size,conv_channels,mlp_features,mlp_layers,learning_rate,mean_random_reward,mean_nearest_reward,mean_learned_reward
+Centralized,4,9,9,3,16-32-32,128,2,2e-05,0.18626,0.61352,0.68628
+Centralized,2,6,6,3,16-32-32,128,2,2e-05,0.1592,0.5632,0.59028
+Centralized,7,12,12,3,16-32-32,128,2,2e-05,0.20298,0.62344,0.72744
+Decentralized,2,6,6,3,16-32-32,128,2,2e-05,0.16016,0.5679,0.00114

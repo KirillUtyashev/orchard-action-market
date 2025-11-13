@@ -1,0 +1,1 @@
+all decentralized resuilts are bad. All centralized ones are good here.
