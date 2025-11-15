@@ -144,10 +144,18 @@ class State:
         return hash((agents_hashable, apples_hashable))
 
     def __eq__(self, other):
-        # Define how to check for equality between two State objects
-        return self._agents == other.agents and np.array_equal(
-            self._apples, other.apples
-        )
+            if not isinstance(other, State):
+                return NotImplemented
+
+            # 1. Check for dictionary equality (Agent IDs -> Position)
+            agents_equal = self._agents == other._agents
+            
+            # 2. Check for numpy array equality (Apples matrix)
+            # Note: You can use self._apples directly or the getter self.apples, 
+            # but using the internal attribute is more direct for comparison.
+            apples_equal = np.array_equal(self._apples, other._apples)
+
+            return agents_equal and apples_equal
 
     def copy(self):
         return State(
