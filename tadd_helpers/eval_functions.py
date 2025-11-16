@@ -4,6 +4,7 @@ sys.path.append("../../orchard/")
 from tadd_helpers.env_functions import OldState, State
 from orchard.environment import MoveAction
 import numpy as np
+import random
 
 
 def random_policy(s: State, agent_idx: int):
@@ -23,6 +24,45 @@ def nearest_policy(s: State, agent_idx: int):
         return MoveAction.DOWN if direction[0] > 0 else MoveAction.UP
     else:
         return MoveAction.RIGHT if direction[1] > 0 else MoveAction.LEFT
+
+
+def symmetric_nearest_policy(s: State, agent_idx: int):
+    """
+    A nearest_policy with symmetric tie-breakers for BOTH apple selection and movement.
+    """
+    agent_pos = s.agent_position(agent_idx)
+    apple_positions = np.argwhere(s.apples > 0)
+
+    if len(apple_positions) == 0:
+        return MoveAction.get_random_action()
+
+    distances = np.linalg.norm(apple_positions - agent_pos, axis=1)
+    min_dist = np.min(distances)
+
+    # --- SYMMETRIC APPLE SELECTION TIE-BREAK ---
+    # Find all indices that match the minimum distance
+    min_indices = np.where(distances == min_dist)[0]
+    # Randomly choose one of the closest apples
+    chosen_apple_idx = random.choice(min_indices)
+    nearest_apple_pos = apple_positions[chosen_apple_idx]
+    # -----------------------------------------
+
+    if np.array_equal(agent_pos, nearest_apple_pos):
+        return MoveAction.STAY
+
+    direction = nearest_apple_pos - agent_pos
+    dy, dx = direction[0], direction[1]
+
+    if abs(dy) > abs(dx):
+        return MoveAction.DOWN if dy > 0 else MoveAction.UP
+    elif abs(dx) > abs(dy):
+        return MoveAction.RIGHT if dx > 0 else MoveAction.LEFT
+    else:  # Diagonal move tie-break
+        return (
+            (MoveAction.DOWN if dy > 0 else MoveAction.UP)
+            if random.random() < 0.5
+            else (MoveAction.RIGHT if dx > 0 else MoveAction.LEFT)
+        )
 
 
 def old_random_policy(s: OldState, agent_idx: int, agent_positions: np.ndarray):
