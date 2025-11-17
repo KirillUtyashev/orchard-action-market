@@ -1,6 +1,8 @@
 import sys
 from typing_extensions import override
 
+from tadd_helpers.env_functions import State
+
 sys.path.append("../")
 
 from pyparsing import abstractmethod
@@ -113,6 +115,9 @@ class CNN(nn.Module):
         feature_vector = torch.flatten(x, 1)
         prediction = self.mlp_head(feature_vector)
         return prediction
+
+    def state_to_raw_dict(self, s: State) -> dict:
+        return {"apples": s.apples, "agents": s.agents}
 
     def _get_conv_output_size(
         self, input_channels: int, initial_height: int, initial_width: int
