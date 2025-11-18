@@ -54,7 +54,7 @@ class State:
         H, L = self.H, self.L
         agents_matrix = np.zeros((H, L), dtype=int)
         for pos in self._agents.values():
-            agents_matrix[pos] = 1
+            agents_matrix[pos] += 1
         return agents_matrix
 
     @property
@@ -144,18 +144,18 @@ class State:
         return hash((agents_hashable, apples_hashable))
 
     def __eq__(self, other):
-            if not isinstance(other, State):
-                return NotImplemented
+        if not isinstance(other, State):
+            return NotImplemented
 
-            # 1. Check for dictionary equality (Agent IDs -> Position)
-            agents_equal = self._agents == other._agents
-            
-            # 2. Check for numpy array equality (Apples matrix)
-            # Note: You can use self._apples directly or the getter self.apples, 
-            # but using the internal attribute is more direct for comparison.
-            apples_equal = np.array_equal(self._apples, other._apples)
+        # 1. Check for dictionary equality (Agent IDs -> Position)
+        agents_equal = self._agents == other._agents
 
-            return agents_equal and apples_equal
+        # 2. Check for numpy array equality (Apples matrix)
+        # Note: You can use self._apples directly or the getter self.apples,
+        # but using the internal attribute is more direct for comparison.
+        apples_equal = np.array_equal(self._apples, other._apples)
+
+        return agents_equal and apples_equal
 
     def copy(self):
         return State(
