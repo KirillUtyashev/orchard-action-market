@@ -9,6 +9,17 @@ __pycache__/
 .vscode/
 .idea/
 
+output_notebooks/
+bin/
+lib/
+lib64/
+pyvenv.cfg
+share/
+etc/
+slurm_logs/
+
+*.sbatch
+*.txt
 # Virtual environment folders
 venv/
 env/
