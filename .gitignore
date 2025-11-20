@@ -5,6 +5,7 @@ __pycache__/
 *.pyd
 *.pkl
 *.pt
+*.pth
 # IDE and editor configuration folders
 .vscode/
 .idea/
