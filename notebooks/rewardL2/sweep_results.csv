@@ -1,0 +1,2 @@
+job_id,hidden_dim,layers,train_ratio,train_mae,test_mae,test_mape,zero_mae,params
+local_debug,128,3,0.8,4.553793215781487,4.482531725644091,96.32936005063122,0.12546909,47873
