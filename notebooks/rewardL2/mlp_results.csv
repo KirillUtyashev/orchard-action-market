@@ -1,0 +1,2 @@
+job_id,hidden_dim,layers,train_split,samples_per_pos,train_picker_mae,train_picker_mape,test_picker_mae,test_picker_mape,test_bystander_mae,test_zero_mae,num_params
+debug_run,512,4,0.8,50,0.806705335451843,80.6705335451843,1.0056925940354737,100.56925940354738,0.7959329880896372,0.06571018075104802,650753
