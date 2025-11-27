@@ -21,6 +21,8 @@ slurm_logs/
 
 *.sbatch
 *.txt
+*.png
+*.csv
 # Virtual environment folders
 venv/
 env/
