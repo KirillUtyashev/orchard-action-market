@@ -72,9 +72,7 @@ class BaseValueModel(nn.Module):
         loss = nn.MSELoss()(curr_v, target_v)
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.policy_net.parameters(), max_norm=1.0
-        )  # Gradient Clipping
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=100.0)
         self.optimizer.step()
         l = loss.item()
         self.loss_history.append(l)
