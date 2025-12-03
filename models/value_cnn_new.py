@@ -9,24 +9,6 @@ from collections import namedtuple
 from config import DEVICE
 from utils import ten_float
 from tadd_helpers.env_functions import State
-import torch
-import torch.nn as nn
-# ... other imports ...
-
-# === NUCLEAR FIX FOR RTX 4090 ===
-# Disable cuDNN benchmarking. This prevents PyTorch from running 
-# micro-tests to pick "fast" kernels (which are the ones crashing).
-torch.backends.cudnn.benchmark = False
-
-# Force deterministic algorithms. These are stricter and safer.
-torch.backends.cudnn.deterministic = True
-
-# Disable TF32 (TensorFloat-32) on Ampere/Ada GPUs. 
-# Sometimes the lower precision math kernels cause alignment issues.
-torch.backends.cudnn.allow_tf32 = False
-torch.backends.cuda.matmul.allow_tf32 = False
-# ================================
-
 
 Transition = namedtuple("Transition", ("state", "new_state", "reward"))
 
@@ -79,21 +61,20 @@ class BaseValueModel(nn.Module):
         next_states = ten_float(np.stack(batch.new_state), DEVICE)
         rewards = ten_float(np.array(batch.reward), DEVICE)
 
-        # Added .contiguous() here
-        curr_v = self.policy_net(states.contiguous()).squeeze(1)
+        # Standard forward pass
+        curr_v = self.policy_net(states).squeeze(1)
         
         with torch.no_grad():
             if self.discount == 0:
                 target_v = rewards
             else:
-                # Added .contiguous() here
-                next_v = self.target_net(next_states.contiguous()).squeeze(1)
+                next_v = self.target_net(next_states).squeeze(1)
                 target_v = rewards + self.discount * next_v
 
         loss = nn.MSELoss()(curr_v, target_v)
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=100.0)
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=10.0)
         self.optimizer.step()
         l = loss.item()
         self.loss_history.append(l)
@@ -104,7 +85,7 @@ class BaseValueModel(nn.Module):
 
 
 # =============================================================================
-# ARCHITECTURE 1: DEEP STANDARD CNN (Flatten) - "The Professor's Choice"
+# ARCHITECTURE 1: DEEP STANDARD CNN (Flatten)
 # =============================================================================
 class CNNDeepStandard(nn.Module):
     def __init__(
@@ -121,7 +102,6 @@ class CNNDeepStandard(nn.Module):
         self.conv_layers = nn.ModuleList()
         in_c = input_channels
 
-        # Ensure at least 3 layers for Receptive Field
         actual_channels = list(conv_channels)
         while len(actual_channels) < 3:
             actual_channels.append(actual_channels[-1])
@@ -148,8 +128,7 @@ class CNNDeepStandard(nn.Module):
     def forward(self, x):
         for l in self.conv_layers:
             x = l(x)
-        
-        x = torch.flatten(x, 1).contiguous()
+        x = torch.flatten(x, 1)
         return self.mlp_head(x)
 
 
@@ -183,7 +162,7 @@ class ValueCNNCentralizedStandard(BaseValueModel):
 
 
 # =============================================================================
-# ARCHITECTURE 2: COORD CONV (Tunable) - "The Sanity Check"
+# ARCHITECTURE 2: COORD CONV (Tunable)
 # =============================================================================
 class CNNCoordConv(nn.Module):
     def __init__(
@@ -207,12 +186,10 @@ class CNNCoordConv(nn.Module):
         self.register_buffer("yy", yy.float() / (height - 1))
         self.register_buffer("xx", xx.float() / (width - 1))
 
-        # --- CONV LAYERS (1x1 typically) ---
+        # --- CONV LAYERS ---
         layers = []
-        # Input = Original Channels + 2 Coordinate Channels
         in_c = input_channels + 2
 
-        # Use provided channels or default
         actual_channels = list(conv_channels)
         if not actual_channels:
             actual_channels = [hidden_dim, hidden_dim]
@@ -226,8 +203,6 @@ class CNNCoordConv(nn.Module):
         self.conv_stack = nn.Sequential(*layers)
 
         # --- FLATTEN + MLP HEAD ---
-        # No MaxPool. We flatten the grid.
-        # This allows the MLP to see ALL pixels at once and suppress global noise instantly.
         flat_dim = in_c * height * width
 
         head_layers = []
@@ -241,25 +216,24 @@ class CNNCoordConv(nn.Module):
         self.mlp_head = nn.Sequential(*head_layers)
 
     def forward(self, x):
-            batch_size = x.shape[0]
+        batch_size = x.shape[0]
 
-            # Explicit expansion
-            yy = self.yy.unsqueeze(0).unsqueeze(0).repeat(batch_size, 1, 1, 1) # type: ignore
-            xx = self.xx.unsqueeze(0).unsqueeze(0).repeat(batch_size, 1, 1, 1) # type: ignore
-            
-            # Append Coords
-            x = torch.cat([x, yy, xx], dim=1)
-            
-            # Conv
-            x = self.conv_stack(x)
+        # Explicit expansion
+        yy = self.yy.expand(batch_size, 1, self.height, self.width)  # type: ignore
+        xx = self.xx.expand(batch_size, 1, self.height, self.width)  # type: ignore
 
-            # === THE FIX ===
-            # The crash happens here. 
-            # We must ensure the flattened tensor is contiguous in memory.
-            x = torch.flatten(x, 1).contiguous()
+        # Append Coords
+        # === THE FIX: .contiguous() prevents the "misaligned address" crash ===
+        x = torch.cat([x, yy, xx], dim=1).contiguous() 
 
-            # MLP
-            return self.mlp_head(x)
+        # Conv
+        x = self.conv_stack(x)
+
+        # Flatten
+        x = torch.flatten(x, 1)
+
+        # MLP
+        return self.mlp_head(x)
 
 
 class ValueCNNCoord(BaseValueModel):
@@ -275,7 +249,6 @@ class ValueCNNCoord(BaseValueModel):
         kernel_size,
     ):
         super().__init__(discount, 100000)
-        # Pass all tunable parameters to the CoordConv Net
         self.policy_net = CNNCoordConv(
             2, height, width, conv_channels, hidden_dim, num_layers, kernel_size
         ).to(DEVICE)
@@ -323,36 +296,22 @@ class ValueCNNDecentralizedStandard(BaseValueModel):
         if agent_pos is None:
             raise ValueError("Decentralized model requires 'agent_pos'")
 
-        # 1. Apples
         map_apples = state.apples.astype(np.float32)
-
-        # 2. Self Map (One Hot)
         map_self = np.zeros(state.apples.shape, dtype=np.float32)
         map_self[agent_pos[0], agent_pos[1]] = 1.0
-
-        # 3. Others Map (Global Agents - Self)
         map_others = state.agents.astype(np.float32) - map_self
 
         return np.stack([map_apples, map_others, map_self], axis=0)
 
     @override
     def add_experience(self, state: State, next_state: State, reward: float, **kwargs):
-        # Explicit extraction
         agent_pos = kwargs.get("agent_pos")
         agent_pos_next = kwargs.get("agent_pos_next")
-
-        # Validation
         if agent_pos is None or agent_pos_next is None:
-            raise ValueError(
-                "Decentralized add_experience requires 'agent_pos' and 'agent_pos_next'"
-            )
+            raise ValueError("Decentralized add_experience requires 'agent_pos' and 'agent_pos_next'")
 
-        # 1. Current State (Perspective: agent_pos)
         s_input = self.raw_state_to_nn_input(state, agent_pos=agent_pos)
-
-        # 2. Next State (Perspective: agent_pos_next)
         ns_input = self.raw_state_to_nn_input(next_state, agent_pos=agent_pos_next)
-
         self.memory.push(s_input, ns_input, reward)
 
 
@@ -396,20 +355,11 @@ class ValueCNNCoordDecentralized(BaseValueModel):
 
     @override
     def add_experience(self, state: State, next_state: State, reward: float, **kwargs):
-        # Explicit extraction
         agent_pos = kwargs.get("agent_pos")
         agent_pos_next = kwargs.get("agent_pos_next")
-
-        # Validation
         if agent_pos is None or agent_pos_next is None:
-            raise ValueError(
-                "Decentralized add_experience requires 'agent_pos' and 'agent_pos_next'"
-            )
+            raise ValueError("Decentralized add_experience requires 'agent_pos' and 'agent_pos_next'")
 
-        # 1. Current State (Perspective: agent_pos)
         s_input = self.raw_state_to_nn_input(state, agent_pos=agent_pos)
-
-        # 2. Next State (Perspective: agent_pos_next)
         ns_input = self.raw_state_to_nn_input(next_state, agent_pos=agent_pos_next)
-
         self.memory.push(s_input, ns_input, reward)

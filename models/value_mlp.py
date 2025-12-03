@@ -1,5 +1,6 @@
 # --- START OF FILE models/value_mlp.py ---
 
+from collections import namedtuple
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +9,7 @@ from tadd_helpers.env_functions import State
 from models.value_cnn_new import BaseValueModel
 from typing_extensions import override
 
+Transition = namedtuple("Transition", ("state", "new_state", "reward"))
 
 class MLPBaseNet(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers):
@@ -52,7 +54,37 @@ class ValueMLPCentralized(BaseValueModel):
         return np.concatenate([state.apples.flatten(), state.agents.flatten()]).astype(
             np.float32
         )
+        
+    @override
+    def train_batch(self, batch_size: int) -> float | None:
+        if len(self.memory) < batch_size:
+            return None
 
+        transitions = self.memory.sample(batch_size)
+        batch = Transition(*zip(*transitions))
+
+        state_batch = torch.tensor(np.stack(batch.state), device=DEVICE, dtype=torch.float32)
+        next_state_batch = torch.tensor(np.stack(batch.new_state), device=DEVICE, dtype=torch.float32)
+        reward_batch = torch.tensor(batch.reward, device=DEVICE, dtype=torch.float32).unsqueeze(1)
+
+        pred = self.policy_net(state_batch)
+
+        with torch.no_grad():
+            if self.discount == 0.0:
+                target = reward_batch
+            else:
+                target = reward_batch + self.discount * self.target_net(next_state_batch)
+
+        loss = nn.MSELoss()(pred, target)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        
+        # STRICT CLIPPING (1.0 instead of 100.0)
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
+        
+        self.optimizer.step()
+        return loss.item()
 
 class ValueMLPDecentralized(BaseValueModel):
     def __init__(
@@ -118,3 +150,4 @@ class ValueMLPDecentralized(BaseValueModel):
         ns_input = self.raw_state_to_nn_input(next_state, agent_pos=agent_pos_next)
 
         self.memory.push(s_input, ns_input, reward)
+
