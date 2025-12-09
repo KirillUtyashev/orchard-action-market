@@ -4,52 +4,45 @@ import numpy as np
 from config import DEVICE
 from tadd_helpers.env_functions import State
 from models.value_cnn_new import BaseValueModel
+from typing_extensions import override
 
 
 class ValueCNNDecentralized5Ch(BaseValueModel):
     def __init__(
-        self,
-        height,
-        width,
-        lr,
-        discount,
-        hidden_dim,  # Head hidden dims
-        num_layers,  # Head num layers
-        conv_channels,  # List of out_channels. Kernel=3 Stride=1 assumed or passed?
-        kernel_size=3,
+        self, height, width, lr, discount, conv_layers_config, head_layers_config
     ):
-        super().__init__(discount, 10000)
+        # Inherit with buffer size 100k
+        super().__init__(discount, 100000)
+
         self.input_channels = 5
 
-        # --- Build Conv Body ---
+        # 1. Conv Body
         layers = []
-        in_c = self.input_channels
-        for out_c in conv_channels:
-            padding = (kernel_size - 1) // 2
-            layers.append(
-                nn.Conv2d(in_c, out_c, kernel_size, stride=1, padding=padding)
-            )
+        in_c = 5
+        for out_c, k, s in conv_layers_config:
+            pad = (k - 1) // 2
+            layers.append(nn.Conv2d(in_c, out_c, kernel_size=k, stride=s, padding=pad))
             layers.append(nn.ReLU())
             in_c = out_c
         self.conv_net = nn.Sequential(*layers)
 
-        # --- Infer Flatten Dim (Strict) ---
+        # 2. Infer Flatten Dim (Strict Init)
         with torch.no_grad():
-            dummy = torch.zeros(1, self.input_channels, height, width)
+            dummy = torch.zeros(1, 5, height, width)
             out = self.conv_net(dummy)
         flat_dim = int(np.prod(out.shape[1:]))
 
-        # --- Build MLP Head ---
+        # 3. Head
         head = []
         in_d = flat_dim
-        for _ in range(num_layers):
-            head.append(nn.Linear(in_d, hidden_dim))
+        for h in head_layers_config:
+            head.append(nn.Linear(in_d, h))
             head.append(nn.ReLU())
-            in_d = hidden_dim
+            in_d = h
         head.append(nn.Linear(in_d, 1))
         self.head = nn.Sequential(*head)
 
-        # --- Init Full Nets ---
+        # 4. Init Nets
         self.policy_net = nn.Sequential(self.conv_net, nn.Flatten(), self.head).to(
             DEVICE
         )
@@ -63,10 +56,17 @@ class ValueCNNDecentralized5Ch(BaseValueModel):
             self.policy_net.parameters(), lr=lr, amsgrad=True
         )
 
+    @override
     def raw_state_to_nn_input(self, state: State, **kwargs) -> np.ndarray:
-        # Requires acting_agent_idx and self_agent_idx
+        """
+        kwargs:
+            acting_agent_idx (int): Index of the agent that was teleported.
+            self_agent_idx (int): Index of the "self" agent for whom we compute V
+        """
         acting_idx = kwargs.get("acting_agent_idx")
         self_idx = kwargs.get("self_agent_idx")
+        if acting_idx is None or self_idx is None:
+            raise ValueError("Model requires acting_agent_idx and self_agent_idx")
 
         H, W = state.H, state.L
 
@@ -98,25 +98,17 @@ class ValueCNNDecentralized5Ch(BaseValueModel):
 
 
 class ValueMLPDecentralized5Ch(BaseValueModel):
-    def __init__(
-        self,
-        height,
-        width,
-        lr,
-        discount,
-        hidden_dim,  # Width of layers
-        num_layers,  # Number of layers
-    ):
-        super().__init__(discount, 10000)
-        self.input_channels = 5
+    def __init__(self, height, width, lr, discount, hidden_dims):
+        super().__init__(discount, 100000)
+
         input_dim = 5 * height * width
 
         layers = []
         in_d = input_dim
-        for _ in range(num_layers):
-            layers.append(nn.Linear(in_d, hidden_dim))
+        for h in hidden_dims:
+            layers.append(nn.Linear(in_d, h))
             layers.append(nn.ReLU())
-            in_d = hidden_dim
+            in_d = h
         layers.append(nn.Linear(in_d, 1))
 
         self.policy_net = nn.Sequential(*layers).to(DEVICE)
@@ -129,7 +121,7 @@ class ValueMLPDecentralized5Ch(BaseValueModel):
         )
 
     def raw_state_to_nn_input(self, state: State, **kwargs) -> np.ndarray:
-        # Same 5-channel logic, but flattened
+        # Duplicated logic from CNN to keep class self-contained
         acting_idx = kwargs.get("acting_agent_idx")
         self_idx = kwargs.get("self_agent_idx")
 

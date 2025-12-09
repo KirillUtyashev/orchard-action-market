@@ -2,19 +2,19 @@ import numpy as np
 from tadd_helpers.env_functions import State, init_empty_state
 
 
-def init_fixed_apples_state(
-    width: int, height: int, num_agents: int, num_apples: int, seed: int
+def init_fixed_apples(
+    width: int, height: int, num_agents: int, num_apples: int
 ) -> State:
     """
-    Creates a State with fixed apples and random agents.
-    This serves as the 'Base' state for the experiment.
+    Creates a State with fixed apples.
+    Agents are initialized at (0,0) (will be teleported immediately).
     """
-    rng = np.random.RandomState(seed)
+    # Note: Relies on np.random.seed() being set in the notebook
     s = init_empty_state(height, width, num_agents)
-    s.apples[:] = 0  # Clear random spawn
+    s.apples[:] = 0
 
     possible_indices = np.arange(height * width)
-    apple_indices = rng.choice(possible_indices, size=num_apples, replace=False)
+    apple_indices = np.random.choice(possible_indices, size=num_apples, replace=False)
 
     for idx in apple_indices:
         r, c = divmod(idx, width)
@@ -23,18 +23,14 @@ def init_fixed_apples_state(
     return s
 
 
-def teleport_agents_and_get_actor(state: State, rng: np.random.RandomState) -> int:
+def teleport_agent(state: State, acting_idx: int) -> None:
     """
-    Modifies the state IN-PLACE by teleporting agents.
-    Returns the acting_agent_idx.
+    Teleports agent c to a random location.
+    Modifies state IN-PLACE.
     """
     H, W = state.H, state.L
-    num_agents = len(state._agents)
 
-    for i in range(num_agents):
-        r = rng.randint(0, H)
-        c = rng.randint(0, W)
-        state.set_agent_position(i, np.array([r, c]))
-
-    acting_idx = rng.randint(0, num_agents)
-    return acting_idx
+    # 2. Teleport
+    r = np.random.randint(0, H)
+    c = np.random.randint(0, W)
+    state.set_agent_position(acting_idx, np.array([r, c]))

@@ -3,71 +3,105 @@ from typing import Callable, Dict
 from tadd_helpers.env_functions import State, init_empty_state
 
 
-def get_v_start_constant(
-    num_agents: int,
-    num_apples: int,
-    grid_cells: int,
-    reward_func: Callable,
+def calculate_stream_values(rho: float, gamma: float, num_agents: int, p_hit: float):
+    """
+    Calculates v_RAND, v_OFF, v_ON for a given reward magnitude rho.
+    Implements the algebraic solution from Section 1.5.
+    """
+    if gamma == 1.0:
+        raise ValueError("Gamma must be < 1")
+
+    # 1.5 Algebraic Solution for v_RAND
+    # v_RAND = (p_hit * alpha * rho) / (1 - gamma)
+    alpha = 1.0 / num_agents
+    v_rand = (p_hit * alpha * rho) / (1.0 - gamma)
+
+    # 1.3/1.5 Solve v_OFF
+    # v_OFF = (gamma * alpha * v_RAND) / (1 - gamma * beta)
+    beta = (num_agents - 1.0) / num_agents
+    denom_beta = 1.0 - (gamma * beta)
+    v_off = (gamma * alpha * v_rand) / denom_beta
+
+    # 1.3/1.5 Solve v_ON
+    # v_ON = (alpha * rho + gamma * alpha * v_RAND) / (1 - gamma * beta)
+    v_on = (alpha * rho + gamma * alpha * v_rand) / denom_beta
+
+    return v_rand, v_off, v_on
+
+
+def get_exact_value(
+    state: State,
+    acting_agent_idx: int,
+    self_agent_idx: int,
+    reward_func: Callable[[State, int], Dict[int, float]],
     gamma: float,
 ) -> float:
     """
-    Calculates V_start. Since the next state is random, this is a CONSTANT
-    representing the discounted average value of the universe.
-    Formula: V_start = (gamma * R_avg) / (1 - gamma^2)
+    Calculates Exact V(s) using the expansion from Section 1.6.
+    V(s) = R_t + gamma * [ v_rand(actor) + sum(v_static(others)) ]
+
+    Args:
+        state (State): Current environment state.
+        acting_agent_idx (int): Index of the agent that was teleported.
+        self_agent_idx (int): Index of the "self" agent for whom we compute V(s).
+        reward_func (Callable): Function to compute rewards given state and acting agent. First parameter is the state, second is acting_agent_idx.
+        gamma (float): Discount factor.
+
+    Returns:
+        float: Exact value V(s) for the self agent.
     """
-    if gamma == 0:
-        return 0.0
+    # --- 1. Immediate Reward R_t ---
+    rewards = reward_func(state, acting_agent_idx)
+    r_immediate = rewards[self_agent_idx]
 
-    # Calculate R_avg (Expected reward of a single random jump)
-    p_hit = num_apples / grid_cells
+    # --- 2. Calculate Constants (Streams) ---
+    num_agents = len(state._agents)
+    total_cells = state.H * state.L
+    p_hit = np.sum(state.apples) / total_cells
 
-    # We probe the reward function to get values for "Self Hit" vs "Other Hit"
-    # Create dummy state
-    dummy_s = init_empty_state(1, 1, num_agents)  # Size irrelevant, just logic
-    dummy_s.apples[0, 0] = 1
+    # Probe Reward Func for Self (k=i) -> rho_self
+    # We create a dummy state where self hits apple
+    dummy: State = init_empty_state(1, 1, num_agents)
+    dummy.apples[0, 0] = 1
+    dummy.set_agent_position(self_agent_idx, np.array([0, 0]))
+    rho_self = reward_func(dummy, self_agent_idx)[self_agent_idx]
 
-    # Case 1: Self Hits
-    dummy_s.set_agent_position(0, np.array([0, 0]))
-    r_self = reward_func(dummy_s, acting_agent_idx=0)[0]
-
-    # Case 2: Other Hits (if exists)
-    r_other = 0.0
+    # Probe Reward Func for Other (k!=i) -> rho_other
+    rho_other = 0.0
     if num_agents > 1:
-        dummy_s.set_agent_position(1, np.array([0, 0]))
-        r_other = reward_func(dummy_s, acting_agent_idx=1)[0]
+        other_idx = (
+            self_agent_idx + 1
+        ) % num_agents  # just get an agent that is not self
+        dummy.set_agent_position(other_idx, np.array([0, 0]))
+        rho_other = reward_func(dummy, other_idx)[self_agent_idx]
 
-    # Weighted Average
-    term_self = (1.0 / num_agents) * p_hit * r_self
-    term_other = ((num_agents - 1.0) / num_agents) * p_hit * r_other
-    r_avg = term_self + term_other
+    # Get Stream Components
+    v_rand_s, v_off_s, v_on_s = calculate_stream_values(
+        rho_self, gamma, num_agents, p_hit
+    )
+    v_rand_o, v_off_o, v_on_o = calculate_stream_values(
+        rho_other, gamma, num_agents, p_hit
+    )
 
-    return (gamma * r_avg) / (1.0 - gamma**2)
+    # --- 3. Sum Future Value E[V(s_next)] ---
+    future_value = 0.0
 
+    for k in range(num_agents):
+        # Determine which set of constants to use (Is k Self or Other?)
+        if k == self_agent_idx:
+            c_rand, c_off, c_on = v_rand_s, v_off_s, v_on_s
+        else:
+            c_rand, c_off, c_on = v_rand_o, v_off_o, v_on_o
 
-def get_v_mid_exact(
-    state: State,
-    acting_idx: int,
-    self_idx: int,
-    reward_func: Callable,
-    v_start_constant: float,
-) -> float:
-    """
-    Calculates V(S_mid).
-    Formula: V(S_mid) = R_immediate(S_mid) + gamma * V_start
-    """
-    # 1. Get Immediate Reward
-    rewards = reward_func(state, acting_idx)
-    r_immediate = rewards[self_idx]
+        if k == acting_agent_idx:
+            # k is the Actor -> Becomes RAND
+            future_value += c_rand
+        else:
+            # k is Static -> Check Position
+            pos = state.agent_position(k)
+            if state.apples[pos[0], pos[1]] > 0:
+                future_value += c_on  # ON
+            else:
+                future_value += c_off  # OFF
 
-    # 2. Add Discounted Future Constant
-    # Note: The transition is Mid -> Start -> Mid...
-    # The immediate reward happens, then we are effectively at Start for the next cycle.
-    # So we discount V_start once.
-    # (In the derivation V_mid = R + gamma * V_start)
-
-    # However, V_start already includes the 'gamma' from the Move phase.
-    # Let's stick to the derivation: V_mid = R + gamma * V_start
-
-    return (
-        r_immediate + 0.99 * v_start_constant
-    )  # Assuming gamma passed in context, using arg for safety
+    return r_immediate + gamma * future_value
