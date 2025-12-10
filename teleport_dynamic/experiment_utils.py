@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from tadd_helpers.env_functions import State, init_empty_state
 from teleport_dynamic.base_value_model import BaseValueModelV2
+from teleport_dynamic.analytical import get_exact_value_centralized
 
 import psutil
 
@@ -170,11 +171,10 @@ def generate_centralized_value_test_set(
 ) -> Dict[str, List[CentralizedTestCase]]:
     """
     Generate test set for centralized value learning.
-    Uses analytical solution for true values.
-
-    Categories: picker (actor on apple), zero (actor not on apple)
+    Uses get_exact_value_centralized for true values.
     """
-    from teleport_dynamic.analytical import get_exact_value
+    # Import the NEW analytical function and the centralized reward function
+    from teleport_dynamic.analytical import get_exact_value_centralized
     from teleport_dynamic.rewards_centralized import get_reward_centralized
 
     if seed is not None:
@@ -190,11 +190,7 @@ def generate_centralized_value_test_set(
             raise ValueError("fixed_apples must be provided")
         return s
 
-    # Wrapper to convert centralized reward to dict format for analytical.py
-    def reward_func_wrapper(state: State, acting_idx: int) -> Dict[int, float]:
-        r = get_reward_centralized(state, acting_idx)
-        # For centralized, all agents get the same reward
-        return {i: r for i in range(num_agents)}
+    # Note: reward_func_wrapper is DELETED. We use get_reward_centralized directly.
 
     # PICKER cases (actor on apple)
     while len(test_sets["picker"]) < samples_per_category:
@@ -213,8 +209,11 @@ def generate_centralized_value_test_set(
                 c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
-        # Compute analytical value (use any agent as self, they're all the same for centralized)
-        true_val = get_exact_value(s, actor_idx, 0, reward_func_wrapper, gamma)
+        # --- UPDATED CALL ---
+        # Uses the new specific function, passing the reward function directly
+        true_val = get_exact_value_centralized(
+            s, actor_idx, get_reward_centralized, gamma
+        )
 
         test_sets["picker"].append(
             CentralizedTestCase(
@@ -249,7 +248,10 @@ def generate_centralized_value_test_set(
                 c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
-        true_val = get_exact_value(s, actor_idx, 0, reward_func_wrapper, gamma)
+        # --- UPDATED CALL ---
+        true_val = get_exact_value_centralized(
+            s, actor_idx, get_reward_centralized, gamma
+        )
 
         test_sets["zero"].append(
             CentralizedTestCase(
@@ -852,6 +854,9 @@ def append_experiment_result(
     final_mean_error: float,
     final_max_error: float,
     wall_time_seconds: float,
+    num_parameters: int,
+    kernel_size: Optional[int] = None,  # None for MLP
+    learning_method: str = "reward",    # "reward", "td0", "td_lambda"
     notes: str = "",
 ):
     """Append a single experiment result to CSV file."""
@@ -866,13 +871,17 @@ def append_experiment_result(
         "num_agents",
         "num_apples",
         "reward_scheme",
+        "learning_method",
         "model_config",
+        "num_parameters",
+        "kernel_size",
         "soft_benchmark_step",
         "hard_benchmark_step",
         "final_step",
         "final_mean_error_pct",
         "final_max_error_pct",
         "wall_time_seconds",
+        "converged",
         "notes",
     ]
 
@@ -885,13 +894,17 @@ def append_experiment_result(
         "num_agents": num_agents,
         "num_apples": num_apples,
         "reward_scheme": reward_scheme,
+        "learning_method": learning_method,
         "model_config": model_config,
+        "num_parameters": num_parameters,
+        "kernel_size": kernel_size if kernel_size else "N/A",
         "soft_benchmark_step": soft_benchmark_step if soft_benchmark_step else "N/A",
         "hard_benchmark_step": hard_benchmark_step if hard_benchmark_step else "N/A",
         "final_step": final_step,
         "final_mean_error_pct": f"{final_mean_error:.4f}",
         "final_max_error_pct": f"{final_max_error:.4f}",
         "wall_time_seconds": f"{wall_time_seconds:.1f}",
+        "converged": hard_benchmark_step is not None,
         "notes": notes,
     }
 

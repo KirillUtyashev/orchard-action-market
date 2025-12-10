@@ -16,7 +16,27 @@ from collections import deque
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass
 
-from teleport_dynamic.base_value_model import BaseValueModelV2
+from teleport_dynamic.base_value_model import BaseValueModelV2, Transition
+
+
+def train_reward_from_buffer(
+    model: BaseValueModelV2, batch_size: int, max_grad_norm: float = 10.0
+) -> Optional[float]:
+    """Helper to train reward models from their internal replay buffer."""
+    if len(model.memory) < batch_size:
+        return None
+
+    transitions = model.memory.sample(batch_size)
+    batch = Transition(*zip(*transitions))
+
+    states = torch.tensor(
+        np.stack(batch.state), dtype=torch.float32, device=model.device
+    )
+    rewards = torch.tensor(
+        np.array(batch.reward), dtype=torch.float32, device=model.device
+    )
+
+    return train_supervised(model, states, rewards, max_grad_norm)
 
 
 # =============================================================================
@@ -58,7 +78,6 @@ def train_supervised(
     model.optimizer.step()
 
     loss_val = loss.item()
-    model.loss_history.append(loss_val)
     return loss_val
 
 
@@ -130,7 +149,6 @@ def train_td0(
     model.optimizer.step()
 
     loss_val = loss.item()
-    model.loss_history.append(loss_val)
     return loss_val
 
 
@@ -174,7 +192,6 @@ def train_td0_batch(
     model.optimizer.step()
 
     loss_val = loss.item()
-    model.loss_history.append(loss_val)
     return loss_val
 
 
@@ -244,71 +261,73 @@ class TrajectoryBuffer:
         return len(self.trajectories)
 
 
-def compute_lambda_returns(
+def compute_lambda_returns_vectorized(
     trajectory: List[TrajectoryStep],
     model: BaseValueModelV2,
     gamma: float,
     lambda_: float,
-) -> List[Tuple[np.ndarray, float]]:
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Compute λ-returns for each step in a trajectory.
-
-    G^λ_t = r_t + γ * ((1-λ) * V(s_{t+1}) + λ * G^λ_{t+1})
-
-    Args:
-        trajectory: List of trajectory steps
-        model: Value model (uses target_net for bootstrapping)
-        gamma: Discount factor
-        lambda_: Lambda parameter for eligibility trace decay
-
-    Returns:
-        List of (state_encoding, lambda_return) tuples
+    Computes G(lambda) entirely on GPU.
+    100x faster than moving numpy arrays back and forth.
     """
-    T = len(trajectory)
-    if T == 0:
-        return []
-
     device = model.device
 
-    # Get value estimates for all states
-    state_encodings = np.stack([step.state_encoding for step in trajectory])
-    states_tensor = torch.tensor(state_encodings, dtype=torch.float32, device=device)
+    # 1. BATCH PREPARATION
+    # Convert list of objects to single tensors immediately (Costly but done once)
+    # We stack them to shape [Trajectory_Len, ...]
+    states = torch.tensor(
+        np.stack([step.state_encoding for step in trajectory]),
+        dtype=torch.float32,
+        device=device,
+    )
+    rewards = torch.tensor(
+        np.array([step.reward for step in trajectory]),
+        dtype=torch.float32,
+        device=device,
+    )
 
-    with torch.no_grad():
-        values = model.target_net(states_tensor).squeeze(-1).cpu().numpy()
-
-    # Handle single-element case
-    if np.ndim(values) == 0:
-        values = np.array([values])
-
-    # Get bootstrap value for final state
+    # Check if last step is terminal
     last_step = trajectory[-1]
-    if last_step.done:
-        bootstrap_value = 0.0
-    else:
-        last_next_tensor = torch.tensor(
-            last_step.next_state_encoding, dtype=torch.float32, device=device
-        ).unsqueeze(0)
-        with torch.no_grad():
-            bootstrap_value = model.target_net(last_next_tensor).item()
 
-    # Compute λ-returns backwards
-    lambda_returns = np.zeros(T)
+    # 2. BATCH INFERENCE
+    # Run the network on ALL states in the trajectory at once.
+    with torch.no_grad():
+        # V(s_t) for all t
+        values = model.target_net(states).squeeze(-1)
 
-    # Base case: G_{T-1} = r_{T-1} + γ * V(s_T)
-    lambda_returns[T - 1] = last_step.reward + gamma * bootstrap_value
+        # We also need V(s_T+1) (Bootstrap value)
+        if last_step.done:
+            bootstrap = torch.tensor(0.0, device=device)
+        else:
+            last_next_s = torch.tensor(
+                last_step.next_state_encoding, dtype=torch.float32, device=device
+            ).unsqueeze(0)
+            bootstrap = model.target_net(last_next_s).squeeze(-1)
 
-    # Backward pass
-    for t in range(T - 2, -1, -1):
-        r_t = trajectory[t].reward
-        v_next = values[t + 1]
+    # 3. CREATE NEXT_VALUES VECTOR
+    # V_next = [V(s_1), V(s_2), ..., V(s_T), Bootstrap]
+    # This allows us to access V(s_{t+1}) by just indexing next_values[t]
+    next_values = torch.cat([values[1:], bootstrap.view(1)])
 
-        # G^λ_t = r_t + γ * ((1-λ) * V(s_{t+1}) + λ * G^λ_{t+1})
-        lambda_returns[t] = r_t + gamma * (
-            (1 - lambda_) * v_next + lambda_ * lambda_returns[t + 1]
+    # 4. RECURSIVE CALCULATION (ON GPU)
+    # Even though this is a loop, it's a loop of GPU scalar operations.
+    # Because tensors stay on VRAM, this is extremely fast.
+    T = len(trajectory)
+    lambda_returns = torch.zeros_like(rewards)
+
+    # Initialize G_{t+1} with bootstrap value for the last step
+    g_next = bootstrap
+
+    # Loop backwards
+    for t in reversed(range(T)):
+        # Formula: G_t = r_t + gamma * [ (1-lambda)*V(s_{t+1}) + lambda*G_{t+1} ]
+        g_next = rewards[t] + gamma * (
+            ((1 - lambda_) * next_values[t]) + (lambda_ * g_next)
         )
+        lambda_returns[t] = g_next
 
-    return [(trajectory[t].state_encoding, lambda_returns[t]) for t in range(T)]
+    return states, lambda_returns
 
 
 def train_td_lambda(
@@ -319,49 +338,40 @@ def train_td_lambda(
     batch_size: int,
     max_grad_norm: float = 10.0,
 ) -> Optional[float]:
-    """
-    Train using TD(λ) with λ-returns computed from stored trajectories.
 
-    Args:
-        model: The value model
-        trajectory_buffer: Buffer containing trajectories
-        gamma: Discount factor
-        lambda_: Lambda parameter
-        batch_size: Number of samples to train on
-        max_grad_norm: Maximum gradient norm for clipping
-
-    Returns:
-        Loss value, or None if insufficient data
-    """
     trajectories = trajectory_buffer.get_all_trajectories()
-
     if len(trajectories) == 0:
         return None
 
-    # Compute λ-returns for all trajectories
-    all_samples = []
-    for traj in trajectories:
-        samples = compute_lambda_returns(traj, model, gamma, lambda_)
-        all_samples.extend(samples)
+    # --- NEW: Collect Tensors directly ---
+    all_states_list = []
+    all_targets_list = []
 
-    if len(all_samples) < batch_size:
+    # Process each trajectory on GPU
+    for traj in trajectories:
+        s, t = compute_lambda_returns_vectorized(traj, model, gamma, lambda_)
+        all_states_list.append(s)
+        all_targets_list.append(t)
+
+    # Combine into one massive training batch
+    total_samples = sum(len(s) for s in all_states_list)
+    if total_samples < batch_size:
         return None
 
-    # Sample batch
-    indices = np.random.choice(len(all_samples), size=batch_size, replace=False)
-    batch = [all_samples[i] for i in indices]
+    all_states = torch.cat(all_states_list)
+    all_targets = torch.cat(all_targets_list)
 
-    states = torch.tensor(
-        np.stack([s for s, _ in batch]), dtype=torch.float32, device=model.device
-    )
-    targets = torch.tensor(
-        np.array([g for _, g in batch]), dtype=torch.float32, device=model.device
-    )
+    # --- NEW: Shuffle on GPU ---
+    # randperm on GPU is very fast
+    indices = torch.randperm(total_samples, device=model.device)[:batch_size]
+
+    batch_states = all_states[indices]
+    batch_targets = all_targets[indices]
 
     # Train
     model.policy_net.train()
-    preds = model.policy_net(states).squeeze(-1)
-    loss = nn.MSELoss()(preds, targets)
+    preds = model.policy_net(batch_states).squeeze(-1)
+    loss = nn.MSELoss()(preds, batch_targets)
 
     model.optimizer.zero_grad()
     loss.backward()
@@ -370,9 +380,7 @@ def train_td_lambda(
     )
     model.optimizer.step()
 
-    loss_val = loss.item()
-    model.loss_history.append(loss_val)
-    return loss_val
+    return loss.item()
 
 
 # =============================================================================

@@ -105,3 +105,45 @@ def get_exact_value(
                 future_value += c_off  # OFF
 
     return r_immediate + gamma * future_value
+
+
+def get_exact_value_centralized(
+    state: State,
+    acting_agent_idx: int,
+    reward_func: Callable[[State, int], float],
+    gamma: float,
+) -> float:
+    """
+    Calculates Exact V(s) for the Centralized Team Reward case.
+    Here, 'rho' is the same for everyone.
+    """
+    # 1. Immediate Reward
+    r_immediate = reward_func(state, acting_agent_idx)
+
+    # 2. Calculate Constants
+    num_agents = len(state._agents)
+    total_cells = state.H * state.L
+    p_hit = np.sum(state.apples) / total_cells
+
+    # Probe Reward Func for "Team Hit" (rho)
+    dummy: State = init_empty_state(1, 1, num_agents)
+    dummy.apples[0, 0] = 1
+    dummy.set_agent_position(0, np.array([0, 0]))
+    rho = reward_func(dummy, 0)
+
+    # Calculate streams (everyone shares these)
+    v_rand, v_off, v_on = calculate_stream_values(rho, gamma, num_agents, p_hit)
+
+    # 3. Sum Future Value
+    future_value = 0.0
+    for k in range(num_agents):
+        if k == acting_agent_idx:
+            future_value += v_rand
+        else:
+            pos = state.agent_position(k)
+            if state.apples[pos[0], pos[1]] > 0:
+                future_value += v_on
+            else:
+                future_value += v_off
+
+    return r_immediate + gamma * future_value

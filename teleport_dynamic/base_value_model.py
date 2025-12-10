@@ -4,9 +4,7 @@ Base Value Model (V2)
 Abstract base class for all value models (centralized and decentralized).
 Provides shared functionality:
 - Replay buffer management
-- train_batch for TD(0) learning
 - Target network updates
-- Loss history tracking
 
 Subclasses must implement:
 - raw_state_to_nn_input(state, acting_agent_idx) -> np.ndarray
@@ -76,7 +74,6 @@ class BaseValueModelV2(nn.Module, ABC):
         self.discount = discount
         self.device = device
         self.memory = ReplayBuffer(replay_buffer_capacity)
-        self.loss_history: List[float] = []
 
         # These must be initialized by subclasses
         self.policy_net: nn.Module
@@ -131,63 +128,6 @@ class BaseValueModelV2(nn.Module, ABC):
             next_acting_agent_idx: Who will act at time t+1 (for encoding s_{t+1})
         """
         raise NotImplementedError
-
-    def train_batch(self, batch_size: int) -> Optional[float]:
-        """
-        Train on a batch sampled from replay buffer.
-
-        Uses TD(0) target: r + gamma * target_net(s')
-        For reward learning (gamma=0), target is just r.
-
-        Args:
-            batch_size: Number of transitions to sample
-
-        Returns:
-            Loss value, or None if buffer has insufficient samples
-        """
-        if len(self.memory) < batch_size:
-            return None
-
-        # Sample batch
-        transitions = self.memory.sample(batch_size)
-        batch = Transition(*zip(*transitions))
-
-        # Convert to tensors
-        states = torch.tensor(
-            np.stack(batch.state), dtype=torch.float32, device=self.device
-        )
-        next_states = torch.tensor(
-            np.stack(batch.next_state), dtype=torch.float32, device=self.device
-        )
-        rewards = torch.tensor(
-            np.array(batch.reward), dtype=torch.float32, device=self.device
-        )
-
-        # Forward pass
-        self.policy_net.train()
-        curr_v = self.policy_net(states).squeeze(1)
-
-        # Compute targets
-        with torch.no_grad():
-            if self.discount == 0:
-                # Reward learning: target is just reward
-                target_v = rewards
-            else:
-                # TD(0): target = r + gamma * V(s')
-                next_v = self.target_net(next_states).squeeze(1)
-                target_v = rewards + self.discount * next_v
-
-        # Compute loss and update
-        loss = nn.MSELoss()(curr_v, target_v)
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=10.0)
-        self.optimizer.step()
-
-        loss_val = loss.item()
-        self.loss_history.append(loss_val)
-        return loss_val
 
     def update_target_net(self) -> None:
         """Copy policy network weights to target network."""

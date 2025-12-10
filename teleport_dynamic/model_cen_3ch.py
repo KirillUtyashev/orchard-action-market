@@ -17,6 +17,11 @@ from tadd_helpers.env_functions import State
 from teleport_dynamic.base_value_model import BaseValueModelV2
 
 
+class Clamp(nn.Module):
+    def forward(self, x):
+        return torch.clamp(x, -1000.0, 1000.0)
+
+
 class ValueCNNCentralized3Ch(BaseValueModelV2):
     """
     CNN-based centralized value model.
@@ -73,6 +78,7 @@ class ValueCNNCentralized3Ch(BaseValueModelV2):
             head_layers.append(nn.ReLU())
             in_d = mlp_hidden_dim
         head_layers.append(nn.Linear(in_d, 1))
+        head_layers.append(Clamp())
         self.head = nn.Sequential(*head_layers)
 
         # Assemble full network
@@ -175,7 +181,7 @@ class ValueMLPCentralized3Ch(BaseValueModelV2):
             layers.append(nn.ReLU())
             in_d = hidden_dim
         layers.append(nn.Linear(in_d, 1))
-
+        layers.append(Clamp())
         self.mlp = nn.Sequential(*layers)
 
         self.policy_net = nn.Sequential(nn.Flatten(), self.mlp).to(self.device)
