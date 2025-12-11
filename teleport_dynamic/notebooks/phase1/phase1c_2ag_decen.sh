@@ -13,7 +13,7 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --constraint="RTX_4090|RTX_A6000|RTX_A4500|RTX_A4000"
 #SBATCH --mem=4G
-#SBATCH --time=02:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=slurm_logs/p1c-%A_%a.out
 #SBATCH --error=slurm_logs/p1c-%A_%a.err
 #SBATCH --array=0-31
@@ -23,6 +23,7 @@
 #=========================================================================================
 mkdir -p slurm_logs output_notebooks outputs
 source "../../../bin/activate"
+export PYTHONPATH="${PYTHONPATH}:$(cd ../../../ && pwd)"
 
 IDX=$SLURM_ARRAY_TASK_ID
 
