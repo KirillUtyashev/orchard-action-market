@@ -7,7 +7,6 @@ def init_fixed_apples(
 ) -> State:
     """
     Creates a State with fixed apples.
-    Agents are initialized at (0,0) (will be teleported immediately).
     """
     # Note: Relies on np.random.seed() being set in the notebook
     s = init_empty_state(height, width, num_agents)
