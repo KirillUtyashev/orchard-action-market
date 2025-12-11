@@ -80,6 +80,13 @@ class BaseValueModelV2(nn.Module, ABC):
         self.target_net: nn.Module
         self.optimizer: torch.optim.Optimizer
 
+    def _scale_initial_weights(self):
+        with torch.no_grad():
+            for m in self.policy_net.modules():
+                if isinstance(m, nn.Linear) and m.out_features == 1:
+                    m.weight.data *= 0.01
+        self.target_net.load_state_dict(self.policy_net.state_dict())
+
     @abstractmethod
     def raw_state_to_nn_input(self, state: State, acting_agent_idx: int) -> np.ndarray:
         """

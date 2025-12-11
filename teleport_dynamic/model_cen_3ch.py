@@ -96,6 +96,8 @@ class ValueCNNCentralized3Ch(BaseValueModelV2):
             self.policy_net.parameters(), lr=lr, amsgrad=True
         )
 
+        self._scale_initial_weights()
+
     def raw_state_to_nn_input(self, state: State, acting_agent_idx: int) -> np.ndarray:
         """
         Convert state to 3-channel tensor.
@@ -192,6 +194,7 @@ class ValueMLPCentralized3Ch(BaseValueModelV2):
         self.optimizer = torch.optim.AdamW(
             self.policy_net.parameters(), lr=lr, amsgrad=True
         )
+        self._scale_initial_weights()
 
     def raw_state_to_nn_input(self, state: State, acting_agent_idx: int) -> np.ndarray:
         """
