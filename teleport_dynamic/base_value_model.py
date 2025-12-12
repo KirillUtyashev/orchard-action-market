@@ -87,6 +87,23 @@ class BaseValueModelV2(nn.Module, ABC):
                     m.weight.data *= 0.01
         self.target_net.load_state_dict(self.policy_net.state_dict())
 
+    def init_scheduler(self, max_steps: int, min_lr: float = 1e-7):
+        """Initializes the Cosine scheduler. Call this from the notebook."""
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=max_steps, eta_min=min_lr
+        )
+
+    def step_scheduler(self):
+        """Step the scheduler. Call this in the training loop."""
+        if hasattr(self, "scheduler") and self.scheduler:
+            self.scheduler.step()
+
+    def get_current_lr(self) -> float:
+        """Helper to see LR in logs."""
+        if hasattr(self, "optimizer"):
+            return self.optimizer.param_groups[0]["lr"]
+        return 0.0
+
     @abstractmethod
     def raw_state_to_nn_input(self, state: State, acting_agent_idx: int) -> np.ndarray:
         """

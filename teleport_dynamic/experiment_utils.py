@@ -662,6 +662,7 @@ class EvalResult:
     max_abs_error: float
     mean_pct_error: float
     max_pct_error: float
+    mean_signed_pct_error: float
     num_samples: int
 
 
@@ -672,11 +673,7 @@ def evaluate_centralized_model(
 ) -> Dict[str, EvalResult]:
     """
     Evaluate centralized model on test sets.
-
-    Args:
-        model: The value model
-        test_sets: Dict of category -> test cases
-        use_value: If True, evaluate against true_value; else true_reward
+    Calculates both Absolute Error (Accuracy) and Signed Error (Bias).
     """
     results = {}
 
@@ -684,36 +681,43 @@ def evaluate_centralized_model(
         if len(test_cases) == 0:
             continue
 
-        errors = []
-        target_vals = []
+        # 1. Collect Predictions and Targets
+        preds = []
+        targets = []
+
         for tc in test_cases:
-            pred = model.get_value(tc.state, tc.acting_agent_idx)
-            target = tc.true_value if use_value else tc.true_reward
-            if target is None:
-                raise ValueError(
-                    f"true_value is None but use_value=True for {category}"
-                )
-            err = abs(pred - target)
-            errors.append(err)
-            target_vals.append(target)
+            p = model.get_value(tc.state, tc.acting_agent_idx)
+            t = tc.true_value if use_value else tc.true_reward
+            if t is None:
+                raise ValueError(f"Target is None for {category}")
+            preds.append(p)
+            targets.append(t)
 
-        errors = np.array(errors)
-        target_vals = np.array(target_vals)
+        preds = np.array(preds)
+        targets = np.array(targets)
 
-        # Percentage calculation (relative to target magnitude)
-        # Use mean target magnitude as reference to avoid division issues
-        mean_target_mag = np.mean(np.abs(target_vals))
+        # 2. Calculate Signed and Absolute Errors
+        signed_errors = preds - targets
+        abs_errors = np.abs(signed_errors)
+
+        # 3. Calculate Percentages (Relative to Mean Target Magnitude)
+        mean_target_mag = np.mean(np.abs(targets))
+
         if mean_target_mag < 1e-9:
-            pct_errors = errors * 100.0
+            # Avoid division by zero for zero-target cases
+            pct_signed_errors = signed_errors * 100.0
+            pct_abs_errors = abs_errors * 100.0
         else:
-            pct_errors = (errors / mean_target_mag) * 100.0
+            pct_signed_errors = (signed_errors / mean_target_mag) * 100.0
+            pct_abs_errors = (abs_errors / mean_target_mag) * 100.0
 
         results[category] = EvalResult(
             category=category,
-            mean_abs_error=float(np.mean(errors)),
-            max_abs_error=float(np.max(errors)),
-            mean_pct_error=float(np.mean(pct_errors)),
-            max_pct_error=float(np.max(pct_errors)),
+            mean_abs_error=float(np.mean(abs_errors)),
+            max_abs_error=float(np.max(abs_errors)),
+            mean_pct_error=float(np.mean(pct_abs_errors)),
+            max_pct_error=float(np.max(pct_abs_errors)),
+            mean_signed_pct_error=float(np.mean(pct_signed_errors)),  # Bias
             num_samples=len(test_cases),
         )
 
@@ -747,34 +751,52 @@ def evaluate_decentralized_models(
             if len(cases) == 0:
                 continue
 
-            errors = []
-            target_vals = []
+            # 1. Collect Predictions and Targets
+            preds = []
+            targets = []
+
             for tc in cases:
-                pred = models[agent_idx].get_value(tc.state, tc.acting_agent_idx)
-                target = tc.true_value if use_value else tc.true_reward
-                if target is None:
-                    raise ValueError(f"true_value is None but use_value=True")
-                err = abs(pred - target)
-                errors.append(err)
-                target_vals.append(target)
+                p = models[agent_idx].get_value(tc.state, tc.acting_agent_idx)
+                t = tc.true_value if use_value else tc.true_reward
+                if t is None:
+                    raise ValueError(f"Target is None for {category}")
+                preds.append(p)
+                targets.append(t)
 
-            errors = np.array(errors)
-            target_vals = np.array(target_vals)
+            preds = np.array(preds)
+            targets = np.array(targets)
 
-            mean_target_mag = np.mean(np.abs(target_vals))
+            # 2. Calculate Signed and Absolute Errors
+            signed_errors = preds - targets
+            abs_errors = np.abs(signed_errors)
+
+            # 3. Calculate Percentages
+            mean_target_mag = np.mean(np.abs(targets))
+
             if mean_target_mag < 1e-9:
-                pct_errors = errors * 100.0
+                pct_signed_errors = signed_errors * 100.0
+                pct_abs_errors = abs_errors * 100.0
             else:
-                pct_errors = (errors / mean_target_mag) * 100.0
+                pct_signed_errors = (signed_errors / mean_target_mag) * 100.0
+                pct_abs_errors = (abs_errors / mean_target_mag) * 100.0
 
             results[category][agent_idx] = EvalResult(
                 category=category,
-                mean_abs_error=float(np.mean(errors)) if len(errors) > 0 else 0.0,
-                max_abs_error=float(np.max(errors)) if len(errors) > 0 else 0.0,
-                mean_pct_error=(
-                    float(np.mean(pct_errors)) if len(pct_errors) > 0 else 0.0
+                mean_abs_error=(
+                    float(np.mean(abs_errors)) if len(abs_errors) > 0 else 0.0
                 ),
-                max_pct_error=float(np.max(pct_errors)) if len(pct_errors) > 0 else 0.0,
+                max_abs_error=float(np.max(abs_errors)) if len(abs_errors) > 0 else 0.0,
+                mean_pct_error=(
+                    float(np.mean(pct_abs_errors)) if len(pct_abs_errors) > 0 else 0.0
+                ),
+                max_pct_error=(
+                    float(np.max(pct_abs_errors)) if len(pct_abs_errors) > 0 else 0.0
+                ),
+                mean_signed_pct_error=(
+                    float(np.mean(pct_signed_errors))
+                    if len(pct_signed_errors) > 0
+                    else 0.0
+                ),  # Bias
                 num_samples=len(cases),
             )
 
@@ -856,7 +878,7 @@ def append_experiment_result(
     wall_time_seconds: float,
     num_parameters: int,
     kernel_size: Optional[int] = None,  # None for MLP
-    learning_method: str = "reward",    # "reward", "td0", "td_lambda"
+    learning_method: str = "reward",  # "reward", "td0", "td_lambda"
     notes: str = "",
 ):
     """Append a single experiment result to CSV file."""
@@ -926,13 +948,15 @@ def format_eval_results_for_log(
     results: Dict[str, EvalResult],
     step: int,
     loss: float,
+    lr: float,
 ) -> str:
     """Format centralized evaluation results as a log line."""
-    parts = [f"Step {step:<6} | Loss {loss:.6f}"]
+    # Added LR to the header
+    parts = [f"Step {step:<6} | Loss {loss:.6f} | LR {lr:.2e}"]
 
     for category, result in sorted(results.items()):
         parts.append(
-            f"{category}: {result.mean_pct_error:.2f}%/{result.max_pct_error:.2f}%"
+            f"{category}: {result.mean_pct_error:.2f}% (bias {result.mean_signed_pct_error:+.2f}%) / {result.max_pct_error:.2f}%"
         )
 
     return " | ".join(parts)
@@ -943,9 +967,11 @@ def format_decen_eval_results_for_log(
     step: int,
     loss: float,
     num_agents: int,
+    lr: float,
 ) -> str:
     """Format decentralized evaluation results as a log line."""
-    parts = [f"Step {step:<6} | Loss {loss:.6f}"]
+    # Added LR to the header
+    parts = [f"Step {step:<6} | Loss {loss:.6f} | LR {lr:.2e}"]
 
     for category in sorted(results.keys()):
         agent_results = results[category]
@@ -954,10 +980,14 @@ def format_decen_eval_results_for_log(
 
         means = [r.mean_pct_error for r in agent_results.values()]
         maxes = [r.max_pct_error for r in agent_results.values()]
+        biases = [r.mean_signed_pct_error for r in agent_results.values()]
 
         avg_mean = np.mean(means)
         worst_max = np.max(maxes)
+        avg_bias = np.mean(biases)
 
-        parts.append(f"{category}: {avg_mean:.2f}%/{worst_max:.2f}%")
+        parts.append(
+            f"{category}: {avg_mean:.2f}% (bias {avg_bias:+.2f}%) / {worst_max:.2f}%"
+        )
 
     return " | ".join(parts)
