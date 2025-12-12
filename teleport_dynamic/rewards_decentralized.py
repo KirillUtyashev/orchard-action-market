@@ -70,7 +70,7 @@ def get_reward_minus1_2(state: State, acting_agent_idx: int) -> Dict[int, float]
     if hit_apple:
         rewards[acting_agent_idx] = -1.0
         if num_agents > 1:
-            others_val = 2.0 / (num_agents - 1)
+            others_val = 2.0 / float(num_agents - 1)
             for i in range(num_agents):
                 if i != acting_agent_idx:
                     rewards[i] = others_val
