@@ -2,6 +2,7 @@
 Training Functions for Value Learning - DEBUG VERSION
 """
 
+import copy
 import random
 import torch
 import torch.nn as nn
@@ -23,10 +24,11 @@ def debug_print(msg):
 def check_tensor(t, name):
     """Check tensor for NaN/Inf and print debug info"""
     if torch.isnan(t).any():
-        debug_print(f"NaN in {name}! Shape: {t.shape}, Values: {t}")
+        nan_count = torch.isnan(t).sum().item()
+        debug_print(f"NaN in {name}! Count: {nan_count}, Shape: {t.shape}, Device: {t.device}")
         return True
     if torch.isinf(t).any():
-        debug_print(f"Inf in {name}! Shape: {t.shape}, Values: {t}")
+        debug_print(f"Inf in {name}! Shape: {t.shape}")
         return True
     return False
 
@@ -201,7 +203,6 @@ def compute_lambda_returns_vectorized(
     lambda_: float,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     device = model.device
-
     states = torch.tensor(
         np.stack([step.state_encoding for step in trajectory]),
         dtype=torch.float32, device=device,
@@ -210,28 +211,40 @@ def compute_lambda_returns_vectorized(
         np.array([step.reward for step in trajectory]),
         dtype=torch.float32, device=device,
     )
-
+    
     # Debug: check inputs
     if check_tensor(states, "lambda_states"):
         debug_print(f"  Trajectory length: {len(trajectory)}")
     if check_tensor(rewards, "lambda_rewards"):
         debug_print(f"  Reward values: {[s.reward for s in trajectory]}")
-
     last_step = trajectory[-1]
-
+    
     with torch.no_grad():
         # Check target_net params first
         if check_model_params(model.target_net, "target_net"):
             debug_print("Target net has NaN params!")
-            # Return zeros to avoid propagating NaN
             return states, torch.zeros_like(rewards)
         
-        values = model.target_net(states).squeeze(-1)
+        # Process in chunks to avoid GPU batch bug
+        CHUNK_SIZE = 64
+        values_list = []
+        for i in range(0, len(states), CHUNK_SIZE):
+            chunk = states[i:i+CHUNK_SIZE]
+            chunk_vals = model.target_net(chunk).squeeze(-1)
+            
+            # CPU fallback if chunk has NaN
+            if torch.isnan(chunk_vals).any():
+                import copy
+                cpu_net = copy.deepcopy(model.target_net).cpu()
+                chunk_vals = cpu_net(chunk.cpu()).squeeze(-1).to(device)
+            
+            values_list.append(chunk_vals)
+        values = torch.cat(values_list)
         
         if check_tensor(values, "target_net_values"):
             debug_print(f"  States range: [{states.min():.4f}, {states.max():.4f}]")
             return states, torch.zeros_like(rewards)
-
+        
         if last_step.done:
             bootstrap = torch.tensor(0.0, device=device)
         else:
@@ -240,29 +253,32 @@ def compute_lambda_returns_vectorized(
             ).unsqueeze(0)
             bootstrap = model.target_net(last_next_s).squeeze(-1)
             
+            # GPU fallback: if NaN, try CPU
+            if torch.isnan(bootstrap).any():
+                debug_print("Bootstrap NaN on GPU, trying CPU...")
+                import copy
+                cpu_net = copy.deepcopy(model.target_net).cpu()
+                cpu_input = last_next_s.cpu()
+                bootstrap = cpu_net(cpu_input).squeeze(-1).to(device)
+            
             if check_tensor(bootstrap, "bootstrap"):
                 bootstrap = torch.tensor(0.0, device=device)
-
+    
     next_values = torch.cat([values[1:], bootstrap.view(1)])
-
     T = len(trajectory)
     lambda_returns = torch.zeros_like(rewards)
     g_next = bootstrap
-
+    
     for t in reversed(range(T)):
         g_next = rewards[t] + gamma * (((1 - lambda_) * next_values[t]) + (lambda_ * g_next))
-        
-        # Clamp intermediate values to prevent explosion
         g_next = torch.clamp(g_next, -1000.0, 1000.0)
         lambda_returns[t] = g_next
-
-    # Final check
+    
     if check_tensor(lambda_returns, "lambda_returns"):
         debug_print(f"  After recursion, returning zeros")
         return states, torch.zeros_like(rewards)
-
+    
     return states, lambda_returns
-
 
 def train_td_lambda(
     model: BaseValueModelV2,

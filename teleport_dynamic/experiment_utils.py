@@ -283,17 +283,19 @@ def generate_decentralized_test_set(
 ) -> Dict[str, List[DecentralizedTestCase]]:
     """
     Generate test set for decentralized reward learning.
-    Categories: self_picker, bystander, zero_actor_miss, zero_self_on_apple
+
+    Categories (based on who's acting and reward structure):
+    - self_picker: self is actor AND on apple (gets picker reward)
+    - other_picker: other is actor AND on apple (self gets non-picker reward)
+    - zero_actor_miss: actor misses apple (everyone gets 0)
+    - zero_self_on_apple: actor misses but self is on apple (still 0 reward)
     """
     if seed is not None:
         np.random.seed(seed)
 
-    if num_agents < 2:
-        raise ValueError("Decentralized requires at least 2 agents")
-
     test_sets = {
         "self_picker": [],
-        "bystander": [],
+        "other_picker": [],
         "zero_actor_miss": [],
         "zero_self_on_apple": [],
     }
@@ -306,34 +308,30 @@ def generate_decentralized_test_set(
             raise ValueError("fixed_apples must be provided")
         return s
 
-    def get_apple_positions(s: State) -> List[Tuple[int, int]]:
-        return list(zip(*np.where(s.apples > 0)))
+    apple_positions_set = set(zip(*np.where(fixed_apples > 0)))
+    non_apple_positions = [
+        (r, c)
+        for r in range(height)
+        for c in range(width)
+        if (r, c) not in apple_positions_set
+    ]
+    apple_positions = list(apple_positions_set)
 
-    def get_non_apple_positions(s: State) -> List[Tuple[int, int]]:
-        apple_set = set(get_apple_positions(s))
-        return [
-            (r, c)
-            for r in range(height)
-            for c in range(width)
-            if (r, c) not in apple_set
-        ]
-
-    # SELF_PICKER: self is actor AND self is on apple
+    # SELF_PICKER: self is actor and on apple
     while len(test_sets["self_picker"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
         if not apple_positions:
-            continue
+            break
 
         self_idx = np.random.randint(0, num_agents)
-        actor_idx = self_idx
-
+        actor_idx = self_idx  # self is acting
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
-        s.set_agent_position(self_idx, np.array(apple_pos))
+        s.set_agent_position(actor_idx, np.array(apple_pos))
 
         for i in range(num_agents):
-            if i != self_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+            if i != actor_idx:
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -348,53 +346,53 @@ def generate_decentralized_test_set(
             )
         )
 
-    # BYSTANDER: other is actor AND other is on apple
-    while len(test_sets["bystander"]) < samples_per_category:
+    # OTHER_PICKER: other is actor and on apple
+    while len(test_sets["other_picker"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
-        if not apple_positions:
-            continue
+        if not apple_positions or num_agents < 2:
+            break
 
         self_idx = np.random.randint(0, num_agents)
         other_agents = [i for i in range(num_agents) if i != self_idx]
-        actor_idx = np.random.choice(other_agents)
+        actor_idx = other_agents[np.random.randint(len(other_agents))]
 
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
         s.set_agent_position(actor_idx, np.array(apple_pos))
 
         for i in range(num_agents):
             if i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
-        test_sets["bystander"].append(
+        test_sets["other_picker"].append(
             DecentralizedTestCase(
                 state=s,
                 acting_agent_idx=actor_idx,
                 self_agent_idx=self_idx,
                 true_reward=rewards[self_idx],
                 true_value=None,
-                category="bystander",
+                category="other_picker",
             )
         )
 
-    # ZERO_ACTOR_MISS: actor misses (no apple), self anywhere
+    # ZERO_ACTOR_MISS: actor misses apple
     while len(test_sets["zero_actor_miss"]) < samples_per_category:
         s = create_base_state()
-        non_apple_positions = get_non_apple_positions(s)
         if not non_apple_positions:
-            continue
+            break
 
         self_idx = np.random.randint(0, num_agents)
         actor_idx = np.random.randint(0, num_agents)
 
-        pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
-        s.set_agent_position(actor_idx, np.array(pos))
+        miss_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
+        s.set_agent_position(actor_idx, np.array(miss_pos))
 
         for i in range(num_agents):
             if i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -409,32 +407,26 @@ def generate_decentralized_test_set(
             )
         )
 
-    # ZERO_SELF_ON_APPLE: self on apple but NOT actor (other misses)
+    # ZERO_SELF_ON_APPLE: actor misses but self is on apple
     while len(test_sets["zero_self_on_apple"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
-        non_apple_positions = get_non_apple_positions(s)
-        if not apple_positions or not non_apple_positions:
-            continue
+        if not non_apple_positions or not apple_positions or num_agents < 2:
+            break
 
         self_idx = np.random.randint(0, num_agents)
         other_agents = [i for i in range(num_agents) if i != self_idx]
-        if not other_agents:
-            continue
-        actor_idx = np.random.choice(other_agents)
+        actor_idx = other_agents[np.random.randint(len(other_agents))]
 
-        # Place self on apple
+        miss_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
+        s.set_agent_position(actor_idx, np.array(miss_pos))
+
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
         s.set_agent_position(self_idx, np.array(apple_pos))
 
-        # Place actor NOT on apple
-        non_apple_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
-        s.set_agent_position(actor_idx, np.array(non_apple_pos))
-
-        # Randomize others
         for i in range(num_agents):
-            if i != self_idx and i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+            if i != actor_idx and i != self_idx:
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -470,21 +462,16 @@ def generate_decentralized_value_test_set(
 ) -> Dict[str, List[DecentralizedTestCase]]:
     """
     Generate test set for decentralized value learning.
-    Uses analytical solution for true values.
-
-    Categories: self_picker, bystander, zero_actor_miss, zero_self_on_apple
+    Uses get_exact_value for true values.
     """
     from teleport_dynamic.analytical import get_exact_value
 
     if seed is not None:
         np.random.seed(seed)
 
-    if num_agents < 2:
-        raise ValueError("Decentralized requires at least 2 agents")
-
     test_sets = {
         "self_picker": [],
-        "bystander": [],
+        "other_picker": [],
         "zero_actor_miss": [],
         "zero_self_on_apple": [],
     }
@@ -497,34 +484,30 @@ def generate_decentralized_value_test_set(
             raise ValueError("fixed_apples must be provided")
         return s
 
-    def get_apple_positions(s: State) -> List[Tuple[int, int]]:
-        return list(zip(*np.where(s.apples > 0)))
-
-    def get_non_apple_positions(s: State) -> List[Tuple[int, int]]:
-        apple_set = set(get_apple_positions(s))
-        return [
-            (r, c)
-            for r in range(height)
-            for c in range(width)
-            if (r, c) not in apple_set
-        ]
+    apple_positions_set = set(zip(*np.where(fixed_apples > 0)))
+    non_apple_positions = [
+        (r, c)
+        for r in range(height)
+        for c in range(width)
+        if (r, c) not in apple_positions_set
+    ]
+    apple_positions = list(apple_positions_set)
 
     # SELF_PICKER
     while len(test_sets["self_picker"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
         if not apple_positions:
-            continue
+            break
 
         self_idx = np.random.randint(0, num_agents)
         actor_idx = self_idx
-
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
-        s.set_agent_position(self_idx, np.array(apple_pos))
+        s.set_agent_position(actor_idx, np.array(apple_pos))
 
         for i in range(num_agents):
-            if i != self_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+            if i != actor_idx:
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -541,55 +524,55 @@ def generate_decentralized_value_test_set(
             )
         )
 
-    # BYSTANDER
-    while len(test_sets["bystander"]) < samples_per_category:
+    # OTHER_PICKER
+    while len(test_sets["other_picker"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
-        if not apple_positions:
-            continue
+        if not apple_positions or num_agents < 2:
+            break
 
         self_idx = np.random.randint(0, num_agents)
         other_agents = [i for i in range(num_agents) if i != self_idx]
-        actor_idx = np.random.choice(other_agents)
+        actor_idx = other_agents[np.random.randint(len(other_agents))]
 
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
         s.set_agent_position(actor_idx, np.array(apple_pos))
 
         for i in range(num_agents):
             if i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
         true_val = get_exact_value(s, actor_idx, self_idx, reward_func, gamma)
 
-        test_sets["bystander"].append(
+        test_sets["other_picker"].append(
             DecentralizedTestCase(
                 state=s,
                 acting_agent_idx=actor_idx,
                 self_agent_idx=self_idx,
                 true_reward=rewards[self_idx],
                 true_value=true_val,
-                category="bystander",
+                category="other_picker",
             )
         )
 
     # ZERO_ACTOR_MISS
     while len(test_sets["zero_actor_miss"]) < samples_per_category:
         s = create_base_state()
-        non_apple_positions = get_non_apple_positions(s)
         if not non_apple_positions:
-            continue
+            break
 
         self_idx = np.random.randint(0, num_agents)
         actor_idx = np.random.randint(0, num_agents)
 
-        pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
-        s.set_agent_position(actor_idx, np.array(pos))
+        miss_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
+        s.set_agent_position(actor_idx, np.array(miss_pos))
 
         for i in range(num_agents):
             if i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -609,26 +592,23 @@ def generate_decentralized_value_test_set(
     # ZERO_SELF_ON_APPLE
     while len(test_sets["zero_self_on_apple"]) < samples_per_category:
         s = create_base_state()
-        apple_positions = get_apple_positions(s)
-        non_apple_positions = get_non_apple_positions(s)
-        if not apple_positions or not non_apple_positions:
-            continue
+        if not non_apple_positions or not apple_positions or num_agents < 2:
+            break
 
         self_idx = np.random.randint(0, num_agents)
         other_agents = [i for i in range(num_agents) if i != self_idx]
-        if not other_agents:
-            continue
-        actor_idx = np.random.choice(other_agents)
+        actor_idx = other_agents[np.random.randint(len(other_agents))]
+
+        miss_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
+        s.set_agent_position(actor_idx, np.array(miss_pos))
 
         apple_pos = apple_positions[np.random.randint(len(apple_positions))]
         s.set_agent_position(self_idx, np.array(apple_pos))
 
-        non_apple_pos = non_apple_positions[np.random.randint(len(non_apple_positions))]
-        s.set_agent_position(actor_idx, np.array(non_apple_pos))
-
         for i in range(num_agents):
-            if i != self_idx and i != actor_idx:
-                r, c = np.random.randint(0, height), np.random.randint(0, width)
+            if i != actor_idx and i != self_idx:
+                r = np.random.randint(0, height)
+                c = np.random.randint(0, width)
                 s.set_agent_position(i, np.array([r, c]))
 
         rewards = reward_func(s, actor_idx)
@@ -655,14 +635,14 @@ def generate_decentralized_value_test_set(
 
 @dataclass
 class EvalResult:
-    """Evaluation result for a single category."""
+    """Evaluation metrics for a single category."""
 
     category: str
     mean_abs_error: float
     max_abs_error: float
     mean_pct_error: float
     max_pct_error: float
-    mean_signed_pct_error: float
+    mean_signed_pct_error: float  # Bias
     num_samples: int
 
 
@@ -673,7 +653,11 @@ def evaluate_centralized_model(
 ) -> Dict[str, EvalResult]:
     """
     Evaluate centralized model on test sets.
-    Calculates both Absolute Error (Accuracy) and Signed Error (Bias).
+
+    Args:
+        model: The model to evaluate
+        test_sets: Dict of category -> list of test cases
+        use_value: If True, compare against true_value; else true_reward
     """
     results = {}
 
@@ -700,11 +684,11 @@ def evaluate_centralized_model(
         signed_errors = preds - targets
         abs_errors = np.abs(signed_errors)
 
-        # 3. Calculate Percentages (Relative to Mean Target Magnitude)
+        # 3. Calculate Percentages
+        # Use mean absolute target to get percentage of typical magnitude
         mean_target_mag = np.mean(np.abs(targets))
 
         if mean_target_mag < 1e-9:
-            # Avoid division by zero for zero-target cases
             pct_signed_errors = signed_errors * 100.0
             pct_abs_errors = abs_errors * 100.0
         else:
@@ -713,11 +697,17 @@ def evaluate_centralized_model(
 
         results[category] = EvalResult(
             category=category,
-            mean_abs_error=float(np.mean(abs_errors)),
-            max_abs_error=float(np.max(abs_errors)),
-            mean_pct_error=float(np.mean(pct_abs_errors)),
-            max_pct_error=float(np.max(pct_abs_errors)),
-            mean_signed_pct_error=float(np.mean(pct_signed_errors)),  # Bias
+            mean_abs_error=float(np.mean(abs_errors)) if len(abs_errors) > 0 else 0.0,
+            max_abs_error=float(np.max(abs_errors)) if len(abs_errors) > 0 else 0.0,
+            mean_pct_error=(
+                float(np.mean(pct_abs_errors)) if len(pct_abs_errors) > 0 else 0.0
+            ),
+            max_pct_error=(
+                float(np.max(pct_abs_errors)) if len(pct_abs_errors) > 0 else 0.0
+            ),
+            mean_signed_pct_error=(
+                float(np.mean(pct_signed_errors)) if len(pct_signed_errors) > 0 else 0.0
+            ),  # Bias
             num_samples=len(test_cases),
         )
 
@@ -731,7 +721,9 @@ def evaluate_decentralized_models(
 ) -> Dict[str, Dict[int, EvalResult]]:
     """
     Evaluate decentralized models on test sets.
-    Returns: Dict of category -> Dict of agent_idx -> EvalResult
+
+    Returns:
+        Dict[category -> Dict[agent_idx -> EvalResult]]
     """
     num_agents = len(models)
     results = {}
@@ -962,6 +954,24 @@ def format_eval_results_for_log(
     return " | ".join(parts)
 
 
+def get_decen_log_format_legend() -> str:
+    """
+    Returns a legend explaining the decentralized log format.
+    Call this once when writing the log header.
+    """
+    legend = """----------------------------------------
+Log Format Legend:
+  Each category line: CATEGORY: AVG% ±STD% [A0,A1,...] (bias AVG_BIAS%) / WORST_MAX%
+    - AVG%: Mean error averaged across all agents
+    - ±STD%: Standard deviation of mean errors across agents (agent variance)
+    - [A0,A1,...]: Per-agent mean errors (A0=Agent0, A1=Agent1, etc.)
+    - bias: Average signed error (positive=overestimate, negative=underestimate)
+    - WORST_MAX%: Worst-case max error across all agents
+----------------------------------------
+"""
+    return legend
+
+
 def format_decen_eval_results_for_log(
     results: Dict[str, Dict[int, EvalResult]],
     step: int,
@@ -969,8 +979,12 @@ def format_decen_eval_results_for_log(
     num_agents: int,
     lr: float,
 ) -> str:
-    """Format decentralized evaluation results as a log line."""
-    # Added LR to the header
+    """
+    Format decentralized evaluation results as a log line.
+    
+    New format includes per-agent breakdown:
+    CATEGORY: AVG% ±STD% [A0,A1,A2,A3] (bias AVG_BIAS%) / WORST_MAX%
+    """
     parts = [f"Step {step:<6} | Loss {loss:.6f} | LR {lr:.2e}"]
 
     for category in sorted(results.keys()):
@@ -978,16 +992,37 @@ def format_decen_eval_results_for_log(
         if len(agent_results) == 0:
             continue
 
-        means = [r.mean_pct_error for r in agent_results.values()]
-        maxes = [r.max_pct_error for r in agent_results.values()]
-        biases = [r.mean_signed_pct_error for r in agent_results.values()]
+        # Collect per-agent metrics
+        agent_means = []
+        agent_maxes = []
+        agent_biases = []
+        
+        # Build per-agent list in order (A0, A1, A2, ...)
+        per_agent_means = []
+        for agent_idx in range(num_agents):
+            if agent_idx in agent_results:
+                r = agent_results[agent_idx]
+                agent_means.append(r.mean_pct_error)
+                agent_maxes.append(r.max_pct_error)
+                agent_biases.append(r.mean_signed_pct_error)
+                per_agent_means.append(f"{r.mean_pct_error:.1f}")
+            else:
+                per_agent_means.append("N/A")
 
-        avg_mean = np.mean(means)
-        worst_max = np.max(maxes)
-        avg_bias = np.mean(biases)
+        if len(agent_means) == 0:
+            continue
+
+        # Compute aggregate stats
+        avg_mean = np.mean(agent_means)
+        std_mean = np.std(agent_means) if len(agent_means) > 1 else 0.0
+        worst_max = np.max(agent_maxes)
+        avg_bias = np.mean(agent_biases)
+
+        # Format per-agent string: [4.1,6.3,5.2,5.1]
+        per_agent_str = "[" + ",".join(per_agent_means) + "]"
 
         parts.append(
-            f"{category}: {avg_mean:.2f}% (bias {avg_bias:+.2f}%) / {worst_max:.2f}%"
+            f"{category}: {avg_mean:.2f}% ±{std_mean:.2f}% {per_agent_str} (bias {avg_bias:+.2f}%) / {worst_max:.2f}%"
         )
 
     return " | ".join(parts)

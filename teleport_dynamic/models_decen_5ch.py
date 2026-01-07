@@ -203,6 +203,11 @@ class ValueMLPDecentralized5Ch(BaseValueModelV2):
         self.optimizer = torch.optim.AdamW(
             self.policy_net.parameters(), lr=lr, amsgrad=True
         )
+        
+        with torch.no_grad():
+            dummy = torch.zeros(1, self.input_channels * height * width, device=self.device)
+            _ = self.policy_net(dummy)
+            _ = self.target_net(dummy)
         print(f"  [INIT OK] Agent {self_agent_idx} MLP initialized")
 
 
