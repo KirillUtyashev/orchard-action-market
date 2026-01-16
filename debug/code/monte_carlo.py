@@ -4,7 +4,17 @@ import logging
 import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
+from config import (
+    NUM_AGENTS,
+    W,
+    L,
+    REWARD,
+    PROBABILITY_APPLE,
+    TRAJECTORY_LENGTH,
+    NUM_WORKERS,
+    SEEDS,
+    data_dir,
+)
 
 import numpy as np
 
@@ -12,19 +22,6 @@ from debug.code.environment import Orchard
 from debug.code.helpers import set_all_seeds, teleport
 from debug.code.reward import Reward
 
-# ---------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------
-data_dir = Path(__file__).parent.parent / "data"
-
-NUM_AGENTS = 4
-W, L = 9, 9
-REWARD = -1
-PROBABILITY_APPLE = 32.4 / (W * L)
-TRAJECTORY_LENGTH = 500_000
-NUM_WORKERS = 8
-DISCOUNT_FACTOR = 0.99
-SEEDS = 5000
 
 # ---------------------------------------------------------------------
 # Logging
@@ -46,11 +43,11 @@ logger = logging.getLogger(__name__)
 def save_results(kind: str, seed: int, rewards_by_agent: np.ndarray) -> None:
     """Save rewards and metadata to an .npz file."""
     # folder name: function_name-{PROBABILITY_APPLE}-{NUM_AGENTS}-{W}
-    folder_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}"
+    folder_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{REWARD}"
     out_dir = data_dir / folder_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    filename = out_dir / f"results_seed{seed}_agents{NUM_AGENTS}_w{W}_l{L}.npz"
+    filename = out_dir / f"results_seed{seed}.npz"
     metadata = np.array(
         {
             "seed": seed,
@@ -156,7 +153,7 @@ def iid(seed: int) -> None:
     )
 
     rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
-    reward_other = (1 - REWARD) // (NUM_AGENTS - 1)
+    reward_other = (1 - REWARD) / (NUM_AGENTS - 1)
 
     for step in range(TRAJECTORY_LENGTH):
         actor_id = random.randint(0, NUM_AGENTS - 1)
