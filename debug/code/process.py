@@ -1,6 +1,7 @@
 from typing import Dict, Tuple
 import numpy as np
 import os
+from scipy.stats import norm   # pip install scipy
 import matplotlib.pyplot as plt
 from pathlib import Path
 data_dir = Path(__file__).parent.parent / "data"
@@ -78,14 +79,19 @@ def process():
         print(f"Agent {agent_id}: mean={mean:.3f}, std={std:.3f}")
 
         plt.figure()
-        plt.hist(vals, bins=30, alpha=0.7)
+        # histogram (density so curve is on same scale)
+        plt.hist(vals, bins=30, alpha=0.7, density=True)
+
+        # x-range for the curve
+        x = np.linspace(vals.min(), vals.max(), 200)
+        pdf = norm.pdf(x, loc=mean, scale=std)
+        plt.plot(x, pdf, 'k-', linewidth=2)
+
         plt.title(f"Agent {agent_id} returns\nmean={mean:.3f}, std={std:.3f}")
         plt.xlabel("Return")
-        plt.ylabel("Count")
+        plt.ylabel("Density")
         plt.tight_layout()
-
-        out_path = os.path.join(plots_dir, f"agent_{agent_id}_returns.png")
-        plt.savefig(out_path, dpi=300)
+        plt.savefig(os.path.join(plots_dir, f"agent_{agent_id}_returns.png"), dpi=300)
         plt.close()
 
 
