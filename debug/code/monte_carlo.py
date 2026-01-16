@@ -1,5 +1,5 @@
 from typing import Dict, Tuple
-
+import time
 from debug.code.environment import Orchard
 from debug.code.helpers import set_all_seeds, teleport
 from debug.code.reward import Reward
@@ -27,7 +27,9 @@ NUM_AGENTS = 4
 W, L = 9, 9
 REWARD = -1
 PROBABILITY_APPLE = 10 / (W * L)
-TRAJECTORY_LENGTH = 10000
+TRAJECTORY_LENGTH = 100000
+NUM_WORKERS = 8
+DISCOUNT_FACTOR = 0.99
 
 
 def init_state(reward_module):
@@ -45,54 +47,58 @@ def monte_carlo(seed=42069):
     logger.info(f"Starting Monte Carlo simulation with seed={seed}")
     logger.info(f"Config: NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, TRAJECTORY_LENGTH={TRAJECTORY_LENGTH}")
 
-    reward_module = Reward(REWARD, NUM_AGENTS)
-    orchard = init_state(reward_module)
+    try:
+        reward_module = Reward(REWARD, NUM_AGENTS)
+        orchard = init_state(reward_module)
 
-    # Initialize DS to store results
-    rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
+        # Initialize DS to store results
+        rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
 
-    set_all_seeds(seed)
+        set_all_seeds(seed)
 
-    for step in range(TRAJECTORY_LENGTH):
-        # act
-        actor_idx = random.randint(0, NUM_AGENTS - 1)
+        for step in range(TRAJECTORY_LENGTH):
+            # act
+            actor_idx = random.randint(0, NUM_AGENTS - 1)
 
-        # get reward
-        res = orchard.process_action(actor_idx, teleport(W))
+            # get reward
+            res = orchard.process_action(actor_idx, teleport(W))
 
-        # store data
-        rewards_by_agent[:, step] = res.reward_vector
+            # store data
+            rewards_by_agent[:, step] = res.reward_vector
 
-        # Log progress every 1000 steps
-        if step % 1000 == 0 and step > 0:
-            total_reward = rewards_by_agent[:, :step].sum()
-            avg_reward_per_agent = rewards_by_agent[:, :step].mean(axis=1)
-            logger.info(
-                f"Step {step}/{TRAJECTORY_LENGTH}: "
-                f"Total reward={total_reward:.2f}, "
-                f"Avg per agent={avg_reward_per_agent.mean():.2f}"
-            )
+            # Log progress every 1000 steps
+            if step % 1000 == 0 and step > 0:
+                total_reward = rewards_by_agent[:, :step].sum()
+                avg_reward_per_agent = rewards_by_agent[:, :step].mean(axis=1)
+                logger.info(
+                    f"Step {step}/{TRAJECTORY_LENGTH}: "
+                    f"Total reward={total_reward:.2f}, "
+                    f"Avg per agent={avg_reward_per_agent.mean():.2f}"
+                )
 
-    # Final statistics
-    total_reward = rewards_by_agent.sum()
-    logger.info(f"Simulation complete. Total reward: {total_reward:.2f}")
-    logger.info(f"Reward by agent: {rewards_by_agent.sum(axis=1)}")
-
-    # Save results with descriptive filename
-    filename = data_dir / f"monte-carlo/results_seed{seed}_agents{NUM_AGENTS}_w{W}_l{L}.npz"
-    np.savez_compressed(
-        filename,
-        rewards_by_agent=rewards_by_agent,
-        metadata=np.array({
-            'seed': seed,
-            'num_agents': NUM_AGENTS,
-            'width': W,
-            'length': L,
-            'trajectory_length': TRAJECTORY_LENGTH,
-            'timestamp': datetime.now().isoformat()
-        }, dtype=object)
-    )
-    logger.info(f"Results saved to {filename}")
+        # Final statistics
+        total_reward = rewards_by_agent.sum()
+        logger.info(f"Simulation complete. Total reward: {total_reward:.2f}")
+        logger.info(f"Reward by agent: {rewards_by_agent.sum(axis=1)}")
+        
+        # Save results with descriptive filename
+        filename = data_dir / f"monte-carlo/results_seed{seed}_agents{NUM_AGENTS}_w{W}_l{L}.npz"
+        np.savez_compressed(
+            filename,
+            rewards_by_agent=rewards_by_agent,
+            metadata=np.array({
+                'seed': seed,
+                'num_agents': NUM_AGENTS,
+                'width': W,
+                'length': L,
+                'trajectory_length': TRAJECTORY_LENGTH,
+                'timestamp': datetime.now().isoformat()
+            }, dtype=object)
+        )
+        logger.info(f"Results saved to {filename}")
+    except Exception as e:
+        logger.info(f"Exception at step {step}: {e}")
+        logger.info("Traceback:", exc_info=True)
 
 
 def generate_initial_state(reward_module):
@@ -128,13 +134,38 @@ def load_monte_carlo_results(
 
     return rewards_by_agent, metadata
 
+# 1. load reward stream for each seed
+# 2. for each agent idx, compute the value of that state
+# 3. store that for that agent => need hash map
+# 4. after done iterating all seeds, we have 1000 data points -> they form a distribution
+# 5. visualize it per agent
+
+def compute_value(reward_by_agent):
+    res = np.array([0, 0, 0, 0])
+    for i in range(NUM_AGENTS):
+        stream = reward_by_agent[i:]
+        for j in range(stream):
+            res[i][j] = res[i] + DISCOUNT_FACTOR * stream[j]
+    
+    return res
+
+
+
 
 def run():
-    seeds = list(range(10))
+    seeds = list(range(1000))
 
-    with ProcessPoolExecutor(max_workers=8) as ex:
+    start = time.time()
+    logger.info(f"run() starting with {len(seeds)} seeds and {NUM_WORKERS} workers")
+
+    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
         ex.map(monte_carlo, seeds)
+
+    end = time.time()
+    elapsed = end - start
+    logger.info(f"run() finished in {elapsed:.2f} seconds")
 
 
 if __name__ == "__main__":
+    # generate_initial_state(Reward(REWARD, NUM_AGENTS))
     run()
