@@ -1,171 +1,218 @@
-from typing import Dict, Tuple
+import argparse
 import time
+import logging
+import random
+from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+
+import numpy as np
+
 from debug.code.environment import Orchard
 from debug.code.helpers import set_all_seeds, teleport
 from debug.code.reward import Reward
-import logging
-import numpy as np
-from datetime import datetime
-import random
-from concurrent.futures import ProcessPoolExecutor
 
-from pathlib import Path
+# ---------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------
 data_dir = Path(__file__).parent.parent / "data"
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('monte_carlo.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
 NUM_AGENTS = 4
 W, L = 9, 9
 REWARD = -1
-PROBABILITY_APPLE = 10 / (W * L)
-TRAJECTORY_LENGTH = 100000
+PROBABILITY_APPLE = 32.4 / (W * L)
+TRAJECTORY_LENGTH = 500_000
 NUM_WORKERS = 8
 DISCOUNT_FACTOR = 0.99
+SEEDS = 5000
+
+# ---------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("monte_carlo.log"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 
-def init_state(reward_module):
-    npz = np.load(data_dir / f"init_state_reward_{reward_module.picker_r}.npz", allow_pickle=True)
-    initial_state = npz["dict"].item()   # back to a Python dict
-    agent_positions = npz["extra"]     # regular NumPy array
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+def save_results(kind: str, seed: int, rewards_by_agent: np.ndarray) -> None:
+    """Save rewards and metadata to an .npz file."""
+    # folder name: function_name-{PROBABILITY_APPLE}-{NUM_AGENTS}-{W}
+    folder_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}"
+    out_dir = data_dir / folder_name
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, PROBABILITY_APPLE, start_agents_map=initial_state["agents"],
-                      start_apples_map=initial_state["apples"], start_agent_positions=agent_positions)
+    filename = out_dir / f"results_seed{seed}_agents{NUM_AGENTS}_w{W}_l{L}.npz"
+    metadata = np.array(
+        {
+            "seed": seed,
+            "num_agents": NUM_AGENTS,
+            "width": W,
+            "length": L,
+            "trajectory_length": TRAJECTORY_LENGTH,
+            "timestamp": datetime.now().isoformat(),
+            "kind": kind,
+            "probability_apple": PROBABILITY_APPLE,
+        },
+        dtype=object,
+    )
 
+    np.savez_compressed(filename, rewards_by_agent=rewards_by_agent, metadata=metadata)
+    logger.info(f"[{kind}] Results saved to {filename}")
+
+
+def log_progress(step: int, rewards_by_agent: np.ndarray) -> None:
+    """Log aggregate stats every N steps."""
+    if step % 1000 != 0 or step == 0:
+        return
+    total_reward = rewards_by_agent[:, :step].sum()
+    avg_reward_per_agent = rewards_by_agent[:, :step].mean(axis=1)
+    logger.info(
+        f"Step {step}/{TRAJECTORY_LENGTH}: "
+        f"Total reward={total_reward:.2f}, "
+        f"Avg per agent={avg_reward_per_agent.mean():.2f}"
+    )
+
+
+# ---------------------------------------------------------------------
+# Environment init
+# ---------------------------------------------------------------------
+def init_state(reward_module: Reward) -> Orchard:
+    npz = np.load(
+        data_dir / f"init_state_reward_{reward_module.picker_r}.npz",
+        allow_pickle=True,
+        )
+    initial_state = npz["dict"].item()
+    agent_positions = npz["extra"]
+
+    orchard = Orchard(
+        W,
+        L,
+        NUM_AGENTS,
+        reward_module,
+        PROBABILITY_APPLE,
+        start_agents_map=initial_state["agents"],
+        start_apples_map=initial_state["apples"],
+        start_agent_positions=agent_positions,
+    )
     return orchard
 
 
-def monte_carlo(seed=42069):
-    logger.info(f"Starting Monte Carlo simulation with seed={seed}")
-    logger.info(f"Config: NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, TRAJECTORY_LENGTH={TRAJECTORY_LENGTH}")
-
-    try:
-        reward_module = Reward(REWARD, NUM_AGENTS)
-        orchard = init_state(reward_module)
-
-        # Initialize DS to store results
-        rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
-
-        set_all_seeds(seed)
-
-        for step in range(TRAJECTORY_LENGTH):
-            # act
-            actor_idx = random.randint(0, NUM_AGENTS - 1)
-
-            # get reward
-            res = orchard.process_action(actor_idx, teleport(W))
-
-            # store data
-            rewards_by_agent[:, step] = res.reward_vector
-
-            # Log progress every 1000 steps
-            if step % 1000 == 0 and step > 0:
-                total_reward = rewards_by_agent[:, :step].sum()
-                avg_reward_per_agent = rewards_by_agent[:, :step].mean(axis=1)
-                logger.info(
-                    f"Step {step}/{TRAJECTORY_LENGTH}: "
-                    f"Total reward={total_reward:.2f}, "
-                    f"Avg per agent={avg_reward_per_agent.mean():.2f}"
-                )
-
-        # Final statistics
-        total_reward = rewards_by_agent.sum()
-        logger.info(f"Simulation complete. Total reward: {total_reward:.2f}")
-        logger.info(f"Reward by agent: {rewards_by_agent.sum(axis=1)}")
-        
-        # Save results with descriptive filename
-        filename = data_dir / f"monte-carlo/results_seed{seed}_agents{NUM_AGENTS}_w{W}_l{L}.npz"
-        np.savez_compressed(
-            filename,
-            rewards_by_agent=rewards_by_agent,
-            metadata=np.array({
-                'seed': seed,
-                'num_agents': NUM_AGENTS,
-                'width': W,
-                'length': L,
-                'trajectory_length': TRAJECTORY_LENGTH,
-                'timestamp': datetime.now().isoformat()
-            }, dtype=object)
-        )
-        logger.info(f"Results saved to {filename}")
-    except Exception as e:
-        logger.info(f"Exception at step {step}: {e}")
-        logger.info("Traceback:", exc_info=True)
-
-
-def generate_initial_state(reward_module):
+def generate_initial_state(reward_module: Reward) -> None:
     orchard = Orchard(W, L, NUM_AGENTS, reward_module, PROBABILITY_APPLE)
     orchard.set_positions()
-    np.savez(data_dir / f"init_state_reward_{reward_module.picker_r}", dict=orchard.get_state(), extra=orchard.agent_positions)
+    np.savez(
+        data_dir / f"init_state_reward_{reward_module.picker_r}",
+        dict=orchard.get_state(),
+        extra=orchard.agent_positions,
+        )
 
 
-def load_monte_carlo_results(
-        seed: int,
-        num_agents: int,
-        width: int,
-        length: int,
-) -> Tuple[np.ndarray, Dict]:
-    """
-    Load Monte Carlo simulation results from .npz file.
+# ---------------------------------------------------------------------
+# Monte Carlo env-based simulation
+# ---------------------------------------------------------------------
+def monte_carlo(seed: int = 42069) -> None:
+    set_all_seeds(seed)
+    logger.info(
+        f"[mc] Starting Monte Carlo simulation with seed={seed} | "
+        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={TRAJECTORY_LENGTH}"
+    )
 
-    Args:
-        seed: Seed value used in the simulation
-        num_agents: Number of agents in the simulation
-        width: Width of the orchard
-        length: Length of the orchard
-        results_dir: Directory containing results files
+    reward_module = Reward(REWARD, NUM_AGENTS)
+    orchard = init_state(reward_module)
 
-    Returns:
-        Tuple of (rewards_by_agent array, metadata dict)
-    """
-    filepath = data_dir / f"monte-carlo/results_seed{seed}_agents{num_agents}_w{width}_l{length}.npz"
+    rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
 
-    with np.load(filepath, allow_pickle=True) as data:
-        rewards_by_agent = data['rewards_by_agent'].copy()
-        metadata = data['metadata'].item() if 'metadata' in data else {}
+    for step in range(TRAJECTORY_LENGTH):
+        actor_idx = random.randint(0, NUM_AGENTS - 1)
+        res = orchard.process_action(actor_idx, teleport(W))
+        rewards_by_agent[:, step] = res.reward_vector
 
-    return rewards_by_agent, metadata
+        log_progress(step, rewards_by_agent)
 
-# 1. load reward stream for each seed
-# 2. for each agent idx, compute the value of that state
-# 3. store that for that agent => need hash map
-# 4. after done iterating all seeds, we have 1000 data points -> they form a distribution
-# 5. visualize it per agent
+    total_reward = rewards_by_agent.sum()
+    logger.info(f"[mc] Simulation complete. Total reward: {total_reward:.2f}")
+    logger.info(f"[mc] Reward by agent: {rewards_by_agent.sum(axis=1)}")
 
-def compute_value(reward_by_agent):
-    res = np.array([0, 0, 0, 0])
-    for i in range(NUM_AGENTS):
-        stream = reward_by_agent[i:]
-        for j in range(stream):
-            res[i][j] = res[i] + DISCOUNT_FACTOR * stream[j]
-    
-    return res
+    save_results("monte-carlo", seed, rewards_by_agent)
 
 
+# ---------------------------------------------------------------------
+# IID baseline simulation
+# ---------------------------------------------------------------------
+def iid(seed: int) -> None:
+    set_all_seeds(seed)
+    logger.info(
+        f"[iid] Starting IID simulation with seed={seed} | "
+        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={TRAJECTORY_LENGTH}"
+    )
+
+    rewards_by_agent = np.zeros((NUM_AGENTS, TRAJECTORY_LENGTH), dtype=float)
+    reward_other = (1 - REWARD) // (NUM_AGENTS - 1)
+
+    for step in range(TRAJECTORY_LENGTH):
+        actor_id = random.randint(0, NUM_AGENTS - 1)
+
+        picker_reward = REWARD if random.random() < PROBABILITY_APPLE else 0.0
+        if picker_reward != 0.0:
+            # everyone gets updated this step
+            rewards = np.full(NUM_AGENTS, reward_other, dtype=float)
+            rewards[actor_id] = REWARD
+            rewards_by_agent[:, step] = rewards
+
+        log_progress(step, rewards_by_agent)
+
+    total_reward = rewards_by_agent.sum()
+    logger.info(f"[iid] Simulation complete. Total reward: {total_reward:.2f}")
+    logger.info(f"[iid] Reward by agent: {rewards_by_agent.sum(axis=1)}")
+
+    save_results("iid", seed, rewards_by_agent)
 
 
-def run():
-    seeds = list(range(1000))
-
+# ---------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------
+def run(sim_fn=monte_carlo, kind="monte-carlo") -> None:
+    seeds = list(range(SEEDS))
     start = time.time()
-    logger.info(f"run() starting with {len(seeds)} seeds and {NUM_WORKERS} workers")
+    logger.info(
+        f"run({kind}) starting with {len(seeds)} seeds and {NUM_WORKERS} workers"
+    )
 
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
-        ex.map(monte_carlo, seeds)
+        ex.map(sim_fn, seeds)
 
-    end = time.time()
-    elapsed = end - start
-    logger.info(f"run() finished in {elapsed:.2f} seconds")
+    elapsed = time.time() - start
+    logger.info(f"run({kind}) finished in {elapsed:.2f} seconds")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--fn",
+        choices=["monte_carlo", "iid"],
+        default="monte_carlo",
+        help="Which simulation function to run.",
+    )
+    args = parser.parse_args()
+
+    if args.fn == "monte_carlo":
+        sim_fn = monte_carlo
+        kind = "monte-carlo"
+    else:
+        sim_fn = iid
+        kind = "iid"
+
+    run(sim_fn=sim_fn, kind=kind)
 
 
 if __name__ == "__main__":
-    # generate_initial_state(Reward(REWARD, NUM_AGENTS))
-    run()
+    main()
