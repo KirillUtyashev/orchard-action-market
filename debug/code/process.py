@@ -41,17 +41,54 @@ def compute_value(reward_by_agent: np.ndarray) -> np.ndarray:
     return returns
 
 
+# ------------- closed-form value -----------------
+
+def theoretical_value(
+        r_pick: float,
+        r_other: float,
+        p_apple: float,
+        num_agents: int,
+        gamma: float,
+) -> float:
+    """
+    Closed-form value V^{(i)} for a single agent, using
+
+        V^{(i)} = E[R_t^{(i)}] / (1 - gamma)
+
+    where
+        E[R_t^{(i)}] = r_pick * (1 / N) * P + r_other * (1 - 1 / N) * P.
+    """
+    expected_reward = (
+            r_pick * (1.0 / num_agents) * p_apple
+            + r_other * (1.0 - 1.0 / num_agents) * p_apple
+    )
+    return expected_reward / (1.0 - gamma)
+
+
 # ------------- plotting -----------------
 
-def plot_distributions(values: np.ndarray, kind: str) -> None:
+def plot_distributions(
+        values: np.ndarray,
+        kind: str,
+        r_pick: float,
+        r_other: float,
+) -> None:
     """
     values: shape (NUM_AGENTS, SEEDS)
     kind: 'MC' or 'IID' (used in titles / filenames)
     """
-    # experiment-specific folder inside plots
     exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{REWARD}"
     plots_dir = data_dir / "plots" / exp_name
     plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # same theoretical value for every agent in this symmetric setup
+    v_theory = theoretical_value(
+        r_pick=r_pick,
+        r_other=r_other,
+        p_apple=PROBABILITY_APPLE,
+        num_agents=NUM_AGENTS,
+        gamma=DISCOUNT_FACTOR,
+    )
 
     for agent_id in range(NUM_AGENTS):
         vals = values[agent_id]
@@ -62,13 +99,19 @@ def plot_distributions(values: np.ndarray, kind: str) -> None:
         print(f"[{kind}] Agent {agent_id}: mean={mean:.3f}, std={std:.3f}")
 
         plt.figure()
-        plt.hist(vals, bins=30, alpha=0.7, density=True)
+        plt.hist(vals, bins=30, alpha=0.7, density=True, color="C0")
 
         x = np.linspace(vals.min(), vals.max(), 200)
         pdf = norm.pdf(x, loc=mean, scale=std)
         plt.plot(x, pdf, "k-", linewidth=2)
 
-        plt.title(f"{kind} – Agent {agent_id} returns\nmean={mean:.3f}, std={std:.3f}")
+        # red vertical line for closed-form value
+        plt.axvline(v_theory, color="red", linestyle="--", linewidth=2)
+
+        plt.title(
+            f"{kind} – Agent {agent_id} returns\n"
+            f"mean={mean:.3f}, std={std:.3f}, theory={v_theory:.3f}"
+        )
         plt.xlabel("Return")
         plt.ylabel("Density")
         plt.tight_layout()
@@ -101,18 +144,9 @@ def load_returns_for_experiment(kind: str, reward: float) -> np.ndarray:
 
 
 def compare_mc_iid_by_reward(rewards: Sequence[float]) -> None:
-    """
-    For each reward value and each agent, compute:
-      mean(MC) - mean(IID) and its std (assuming independent normals),
-    then plot as points with vertical error bars.
-
-    X-axis: reward values
-    Colors: one per agent (0,1,2,3).
-    """
     rewards = list(rewards)
     rewards_sorted = sorted(rewards)
 
-    # shape: (NUM_AGENTS, len(rewards))
     diff_means = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
     diff_stds = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
 
@@ -120,42 +154,60 @@ def compare_mc_iid_by_reward(rewards: Sequence[float]) -> None:
         mc_returns = load_returns_for_experiment("monte-carlo", r)
         iid_returns = load_returns_for_experiment("iid", r)
 
-        # stats across seeds
-        mc_mean = mc_returns.mean(axis=1)             # (NUM_AGENTS,)
+        mc_mean = mc_returns.mean(axis=1)
         mc_std = mc_returns.std(axis=1, ddof=0)
         iid_mean = iid_returns.mean(axis=1)
         iid_std = iid_returns.std(axis=1, ddof=0)
 
         diff_means[:, r_idx] = mc_mean - iid_mean
-        # std of difference, assuming independence
         diff_stds[:, r_idx] = np.sqrt(mc_std ** 2 + iid_std ** 2)
 
-    # plot
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(7, 4))
 
     colors = ["tab:red", "tab:green", "tab:blue", "tab:purple"]
 
+    # ---- categorical x positions ----
+    x_base = np.arange(len(rewards_sorted))
+
+    base_offset = 0.05
+    offsets = np.linspace(-base_offset, base_offset, NUM_AGENTS)
+
     for agent_id in range(NUM_AGENTS):
+        x_positions = x_base + offsets[agent_id]
+
         ax.errorbar(
-            rewards_sorted,
+            x_positions,
             diff_means[agent_id],
             yerr=diff_stds[agent_id],
             fmt="o",
+            markersize=6,
             color=colors[agent_id % len(colors)],
+            ecolor=colors[agent_id % len(colors)],
+            elinewidth=1.5,
             capsize=3,
+            linestyle="none",
             label=f"Agent {agent_id}",
+            alpha=0.9,
         )
 
-    ax.axhline(0.0, color="gray", linestyle="--", linewidth=1)
+    # ticks labeled by reward values
+    ax.set_xticks(x_base)
+    ax.set_xticklabels([f"{r:.2f}" for r in rewards_sorted])
+
+    ax.axhline(0.0, color="red", linestyle=":", linewidth=1.5)
+
+    ax.grid(True, axis="y", linestyle="-", linewidth=0.5, alpha=0.3)
+    ax.grid(False, axis="x")
+
     ax.set_xlabel("Reward")
     ax.set_ylabel("MC − IID value")
-    ax.set_title("Difference in value between Monte Carlo env and IID baseline")
-    ax.legend(title="Agent", loc="best")
+    ax.set_title("Difference in value: Monte Carlo vs IID")
+
+    ax.legend(title="Agent", frameon=False, ncol=NUM_AGENTS)
     fig.tight_layout()
 
     plots_root = data_dir / "plots"
     plots_root.mkdir(parents=True, exist_ok=True)
-    # experiment-level name doesn’t include reward since we sweep them
     exp_name = f"MC_vs_IID-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}"
     out_path = plots_root / f"{exp_name}.png"
     fig.savefig(out_path, dpi=300)
@@ -177,10 +229,14 @@ def process():
         iid_rewards = load_results("iid", seed, NUM_AGENTS, W, L)
         iid_vals[:, seed] = compute_value(iid_rewards)
 
-    # Plot both
-    plot_distributions(mc_vals, kind="MC")
-    plot_distributions(iid_vals, kind="IID")
+    # example: plug in your actual r_pick and r_other here
+    r_pick = REWARD
+    r_other = (1 - r_pick) / (NUM_AGENTS - 1)
+
+    plot_distributions(mc_vals, kind="MC", r_pick=r_pick, r_other=r_other)
+    plot_distributions(iid_vals, kind="IID", r_pick=r_pick, r_other=r_other)
 
 
 if __name__ == "__main__":
-    process()
+    compare_mc_iid_by_reward([-5, -1])
+    # process()
