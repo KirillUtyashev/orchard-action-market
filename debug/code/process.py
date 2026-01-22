@@ -17,6 +17,11 @@ from config import (
 from debug.code.monte_carlo import StateType
 
 ACTOR_ID = 0
+State = str  # or your Enum type if you have one
+ValueGenerator = Callable[[float, State], tuple[np.ndarray, np.ndarray]]
+# returns: (mean_by_agent, std_by_agent), each shape (NUM_AGENTS,)
+
+
 
 # ------------- loading -----------------
 def load_results(
@@ -37,10 +42,11 @@ def load_results(
 
 # ------------- value computation -----------------
 
-def compute_value(reward_by_agent: np.ndarray) -> np.ndarray:
-    num_agents, T = reward_by_agent.shape
-    discounts = DISCOUNT_FACTOR ** np.arange(T)
-    returns = (reward_by_agent * discounts).sum(axis=1)
+def compute_value(reward_by_agent: np.ndarray, trajectory_length: int | None = None) -> np.ndarray:
+    num_agents, T_total = reward_by_agent.shape
+    T_eff = T_total if trajectory_length is None else min(int(trajectory_length), T_total)
+    discounts = DISCOUNT_FACTOR ** np.arange(T_eff)
+    returns = (reward_by_agent[:, :T_eff] * discounts).sum(axis=1)
     return returns
 
 
@@ -133,12 +139,12 @@ def plot_distributions(
         plt.close()
 
 
-def load_returns_for_experiment(kind: str, reward: float, state: StateType) -> np.ndarray:
-    """
-    Load discounted returns across seeds for one (kind, reward).
-
-    Returns: array of shape (NUM_AGENTS, SEEDS)
-    """
+def load_returns_for_experiment(
+        kind: str,
+        reward: float,
+        state: StateType,
+        trajectory_length: int | None = None,
+) -> np.ndarray:
     folder = f"{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{reward}"
     returns = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
 
@@ -147,10 +153,7 @@ def load_returns_for_experiment(kind: str, reward: float, state: StateType) -> n
         with np.load(filepath, allow_pickle=True) as data:
             rewards_by_agent = data["rewards_by_agent"].copy()
 
-        # compute discounted return per agent
-        num_agents, T = rewards_by_agent.shape
-        discounts = DISCOUNT_FACTOR ** np.arange(T)
-        returns[:, seed] = (rewards_by_agent * discounts).sum(axis=1)
+        returns[:, seed] = compute_value(rewards_by_agent, trajectory_length=trajectory_length)
 
     return returns
 
@@ -223,9 +226,109 @@ def plot_mean0_minus_meani_from_agent_means(
     plt.close(fig)
 
 
-State = str  # or your Enum type if you have one
-ValueGenerator = Callable[[float, State], tuple[np.ndarray, np.ndarray]]
-# returns: (mean_by_agent, std_by_agent), each shape (NUM_AGENTS,)
+def plot_mc_prefix_bias_vs_theory(
+        trajectory_lengths: Sequence[int],
+        *,
+        rewards: Sequence[float],
+        state: StateType,
+        kind: str = "monte-carlo",
+        dpi: int = 300,
+        fmt: str = "png",
+) -> None:
+    Ts = np.array(sorted(set(int(t) for t in trajectory_lengths)), dtype=int)
+
+    plots_root = data_dir / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    # Which figures to make (label -> which agents appear in that figure)
+    if state == "none_on_apples":
+        plot_specs = [("agents0-4", [0, 1, 2, 3])]
+    elif state == "agent_on_apple":
+        plot_specs = [("agent0", [0]), ("agents1-3", [1, 2, 3])]
+    else:
+        raise ValueError(f"Unexpected state: {state}")
+
+    colors = ["tab:red", "tab:green", "tab:blue", "tab:purple", "tab:orange"]
+
+    for r_pick in rewards:
+        r_other = (1.0 - r_pick) / (NUM_AGENTS - 1)
+
+        for fig_label, agent_ids in plot_specs:
+            fig, ax = plt.subplots(figsize=(7, 4))
+
+            # --- x-offsets so agent series don't overlap at same T ---
+            x_base = Ts.astype(float)
+            base_offset = 0.08 * (Ts.max() - Ts.min() + 1) / max(len(Ts), 1)  # heuristic scale
+            offsets = np.linspace(-base_offset, base_offset, len(agent_ids)) if len(agent_ids) > 1 else np.array([0.0])  # [web:63]
+
+            for j_agent, agent_id in enumerate(agent_ids):
+                v_theory = theoretical_value(
+                    r_pick=r_pick,
+                    r_other=r_other,
+                    p_apple=PROBABILITY_APPLE,
+                    num_agents=NUM_AGENTS,
+                    gamma=DISCOUNT_FACTOR,
+                    state=state,
+                    agent_id=agent_id,
+                )
+
+                diffs = np.zeros(len(Ts), dtype=float)
+                errs = np.zeros(len(Ts), dtype=float)
+
+                for jT, T in enumerate(Ts):
+                    vals = np.zeros(SEEDS, dtype=float)
+
+                    for seed in range(SEEDS):
+                        rewards_by_agent = load_results(
+                            kind=kind,
+                            seed=seed,
+                            num_agents=NUM_AGENTS,
+                            width=W,
+                            reward=r_pick,
+                            state=state,
+                        )
+
+                        T_eff = min(T, rewards_by_agent.shape[1])
+                        discounts = DISCOUNT_FACTOR ** np.arange(T_eff)
+                        returns_by_agent = (rewards_by_agent[:, :T_eff] * discounts).sum(axis=1)
+                        vals[seed] = returns_by_agent[agent_id]
+
+                    mean = vals.mean()
+                    std = vals.std(ddof=0)  # NumPy default ddof=0 [web:24]
+
+                    diffs[jT] = v_theory - mean
+                    errs[jT] = std
+
+                x_positions = x_base + offsets[j_agent]
+                c = colors[agent_id % len(colors)]
+
+                ax.errorbar(
+                    x_positions,
+                    diffs,
+                    yerr=errs,
+                    fmt="o",
+                    markersize=6,
+                    color=c,
+                    ecolor=c,
+                    elinewidth=1.5,
+                    capsize=3,
+                    linestyle="none",
+                    label=f"Agent {agent_id}",
+                    alpha=0.9,
+                )  # errorbar supports custom x and yerr [web:32]
+
+            ax.axhline(0.0, color="black", linewidth=1)
+            ax.set_xlabel("Trajectory length (prefix T)")
+            ax.set_ylabel("Theory − empirical mean return")
+            ax.set_title(f"MC hypothesis check ({state}, {fig_label}), r_pick={r_pick}")
+            ax.grid(True, axis="y", alpha=0.3)
+            ax.grid(False, axis="x")
+            ax.legend(title="Agent", frameon=False, ncols=min(len(agent_ids), 5))  # ncols supported [web:44]
+            fig.tight_layout()
+
+            out_path = plots_root / f"mc_prefix_bias_vs_theory-{state}-{fig_label}-r{r_pick}.{fmt}"
+            fig.savefig(out_path, dpi=dpi)
+            plt.close(fig)  # close figures in loops [web:51]
 
 
 def compare_by_reward(
@@ -305,9 +408,9 @@ def compare_by_reward(
             plot_agents(list(range(NUM_AGENTS)), "all_agents")
 
 
-def empirical_generator(kind: str) -> ValueGenerator:
+def empirical_generator(kind: str, *, trajectory_length: int | None) -> ValueGenerator:
     def gen(r: float, state: State) -> tuple[np.ndarray, np.ndarray]:
-        returns = load_returns_for_experiment(kind, r, state)  # shape: (NUM_AGENTS, num_seeds)
+        returns = load_returns_for_experiment(kind, r, state, trajectory_length=trajectory_length)
         mean = returns.mean(axis=1)
         std = returns.std(axis=1, ddof=0)
         return mean, std
@@ -339,21 +442,18 @@ def theoretical_generator(*, gamma: float) -> ValueGenerator:
 
 # ------------- driver -----------------
 
-def process(reward):
+def process(reward, trajectory_length: int | None = None):
     for state in ["none_on_apples", "agent_on_apple"]:
-        # Monte Carlo values
         mc_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
         for seed in range(SEEDS):
             mc_rewards = load_results("monte-carlo", seed, NUM_AGENTS, W, reward, state)
-            mc_vals[:, seed] = compute_value(mc_rewards)
+            mc_vals[:, seed] = compute_value(mc_rewards, trajectory_length=trajectory_length)
 
-        # IID values
         iid_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
         for seed in range(SEEDS):
             iid_rewards = load_results("iid", seed, NUM_AGENTS, W, reward, state)
-            iid_vals[:, seed] = compute_value(iid_rewards)
+            iid_vals[:, seed] = compute_value(iid_rewards, trajectory_length=trajectory_length)
 
-        # example: plug in your actual r_pick and r_other here
         r_pick = reward
         r_other = (1 - r_pick) / (NUM_AGENTS - 1)
 
@@ -361,10 +461,10 @@ def process(reward):
         plot_distributions(iid_vals, kind="IID", r_pick=r_pick, r_other=r_other, state=state)
 
 
-def compare(rewards):
+def compare(rewards, trajectory_length: int | None = None):
     STATES = ["none_on_apples", "agent_on_apple"]
-    mc_gen = empirical_generator("monte-carlo")
-    iid_gen = empirical_generator("iid")
+    mc_gen = empirical_generator("monte-carlo", trajectory_length=trajectory_length)
+    iid_gen = empirical_generator("iid", trajectory_length=trajectory_length)
     th_gen = theoretical_generator(gamma=DISCOUNT_FACTOR)
 
     compare_by_reward(rewards, gen_a=mc_gen, gen_b=iid_gen, label_a="MC", label_b="IID",
@@ -377,18 +477,30 @@ def compare(rewards):
     plot_mean0_minus_meani_from_agent_means(rewards, kind="iid")
 
 
+def get_path_info():
+    pass
+
+
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--reward", required=True, help="Reward.", type=int)
     parser.add_argument(
-        "--reward",
-        required=True,
-        help="Reward.",
-    )
+        "--trajectory_length",
+        type=int,
+        default=None,
+        help="Optional prefix length T to truncate each trajectory before discounting (default: full horizon).",
+    )  # default=None when omitted [web:68]
 
     args = parser.parse_args()
-    process(int(args.reward))
+    process(args.reward, trajectory_length=args.trajectory_length)
+    compare([args.reward], trajectory_length=args.trajectory_length)
 
 
 if __name__ == "__main__":
+    main()
+    plot_mc_prefix_bias_vs_theory(
+        trajectory_lengths=[10, 20, 50, 100],
+        rewards=[-1],
+        state="none_on_apples"
+    )
     compare([-1])
-    # main()

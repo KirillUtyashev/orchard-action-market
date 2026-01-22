@@ -1,6 +1,5 @@
 import argparse
 import itertools
-import os
 import time
 import logging
 import random
@@ -165,7 +164,7 @@ def generate_initial_state(
 # ---------------------------------------------------------------------
 # Monte Carlo env-based simulation
 # ---------------------------------------------------------------------
-def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: StateType = "none_on_apples") -> None:
+def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: StateType = "none_on_apples", run_id=0) -> None:
     set_all_seeds(seed)
     logger.info(
         f"[mc] Starting Monte Carlo simulation with seed={seed} | "
@@ -184,13 +183,13 @@ def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: S
     logger.info(f"[mc] Simulation complete. Total reward: {total_reward:.2f}")
     logger.info(f"[mc] Reward by agent: {rewards_by_agent.sum(axis=1)}")
 
-    save_results("monte-carlo", seed, rewards_by_agent, trajectory_length, reward, state)
+    save_results("monte-carlo", run_id, rewards_by_agent, trajectory_length, reward, state)
 
 
 # ---------------------------------------------------------------------
 # IID baseline simulation
 # ---------------------------------------------------------------------
-def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_apple") -> None:
+def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_apple", run_id=0) -> None:
     set_all_seeds(seed)
     logger.info(
         f"[iid] Starting IID simulation with seed={seed} | "
@@ -215,24 +214,32 @@ def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_ap
     logger.info(f"[iid] Simulation complete. Total reward: {total_reward:.2f}")
     logger.info(f"[iid] Reward by agent: {rewards_by_agent.sum(axis=1)}")
 
-    save_results("iid", seed, rewards_by_agent, trajectory_length, reward, state)
+    save_results("iid", run_id, rewards_by_agent, trajectory_length, reward, state)
 
 
 # ---------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------
-def run(sim_fn=monte_carlo, kind="monte-carlo", trajectory_length=100000, reward=-1, state_type: StateType = "agent_on_apple") -> None:
-    seeds = list(range(SEEDS))
+def run(sim_fn=monte_carlo, kind="monte-carlo", trajectory_length=100000, reward=-1,
+        state_type: StateType = "agent_on_apple", seedgen_seed: int | None = None) -> None:
+
+    if seedgen_seed is not None:
+        random.seed(seedgen_seed)
+
+    seeds = random.sample(range(1, 10_000_000), SEEDS)
+    run_ids = list(range(SEEDS))
+
     trajectory_lengths = itertools.repeat(trajectory_length)
     rewards = itertools.repeat(reward)
     states = itertools.repeat(state_type)
+    run_ids_it = iter(run_ids)
+
     start = time.time()
-    logger.info(
-        f"run({kind}) starting with {len(seeds)} seeds and {NUM_WORKERS} workers"
-    )
+    logger.info(f"run({kind}) starting with {len(seeds)} seeds and {NUM_WORKERS} workers")
 
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
-        ex.map(sim_fn, seeds, trajectory_lengths, rewards, states)
+        # sim_fn(seed, trajectory_length, reward, state, run_id)
+        list(ex.map(sim_fn, seeds, trajectory_lengths, rewards, states, run_ids_it))
 
     elapsed = time.time() - start
     logger.info(f"run({kind}) finished in {elapsed:.2f} seconds")
