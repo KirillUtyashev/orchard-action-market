@@ -1,12 +1,12 @@
+import argparse
 from typing import Dict, Sequence, Tuple
 import numpy as np
-import os
+from collections.abc import Callable, Sequence
 from scipy.stats import norm
 import matplotlib.pyplot as plt
 
 from config import (
     NUM_AGENTS,
-    REWARD,
     W,
     L,
     DISCOUNT_FACTOR,
@@ -14,19 +14,22 @@ from config import (
     data_dir,
     SEEDS,
 )
+from debug.code.monte_carlo import StateType
 
+ACTOR_ID = 0
 
 # ------------- loading -----------------
-
 def load_results(
         kind: str,
         seed: int,
         num_agents: int,
         width: int,
-        length: int,
+        reward,
+        state
 ) -> np.ndarray:
-    folder = f"{kind}-{PROBABILITY_APPLE:.2f}-{num_agents}-{width}-{REWARD}"
-    filepath = data_dir / folder / f"results_seed{seed}.npz"
+    out_dir = data_dir / state / kind
+    folder = f"{PROBABILITY_APPLE:.2f}-{num_agents}-{width}-{reward}"
+    filepath = out_dir / folder / f"results_seed{seed}.npz"
     with np.load(filepath, allow_pickle=True) as data:
         rewards_by_agent = data["rewards_by_agent"].copy()
     return rewards_by_agent
@@ -49,6 +52,8 @@ def theoretical_value(
         p_apple: float,
         num_agents: int,
         gamma: float,
+        state: StateType,
+        agent_id: int
 ) -> float:
     """
     Closed-form value V^{(i)} for a single agent, using
@@ -58,11 +63,17 @@ def theoretical_value(
     where
         E[R_t^{(i)}] = r_pick * (1 / N) * P + r_other * (1 - 1 / N) * P.
     """
-    expected_reward = (
+    expected_reward_future = (
             r_pick * (1.0 / num_agents) * p_apple
             + r_other * (1.0 - 1.0 / num_agents) * p_apple
     )
-    return expected_reward / (1.0 - gamma)
+    future_value = (gamma * expected_reward_future) / (1.0 - gamma)
+    if state == "none_on_apples":
+        return future_value
+    elif state == "agent_on_apple" and agent_id == ACTOR_ID:
+        return r_pick + future_value
+    else:
+        return r_other + future_value
 
 
 # ------------- plotting -----------------
@@ -72,25 +83,26 @@ def plot_distributions(
         kind: str,
         r_pick: float,
         r_other: float,
+        state
 ) -> None:
     """
     values: shape (NUM_AGENTS, SEEDS)
     kind: 'MC' or 'IID' (used in titles / filenames)
     """
-    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{REWARD}"
-    plots_dir = data_dir / "plots" / exp_name
+    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{r_pick}"
+    plots_dir = data_dir / "plots" / state / kind / exp_name
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    # same theoretical value for every agent in this symmetric setup
-    v_theory = theoretical_value(
-        r_pick=r_pick,
-        r_other=r_other,
-        p_apple=PROBABILITY_APPLE,
-        num_agents=NUM_AGENTS,
-        gamma=DISCOUNT_FACTOR,
-    )
-
     for agent_id in range(NUM_AGENTS):
+        v_theory = theoretical_value(
+            r_pick=r_pick,
+            r_other=r_other,
+            p_apple=PROBABILITY_APPLE,
+            num_agents=NUM_AGENTS,
+            gamma=DISCOUNT_FACTOR,
+            state=state,
+            agent_id=agent_id
+        )
         vals = values[agent_id]
 
         mean = vals.mean()
@@ -121,17 +133,17 @@ def plot_distributions(
         plt.close()
 
 
-def load_returns_for_experiment(kind: str, reward: float) -> np.ndarray:
+def load_returns_for_experiment(kind: str, reward: float, state: StateType) -> np.ndarray:
     """
     Load discounted returns across seeds for one (kind, reward).
 
     Returns: array of shape (NUM_AGENTS, SEEDS)
     """
-    folder = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{reward}"
+    folder = f"{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{reward}"
     returns = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
 
     for seed in range(SEEDS):
-        filepath = data_dir / folder / f"results_seed{seed}.npz"
+        filepath = data_dir / state / kind / folder / f"results_seed{seed}.npz"
         with np.load(filepath, allow_pickle=True) as data:
             rewards_by_agent = data["rewards_by_agent"].copy()
 
@@ -143,100 +155,240 @@ def load_returns_for_experiment(kind: str, reward: float) -> np.ndarray:
     return returns
 
 
-def compare_mc_iid_by_reward(rewards: Sequence[float]) -> None:
-    rewards = list(rewards)
+def plot_mean0_minus_meani_from_agent_means(
+        rewards,
+        kind: str,                     # "monte-carlo" or "iid"
+        baseline_agent: int = 0,
+        dpi: int = 300,
+        fmt: str = "png",
+) -> None:
+    state = "agent_on_apple"
     rewards_sorted = sorted(rewards)
+    other_agents = [i for i in range(NUM_AGENTS) if i != baseline_agent]
 
-    diff_means = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
-    diff_stds = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+    mean_by_agent = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+    std_by_agent = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+
+    diff_of_means = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+    diff_err = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
 
     for r_idx, r in enumerate(rewards_sorted):
-        mc_returns = load_returns_for_experiment("monte-carlo", r)
-        iid_returns = load_returns_for_experiment("iid", r)
+        returns = load_returns_for_experiment(kind, r, state)  # (NUM_AGENTS, num_seeds)
 
-        mc_mean = mc_returns.mean(axis=1)
-        mc_std = mc_returns.std(axis=1, ddof=0)
-        iid_mean = iid_returns.mean(axis=1)
-        iid_std = iid_returns.std(axis=1, ddof=0)
+        # mean/std of VALUES for each agent (across seeds) [web:193]
+        mean_by_agent[:, r_idx] = returns.mean(axis=1)
+        std_by_agent[:, r_idx] = returns.std(axis=1, ddof=0)  # [web:193]
 
-        diff_means[:, r_idx] = mc_mean - iid_mean
-        diff_stds[:, r_idx] = np.sqrt(mc_std ** 2 + iid_std ** 2)
+        for i in other_agents:
+            # "literally subtract the means"
+            diff_of_means[i, r_idx] = mean_by_agent[baseline_agent, r_idx] - mean_by_agent[i, r_idx]
+
+            # error bar from the two stds (simple propagation-style) [web:193]
+            diff_err[i, r_idx] = np.sqrt(std_by_agent[baseline_agent, r_idx]**2 + std_by_agent[i, r_idx]**2)
 
     fig, ax = plt.subplots(figsize=(7, 4))
+    colors = ["tab:green", "tab:blue", "tab:purple", "tab:orange"]
 
-    colors = ["tab:red", "tab:green", "tab:blue", "tab:purple"]
-
-    # ---- categorical x positions ----
     x_base = np.arange(len(rewards_sorted))
+    offsets = np.linspace(-0.05, 0.05, len(other_agents))
 
-    base_offset = 0.05
-    offsets = np.linspace(-base_offset, base_offset, NUM_AGENTS)
-
-    for agent_id in range(NUM_AGENTS):
-        x_positions = x_base + offsets[agent_id]
-
+    for j, i in enumerate(other_agents):
+        x = x_base + offsets[j]
         ax.errorbar(
-            x_positions,
-            diff_means[agent_id],
-            yerr=diff_stds[agent_id],
+            x,
+            diff_of_means[i],
+            yerr=diff_err[i],
             fmt="o",
-            markersize=6,
-            color=colors[agent_id % len(colors)],
-            ecolor=colors[agent_id % len(colors)],
-            elinewidth=1.5,
-            capsize=3,
             linestyle="none",
-            label=f"Agent {agent_id}",
+            capsize=3,
+            color=colors[i % len(colors)],
+            ecolor=colors[i % len(colors)],
+            label=f"mean(V{baseline_agent}) − mean(V{i})",
             alpha=0.9,
         )
 
-    # ticks labeled by reward values
     ax.set_xticks(x_base)
     ax.set_xticklabels([f"{r:.2f}" for r in rewards_sorted])
+    ax.set_xlabel("Reward (r_picker)")
+    ax.set_ylabel("Difference of means")
+    ax.set_title(f"{state}: mean(V0) − mean(Vi) ({kind})")
+    ax.grid(True, axis="y", alpha=0.3)
+    ax.legend(frameon=False)
 
-    ax.axhline(0.0, color="red", linestyle=":", linewidth=1.5)
-
-    ax.grid(True, axis="y", linestyle="-", linewidth=0.5, alpha=0.3)
-    ax.grid(False, axis="x")
-
-    ax.set_xlabel("Reward")
-    ax.set_ylabel("MC − IID value")
-    ax.set_title("Difference in value: Monte Carlo vs IID")
-
-    ax.legend(title="Agent", frameon=False, ncol=NUM_AGENTS)
     fig.tight_layout()
-
     plots_root = data_dir / "plots"
     plots_root.mkdir(parents=True, exist_ok=True)
-    exp_name = f"MC_vs_IID-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}"
-    out_path = plots_root / f"{exp_name}.png"
-    fig.savefig(out_path, dpi=300)
+    out_path = plots_root / f"diff_of_means_V0_minus_Vi-{kind}-{state}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}.{fmt}"
+    fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
+
+
+State = str  # or your Enum type if you have one
+ValueGenerator = Callable[[float, State], tuple[np.ndarray, np.ndarray]]
+# returns: (mean_by_agent, std_by_agent), each shape (NUM_AGENTS,)
+
+
+def compare_by_reward(
+        rewards: Sequence[float],
+        *,
+        gen_a: ValueGenerator,
+        gen_b: ValueGenerator,
+        label_a: str,
+        label_b: str,
+        states: Sequence[State],
+        split_state: State = "agent_on_apple",
+) -> None:
+    rewards_sorted = sorted(rewards)
+
+    for state in states:
+        diff_means = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+        diff_stds = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
+
+        for r_idx, r in enumerate(rewards_sorted):
+            a_mean, a_std = gen_a(r, state)
+            b_mean, b_std = gen_b(r, state)
+
+            diff_means[:, r_idx] = a_mean - b_mean
+            diff_stds[:, r_idx] = np.sqrt(a_std**2 + b_std**2)
+
+        def plot_agents(agent_ids: list[int], suffix: str) -> None:
+            fig, ax = plt.subplots(figsize=(7, 4))  # returns (fig, ax) [web:148]
+            colors = ["tab:red", "tab:green", "tab:blue", "tab:purple"]
+
+            x_base = np.arange(len(rewards_sorted))
+            base_offset = 0.05
+            offsets = np.linspace(-base_offset, base_offset, len(agent_ids))
+
+            for j, agent_id in enumerate(agent_ids):
+                x_positions = x_base + offsets[j]
+                ax.errorbar(  # yerr draws vertical errorbars [web:141]
+                    x_positions,
+                    diff_means[agent_id],
+                    yerr=diff_stds[agent_id],
+                    fmt="o",
+                    markersize=6,
+                    color=colors[agent_id % len(colors)],
+                    ecolor=colors[agent_id % len(colors)],
+                    elinewidth=1.5,
+                    capsize=3,
+                    linestyle="none",
+                    label=f"Agent {agent_id}",
+                    alpha=0.9,
+                )
+
+            ax.set_xticks(x_base)
+            ax.set_xticklabels([f"{r:.2f}" for r in rewards_sorted])
+            ax.axhline(0.0, color="red", linestyle=":", linewidth=1.5)
+
+            ax.grid(True, axis="y", linestyle="-", linewidth=0.5, alpha=0.3)
+            ax.grid(False, axis="x")
+
+            ax.set_xlabel("Reward")
+            ax.set_ylabel(f"{label_a} − {label_b} value")
+            ax.set_title(f"Difference in value: {label_a} vs {label_b} ({state}, {suffix})")
+            ax.legend(title="Agent", frameon=False, ncol=min(len(agent_ids), 4))
+
+            fig.tight_layout()
+
+            plots_root = data_dir / "plots"
+            plots_root.mkdir(parents=True, exist_ok=True)
+            exp_name = f"{label_a}_vs_{label_b}-{state}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{suffix}"
+            out_path = plots_root / f"{exp_name}.png"
+
+            fig.savefig(out_path, dpi=300)  # dpi controls output resolution [web:146]
+            plt.close(fig)
+
+        if state == split_state:
+            plot_agents([0], "agent0")
+            plot_agents(list(range(1, NUM_AGENTS)), "agents1-plus")
+        else:
+            plot_agents(list(range(NUM_AGENTS)), "all_agents")
+
+
+def empirical_generator(kind: str) -> ValueGenerator:
+    def gen(r: float, state: State) -> tuple[np.ndarray, np.ndarray]:
+        returns = load_returns_for_experiment(kind, r, state)  # shape: (NUM_AGENTS, num_seeds)
+        mean = returns.mean(axis=1)
+        std = returns.std(axis=1, ddof=0)
+        return mean, std
+    return gen
+
+
+def theoretical_generator(*, gamma: float) -> ValueGenerator:
+    def gen(r_pick: float, state: State) -> tuple[np.ndarray, np.ndarray]:
+        r_other = (1.0 - r_pick) / (NUM_AGENTS - 1)  # adjust if your theory uses a different r_other
+        mean = np.array(
+            [
+                theoretical_value(
+                    r_pick=r_pick,
+                    r_other=r_other,
+                    p_apple=PROBABILITY_APPLE,
+                    num_agents=NUM_AGENTS,
+                    gamma=gamma,
+                    state=state,
+                    agent_id=i,
+                )
+                for i in range(NUM_AGENTS)
+            ],
+            dtype=float,
+        )
+        std = np.zeros(NUM_AGENTS, dtype=float)  # deterministic “no sampling noise”
+        return mean, std
+    return gen
 
 
 # ------------- driver -----------------
 
-def process():
-    # Monte Carlo values
-    mc_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
-    for seed in range(SEEDS):
-        mc_rewards = load_results("monte-carlo", seed, NUM_AGENTS, W, L)
-        mc_vals[:, seed] = compute_value(mc_rewards)
+def process(reward):
+    for state in ["none_on_apples", "agent_on_apple"]:
+        # Monte Carlo values
+        mc_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
+        for seed in range(SEEDS):
+            mc_rewards = load_results("monte-carlo", seed, NUM_AGENTS, W, reward, state)
+            mc_vals[:, seed] = compute_value(mc_rewards)
 
-    # IID values
-    iid_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
-    for seed in range(SEEDS):
-        iid_rewards = load_results("iid", seed, NUM_AGENTS, W, L)
-        iid_vals[:, seed] = compute_value(iid_rewards)
+        # IID values
+        iid_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
+        for seed in range(SEEDS):
+            iid_rewards = load_results("iid", seed, NUM_AGENTS, W, reward, state)
+            iid_vals[:, seed] = compute_value(iid_rewards)
 
-    # example: plug in your actual r_pick and r_other here
-    r_pick = REWARD
-    r_other = (1 - r_pick) / (NUM_AGENTS - 1)
+        # example: plug in your actual r_pick and r_other here
+        r_pick = reward
+        r_other = (1 - r_pick) / (NUM_AGENTS - 1)
 
-    plot_distributions(mc_vals, kind="MC", r_pick=r_pick, r_other=r_other)
-    plot_distributions(iid_vals, kind="IID", r_pick=r_pick, r_other=r_other)
+        plot_distributions(mc_vals, kind="MC", r_pick=r_pick, r_other=r_other, state=state)
+        plot_distributions(iid_vals, kind="IID", r_pick=r_pick, r_other=r_other, state=state)
+
+
+def compare(rewards):
+    STATES = ["none_on_apples", "agent_on_apple"]
+    mc_gen = empirical_generator("monte-carlo")
+    iid_gen = empirical_generator("iid")
+    th_gen = theoretical_generator(gamma=DISCOUNT_FACTOR)
+
+    compare_by_reward(rewards, gen_a=mc_gen, gen_b=iid_gen, label_a="MC", label_b="IID",
+                      states=STATES, split_state="agent_on_apple")
+
+    compare_by_reward(rewards, gen_a=mc_gen, gen_b=th_gen, label_a="MC", label_b="Theory",
+                      states=STATES, split_state="agent_on_apple")
+
+    plot_mean0_minus_meani_from_agent_means(rewards, kind="monte-carlo")
+    plot_mean0_minus_meani_from_agent_means(rewards, kind="iid")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reward",
+        required=True,
+        help="Reward.",
+    )
+
+    args = parser.parse_args()
+    process(int(args.reward))
 
 
 if __name__ == "__main__":
-    compare_mc_iid_by_reward([-5, -1])
-    # process()
+    compare([-1])
+    # main()

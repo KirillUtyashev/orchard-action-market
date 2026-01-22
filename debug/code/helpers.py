@@ -74,7 +74,6 @@ def teleport(n):
     new_j = np.random.randint(0, n - 1)
     return np.array([new_i, new_j])
 
-
 def convert_position(pos):
     if pos is not None:
         temp = np.zeros((len(pos), 1), dtype=int)
