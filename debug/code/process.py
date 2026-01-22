@@ -331,6 +331,91 @@ def plot_mc_prefix_bias_vs_theory(
             plt.close(fig)  # close figures in loops [web:51]
 
 
+def plot_return_std_vs_T(
+        trajectory_lengths: Sequence[int],
+        *,
+        rewards: Sequence[float],
+        state: StateType,
+        kind: str = "monte-carlo",
+        dpi: int = 300,
+        fmt: str = "png",
+) -> None:
+    Ts = np.array(sorted(set(int(t) for t in trajectory_lengths)), dtype=int)
+
+    plots_root = data_dir / "plots"
+    plots_root.mkdir(parents=True, exist_ok=True)
+
+    if state == "none_on_apples":
+        plot_specs = [("agents0-4", [0, 1, 2, 3])]   # adjust if you truly have 5 agents
+    elif state == "agent_on_apple":
+        plot_specs = [("agent0", [0]), ("agents1-3", [1, 2, 3])]
+    else:
+        raise ValueError(f"Unexpected state: {state}")
+
+    colors = ["tab:red", "tab:green", "tab:blue", "tab:purple", "tab:orange"]
+
+    for r_pick in rewards:
+        for fig_label, agent_ids in plot_specs:
+            fig, ax = plt.subplots(figsize=(7, 4))
+
+            # x-offsets so agent series don't overlap at same T
+            x_base = Ts.astype(float)
+            base_offset = 0.08 * (Ts.max() - Ts.min() + 1) / max(len(Ts), 1)
+            offsets = (
+                np.linspace(-base_offset, base_offset, len(agent_ids))
+                if len(agent_ids) > 1 else np.array([0.0])
+            )
+
+            for j_agent, agent_id in enumerate(agent_ids):
+                std_by_T = np.zeros(len(Ts), dtype=float)
+
+                for jT, T in enumerate(Ts):
+                    vals = np.zeros(SEEDS, dtype=float)
+
+                    for seed in range(SEEDS):
+                        rewards_by_agent = load_results(
+                            kind=kind,
+                            seed=seed,
+                            num_agents=NUM_AGENTS,
+                            width=W,
+                            reward=r_pick,
+                            state=state,
+                        )
+
+                        T_eff = min(T, rewards_by_agent.shape[1])
+                        discounts = DISCOUNT_FACTOR ** np.arange(T_eff)
+                        returns_by_agent = (rewards_by_agent[:, :T_eff] * discounts).sum(axis=1)
+                        vals[seed] = returns_by_agent[agent_id]
+
+                    std_by_T[jT] = vals.std(ddof=0)  # ddof default is 0 [web:27]
+
+                x_positions = x_base + offsets[j_agent]
+                c = colors[agent_id % len(colors)]
+
+                ax.plot(
+                    x_positions,
+                    std_by_T,
+                    marker="o",
+                    linestyle="none",
+                    markersize=6,
+                    color=c,
+                    label=f"Agent {agent_id}",
+                    alpha=0.9,
+                )
+
+            ax.set_xlabel("Trajectory length (prefix T)")
+            ax.set_ylabel("Std. dev. of return across seeds")
+            ax.set_title(f"Return std. dev. vs T ({kind}, {state}, {fig_label}), r_pick={r_pick}")
+            ax.grid(True, axis="y", alpha=0.3)
+            ax.grid(False, axis="x")
+            ax.legend(title="Agent", frameon=False, ncols=min(len(agent_ids), 5))
+            fig.tight_layout()
+
+            out_path = plots_root / f"return_std_vs_T-{kind}-{state}-{fig_label}-r{r_pick}.{fmt}"
+            fig.savefig(out_path, dpi=dpi)
+            plt.close(fig)
+
+
 def compare_by_reward(
         rewards: Sequence[float],
         *,
@@ -497,10 +582,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
     plot_mc_prefix_bias_vs_theory(
         trajectory_lengths=[10, 20, 50, 100],
         rewards=[-1],
         state="none_on_apples"
     )
-    compare([-1])
+
+    plot_return_std_vs_T(
+        trajectory_lengths=[10, 20, 50, 100],
+        rewards=[-1],
+        state="none_on_apples",
+        kind="monte-carlo",
+    )
+
+    # compare([-1])
