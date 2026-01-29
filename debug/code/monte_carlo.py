@@ -98,7 +98,7 @@ def init_state(reward_module: Reward, state_type: StateType, trajectory_length) 
         start_apples_map=initial_state["apples"],
         start_agent_positions=agent_positions,
     )
-    return orchard, reward_vector
+    return orchard, reward_vector, initial_state["actor"], initial_state["mode"]
 
 
 def generate_initial_state(
@@ -161,6 +161,135 @@ def generate_initial_state(
     logger.info(f"[generate_state] Initial state '{state_type}' saved to {out_path}")
 
 
+def generate_initial_state_supervised(
+        reward_module: Reward,
+        state_type: str,
+        *,
+        max_attempts: int = 10000,
+        actor_id: int = 0,
+        save=True
+):
+    """
+    Generates and saves one of the 6 abstract states used in the supervised-learning setup.
+
+    State types:
+        Z1  : mode=0, actor=self
+        Z0  : mode=0, actor=other
+        Y11 : mode=1, actor=self,  apple under actor
+        Y10 : mode=1, actor=self,  no apple under actor
+        Y01 : mode=1, actor=other, apple under actor
+        Y00 : mode=1, actor=other, no apple under actor
+    """
+
+    orchard = Orchard(W, L, NUM_AGENTS, reward_module, PROBABILITY_APPLE)
+
+    VALID_STATES = {"Z1", "Z0", "Y11", "Y10", "Y01", "Y00"}
+    if state_type not in VALID_STATES:
+        raise ValueError(f"Unknown state_type {state_type}. Must be one of {VALID_STATES}")
+
+    def satisfies(state: dict, agent_positions: np.ndarray) -> bool:
+        apples = state["apples"]
+        mode = state["mode"]
+
+        rows = agent_positions[:, 0]
+        cols = agent_positions[:, 1]
+        on_apples = apples[rows, cols].astype(bool)
+
+        actor_on_apple = bool(on_apples[actor_id])
+
+        left_any = on_apples[:actor_id].any()
+        right_any = on_apples[actor_id + 1:].any()
+        other_on_apple = left_any or right_any
+
+        actor_is_self = True
+        actor_is_other = False
+
+        # we assume orchard tracks current actor in state["actor"]
+        if "actor" in state:
+            actor_is_self = state["actor"] == actor_id
+            actor_is_other = not actor_is_self
+
+        match state_type:
+            # -------- mode 0 --------
+            case "Z1":   # m=0, a=1
+                return (mode == 0) and actor_is_self
+
+            case "Z0":   # m=0, a=0
+                return (mode == 0) and actor_is_other
+
+            # -------- mode 1 --------
+            case "Y11":  # m=1, a=1, b=1
+                return (mode == 1) and actor_is_self and actor_on_apple
+
+            case "Y10":  # m=1, a=1, b=0
+                return (mode == 1) and actor_is_self and (not actor_on_apple)
+
+            case "Y01":  # m=1, a=0, b=1
+                return (mode == 1) and actor_is_other and other_on_apple
+
+            case "Y00":  # m=1, a=0, b=0
+                return (mode == 1) and actor_is_other and (not other_on_apple)
+
+            case _:
+                return False
+
+    # ------------------------------------------------------------
+
+    for attempt in range(1, max_attempts + 1):
+        orchard.set_positions()
+        state = orchard.get_state()
+
+        # force mode explicitly to avoid accidental matches
+        if state_type.startswith("Z"):
+            state["mode"] = 0
+        else:
+            state["mode"] = 1
+
+        # force actor if your env allows it
+        if state_type in {"Z1", "Y11", "Y10"}:
+            state["actor_id"] = actor_id
+        else:
+            # pick some other agent
+            other = (actor_id + 1) % NUM_AGENTS
+            state["actor_id"] = other
+
+        agent_positions = np.asarray(orchard.agent_positions)
+
+        if satisfies(state, agent_positions):
+            logger.info(f"[generate_state] Generated '{state_type}' after {attempt} attempts")
+            break
+
+        orchard.clear_positions()
+
+    else:
+        raise RuntimeError(
+            f"[generate_state] Could not generate '{state_type}' after {max_attempts} attempts"
+        )
+
+    # ------------------------------------------------------------
+    # compute reward vector for this initial state
+
+    reward_vector = np.asarray(
+        reward_module.get_reward(state, actor_id, orchard.agent_positions[actor_id], state["mode"])
+    )
+    if save:
+        out_dir = data_dir / "states" / state_type
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        out_path = out_dir / f"init_state_reward_{reward_module.picker_r}_{state_type}.npz"
+
+        np.savez_compressed(
+            out_path,
+            dict=np.array(state, dtype=object),
+            extra=agent_positions,
+            reward_vector=reward_vector,
+        )
+        logger.info(f"[generate_state] Initial state '{state_type}' saved to {out_path}")
+        return None
+    else:
+        return state, agent_positions
+
+
 # ---------------------------------------------------------------------
 # Monte Carlo env-based simulation
 # ---------------------------------------------------------------------
@@ -176,8 +305,40 @@ def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: S
 
     for step in range(1, trajectory_length):
         actor_idx = random.randint(0, NUM_AGENTS - 1)
-        res = orchard.process_action(actor_idx, teleport(W))
+        res = orchard.process_action(actor_idx, teleport(W), mode=1)  # always act
         rewards_by_agent[:, step] = res.reward_vector
+
+    total_reward = rewards_by_agent.sum()
+    logger.info(f"[mc] Simulation complete. Total reward: {total_reward:.2f}")
+    logger.info(f"[mc] Reward by agent: {rewards_by_agent.sum(axis=1)}")
+
+    save_results("monte-carlo", run_id, rewards_by_agent, trajectory_length, reward, state)
+
+
+def monte_carlo_supervised(seed: int = 42069, trajectory_length=100000, reward=-1, state: StateType = "none_on_apples", run_id=0) -> None:
+    set_all_seeds(seed)
+    logger.info(
+        f"[mc] Starting Monte Carlo simulation with seed={seed} | "
+        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
+    )
+
+    reward_module = Reward(reward, NUM_AGENTS)
+    orchard, rewards_by_agent, init_actor, init_mode = init_state(reward_module, state, trajectory_length)
+    if init_mode == 0:
+        res = orchard.process_action(init_actor, teleport(W), mode=1)  # always act
+        rewards_by_agent[:, 1] = res.reward_vector
+        start, end = 2, trajectory_length
+    else:
+        start, end = 1, trajectory_length
+
+    for step in range(start, end, 2):
+        actor_idx = random.randint(0, NUM_AGENTS - 1)
+        res = orchard.process_action(actor_idx, None, mode=0)  # Initial state
+        rewards_by_agent[:, step] = res.reward_vector
+
+        if step + 1 < end:
+            res = orchard.process_action(actor_idx, teleport(W), mode=1)  # always act
+            rewards_by_agent[:, step + 1] = res.reward_vector
 
     total_reward = rewards_by_agent.sum()
     logger.info(f"[mc] Simulation complete. Total reward: {total_reward:.2f}")
@@ -249,7 +410,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--fn",
-        choices=["monte_carlo", "iid"],
         default="monte_carlo",
         help="Which simulation function to run.",
     )
@@ -278,14 +438,20 @@ def main():
     args = parser.parse_args()  # parsed values land on `args.<name>` [web:1]
     if args.task == "generate":
         generate_initial_state(Reward(int(args.reward), NUM_AGENTS), args.state)
+    elif args.task == "generate_supervised":
+        generate_initial_state_supervised(Reward(int(args.reward), NUM_AGENTS), args.state)
     else:
         if args.fn == "monte_carlo":
             sim_fn = monte_carlo
             kind = "monte-carlo"
-        else:
+        elif args.fn == "iid":
             sim_fn = iid
             kind = "iid"
+        else:
+            sim_fn = monte_carlo_supervised
+            kind = "monte-carlo-supervised"
 
+        # run(sim_fn, kind, int(args.trajectories), int(args.reward), args.state)
         run(sim_fn=sim_fn, kind=kind, trajectory_length=int(args.trajectories), reward=int(args.reward), state_type=args.state)
 
 

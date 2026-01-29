@@ -12,6 +12,7 @@ The Orchard environment. Includes provisions for transition actions, spawning, a
 action_algo: an algorithm that is used to process actions (agent movements). Defaults to just updating the environment from the singular agent action.
 """
 
+
 class ActionMixin:
     """Mixin providing common methods for action enums."""
 
@@ -72,9 +73,6 @@ class MoveAction(ActionMixin, Enum):
 class ProcessAction:
     reward_vector: np.ndarray
     picked: bool
-    old_state: dict
-    intermediate_state: dict
-    final_state: dict
 
 
 @dataclass
@@ -145,30 +143,28 @@ class Orchard:
         """Get the current state of the environment."""
         return {"agents": self.agents.copy(), "apples": self.apples.copy(), "agent_positions": self.agent_positions.copy()}
 
-    def _apply_move(self, position: np.ndarray, new_pos: np.ndarray) -> np.ndarray:
+    def _apply_move(self, position: np.ndarray, new_pos: np.ndarray | None) -> np.ndarray:
         """Apply movement action and update grid."""
         # TODO: Replace with actual action mapping logic
-
-        # Update grid
-        self.agents[tuple(new_pos)] += 1
-        self.agents[tuple(position)] -= 1
-
-        return new_pos
+        if new_pos is not None:
+            # Update grid
+            self.agents[tuple(new_pos)] += 1
+            self.agents[tuple(position)] -= 1
+            return new_pos
+        else:
+            return position
 
     def process_action(
-            self, actor_id: int, new_pos: np.ndarray) -> ProcessAction:
+            self, actor_id: int, new_pos: np.ndarray | None, mode) -> ProcessAction:
         """Process an agent's action and return reward and pick status."""
-        old_state = self.get_state()
 
         position = self.agent_positions[actor_id]
         new_pos = self._apply_move(position, new_pos)
 
         self.agent_positions[actor_id] = new_pos
 
-        intermediate_state = self.get_state()
-
         reward_vector = self.reward_module.get_reward(
-            self.get_state(), actor_id, new_pos
+            self.get_state(), actor_id, new_pos, mode
         )
 
         picked = reward_vector.sum() != 0
@@ -176,12 +172,10 @@ class Orchard:
             self.remove_apple(new_pos)
             self.total_picked += 1
 
-        self.spawn_apples()
+        if mode == 1:
+            self.spawn_apples()
 
-        final_state = self.get_state()
-
-        return ProcessAction(reward_vector=reward_vector, picked=picked, old_state=old_state, intermediate_state=intermediate_state,
-                             final_state=final_state)
+        return ProcessAction(reward_vector=reward_vector, picked=picked)
 
     def remove_apple(self, pos: np.ndarray) -> None:
         """Remove an apple at the given position if present."""

@@ -1,4 +1,9 @@
 from pathlib import Path
+from dataclasses import dataclass, field
+
+import torch
+
+from orchard.algorithms import despawn_apple, spawn_apple
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
@@ -9,4 +14,39 @@ W, L = 9, 9
 PROBABILITY_APPLE = 32.4 / (W * L)
 NUM_WORKERS = 8
 DISCOUNT_FACTOR = 0.99
-SEEDS = 100
+SEEDS = 5000
+
+DEVICE = torch.device("cude") if torch.cuda.is_available() else torch.device("cpu")
+
+
+@dataclass
+class TrainingConfig:
+    """Configuration for training parameters."""
+
+    alpha: float = 0.01
+    timesteps: int = 1000000
+    hidden_dimensions: int = 16
+    num_layers: int = 4
+    seed: int = 1234
+    num_eval_states: int = 0
+    picker_r: int = 0
+    supervised: bool = True
+    reward_learning: bool = False
+    input_dim: int = 3
+
+
+@dataclass
+class EnvironmentConfig:
+    """Configuration for environment parameters."""
+
+    length: int = L
+    width: int = W
+
+
+@dataclass
+class ExperimentConfig:
+    """Configuration for experiment parameters."""
+
+    train_config: TrainingConfig = None
+    env_config: EnvironmentConfig = None
+    debug: bool = False
