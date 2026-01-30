@@ -57,6 +57,9 @@ def parse_args(args):
         action=argparse.BooleanOptionalAction,
         default=False
     )
+    parser.add_argument(
+        "--trajectory_length", type=int, default=1000
+    )
     return parser.parse_args(args)
 
 
@@ -73,7 +76,8 @@ def set_config(args):
         reward_learning=args.reward_learning,
         input_dim=args.input_dim,
         use_library=args.library,
-        monte_carlo=args.monte_carlo
+        monte_carlo=args.monte_carlo,
+        trajectory_length=args.trajectory_length
     )
 
 
