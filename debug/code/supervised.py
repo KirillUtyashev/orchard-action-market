@@ -155,14 +155,16 @@ class Learning:
                     trajectory_length=1000,
                     reward=self.exp_config.train_config.picker_r,
                     init_payload=(curr_state, curr_state["agent_positions"]),
+                    num_seeds=self.exp_config.train_config.num_seeds
                 )
 
                 mean_val_y = run(
                     sim_fn=monte_carlo_supervised,
                     kind="monte-carlo-supervised",
-                    trajectory_length=self.exp_config.train_config.trajectory_length,
+                    trajectory_length=1000,
                     reward=self.exp_config.train_config.picker_r,
                     init_payload=(semi_state, semi_state["agent_positions"]),
+                    num_seeds=self.exp_config.train_config.num_seeds
                 )
 
             for i in range(NUM_AGENTS):

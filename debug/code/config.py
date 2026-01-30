@@ -35,7 +35,7 @@ class TrainingConfig:
     input_dim: int = 3
     use_library: bool = False
     monte_carlo: bool = False
-    trajectory_length: int = 1000
+    num_seeds: int = 1000
 
 
 @dataclass

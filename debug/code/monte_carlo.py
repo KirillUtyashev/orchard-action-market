@@ -341,9 +341,9 @@ def _orchard_from_payload(reward_module: Reward, payload: InitPayload):
         NUM_AGENTS,
         reward_module,
         PROBABILITY_APPLE,
-        start_agents_map=state_dict["agents"],
-        start_apples_map=state_dict["apples"],
-        start_agent_positions=agent_positions,
+        start_agents_map=state_dict["agents"].copy(),
+        start_apples_map=state_dict["apples"].copy(),
+        start_agent_positions=agent_positions.copy(),
     )
     return orchard, init_actor, init_mode
 
@@ -436,12 +436,13 @@ def run(
         state_type: StateType = "agent_on_apple",
         seedgen_seed: int | None = None,
         init_payload: Optional[InitPayload] = None,
+        num_seeds: int = 1000
 ) -> float:
     if seedgen_seed is not None:
         random.seed(seedgen_seed)
 
-    seeds = random.sample(range(1, 10_000_000), SEEDS)
-    run_ids = list(range(SEEDS))
+    seeds = random.sample(range(1, 10_000_000), num_seeds)
+    run_ids = list(range(num_seeds))
 
     trajectory_lengths = itertools.repeat(trajectory_length)
     rewards = itertools.repeat(reward)

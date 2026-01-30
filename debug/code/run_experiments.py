@@ -58,7 +58,7 @@ def parse_args(args):
         default=False
     )
     parser.add_argument(
-        "--trajectory_length", type=int, default=1000
+        "--num_seeds", type=int, default=1000
     )
     return parser.parse_args(args)
 
@@ -77,7 +77,7 @@ def set_config(args):
         input_dim=args.input_dim,
         use_library=args.library,
         monte_carlo=args.monte_carlo,
-        trajectory_length=args.trajectory_length
+        num_seeds=args.num_seeds
     )
 
 
