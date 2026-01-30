@@ -394,6 +394,69 @@ def monte_carlo_supervised(
     return values_by_agent
 
 
+def iid_supervised(
+        seed: int = 42069,
+        trajectory_length: int = 100000,
+        reward: float = -1,
+        state: StateType = "none_on_apples",
+        run_id: int = 0,
+        init_payload: Optional[InitPayload] = None,
+) -> np.ndarray:
+    set_all_seeds(seed)
+
+    reward_other = (1 - reward) / (NUM_AGENTS - 1)
+
+    # Init (kept for parity with your setup; orchard isn't otherwise used in IID)
+    if init_payload is None:
+        orchard, actor_id, init_mode = init_state(Reward(reward, NUM_AGENTS), state, trajectory_length)
+    else:
+        orchard, actor_id, init_mode = _orchard_from_payload(Reward(reward, NUM_AGENTS), init_payload)
+
+    values_by_agent = np.zeros(NUM_AGENTS, dtype=np.float64)
+
+    # Preallocate once; reuse to avoid per-step allocations
+    rewards_vec = np.empty(NUM_AGENTS, dtype=np.float64)
+
+    # Running discount for time t
+    discount = 1.0
+
+    def maybe_apply_reward(curr_actor: int, curr_discount: float) -> None:
+        # reward happens only with probability PROBABILITY_APPLE
+        if random.random() < PROBABILITY_APPLE:
+            rewards_vec.fill(reward_other)
+            rewards_vec[curr_actor] = reward
+            values_by_agent[:] += curr_discount * rewards_vec  # broadcasted vector add [web:27]
+
+    # t = 0 is always zero reward in your original code (explicitly set in mode 0)
+    # So we just advance the discount once.
+    discount *= DISCOUNT_FACTOR
+
+    if init_mode == 0:
+        # t = 1: possible reward using initial actor_id
+        maybe_apply_reward(actor_id, discount)
+        discount *= DISCOUNT_FACTOR
+        start, end = 2, trajectory_length
+    else:
+        # Your original code writes to rewards_by_agent[:, 1] in this branch.
+        # Keeping behavior consistent: treat this as reward at t = 1, then start loop at 1.
+        maybe_apply_reward(actor_id, discount)
+        discount *= DISCOUNT_FACTOR
+        start, end = 1, trajectory_length
+
+    # Loop steps: only odd indices (step+1) can have rewards in your original logic
+    for step in range(start, end, 2):
+        actor_id = random.randint(0, NUM_AGENTS - 1)
+        # step itself has zero reward; just advance discount by one timestep
+        discount *= DISCOUNT_FACTOR
+
+        if step + 1 < end:
+            maybe_apply_reward(actor_id, discount)
+            discount *= DISCOUNT_FACTOR
+
+    return values_by_agent
+
+
+
 # ---------------------------------------------------------------------
 # IID baseline simulation
 # ---------------------------------------------------------------------
@@ -430,13 +493,12 @@ def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_ap
 # ---------------------------------------------------------------------
 def run(
         sim_fn=monte_carlo_supervised,
-        kind="monte-carlo-supervised",
         trajectory_length=100000,
         reward=-1,
         state_type: StateType = "agent_on_apple",
         seedgen_seed: int | None = None,
         init_payload: Optional[InitPayload] = None,
-        num_seeds: int = 1000
+        num_seeds: int = 10
 ) -> float:
     if seedgen_seed is not None:
         random.seed(seedgen_seed)
@@ -449,8 +511,9 @@ def run(
     states = itertools.repeat(state_type)
     init_payloads = itertools.repeat(init_payload)
 
-    with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
-        results = list(ex.map(sim_fn, seeds, trajectory_lengths, rewards, states, run_ids, init_payloads))
+    with ProcessPoolExecutor(max_workers=4) as ex:
+        results = list(ex.map(sim_fn, seeds, trajectory_lengths, rewards, states, run_ids, init_payloads, chunksize=10))
+    # sim_fn(0, 1000, -1, run_id=0, init_payload=init_payload)
 
     return np.mean(results, axis=0)
 
@@ -492,16 +555,19 @@ def main():
     else:
         if args.fn == "monte_carlo":
             sim_fn = monte_carlo
-            kind = "monte-carlo"
         elif args.fn == "iid":
             sim_fn = iid
-            kind = "iid"
+        elif args.fn == "iid_supervised":
+            sim_fn = iid_supervised
         else:
             sim_fn = monte_carlo_supervised
-            kind = "monte-carlo-supervised"
 
         # run(sim_fn, kind, int(args.trajectories), int(args.reward), args.state)
-        run(sim_fn=sim_fn, kind=kind, trajectory_length=int(args.trajectories), reward=int(args.reward), state_type=args.state)
+
+        start = time.time()
+        run(sim_fn=sim_fn, trajectory_length=int(args.trajectories), reward=int(args.reward), state_type=args.state)
+        end = time.time()
+        print(end - start)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from utils import ten
 from debug.code.controllers import ViewController
 from debug.code.library_value_function import TorchRLCritic, VNet
 from debug.code.monte_carlo import generate_initial_state_supervised, \
-    monte_carlo_supervised, run
+    iid_supervised, monte_carlo_supervised, run
 from debug.code.simple_agent import SimpleAgent
 from config import (
     NUM_AGENTS,
@@ -150,8 +150,7 @@ class Learning:
                 )
             if self.exp_config.train_config.monte_carlo:
                 mean_val_z = run(
-                    sim_fn=monte_carlo_supervised,
-                    kind="monte-carlo-supervised",
+                    sim_fn=iid_supervised,
                     trajectory_length=1000,
                     reward=self.exp_config.train_config.picker_r,
                     init_payload=(curr_state, curr_state["agent_positions"]),
@@ -159,8 +158,7 @@ class Learning:
                 )
 
                 mean_val_y = run(
-                    sim_fn=monte_carlo_supervised,
-                    kind="monte-carlo-supervised",
+                    sim_fn=iid_supervised,
                     trajectory_length=1000,
                     reward=self.exp_config.train_config.picker_r,
                     init_payload=(semi_state, semi_state["agent_positions"]),
