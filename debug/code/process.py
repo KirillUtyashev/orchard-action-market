@@ -835,7 +835,8 @@ def main():
 
 
 if __name__ == "__main__":
-    stitch_grid_from_existing_pngs("MC", [-5, -1], ["Y11"])
+    process(-1, 1000)
+    # stitch_grid_from_existing_pngs("MC", [-5, -1], ["Y11"])
 
     # out = plot_prefix_distributions_and_stitch(
     #     trajectory_lengths=[100, 500, 1000, 5000],

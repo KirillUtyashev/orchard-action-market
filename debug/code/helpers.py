@@ -46,7 +46,7 @@ def set_all_seeds(seed: int = 42, deterministic: bool = False) -> None:
         deterministic: If True, enable extra settings for deterministic
                        behavior in cuDNN at the possible cost of speed.
     """
-    print(f"[seed] Using seed={seed}")
+    # print(f"[seed] Using seed={seed}")
 
     # Python random
     random.seed(seed)

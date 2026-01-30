@@ -14,8 +14,7 @@ class VNetwork(NetworkWrapper):
         super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
         self.batch_rewards = []
 
-        if supervised:
-            self.theoretical_vals = []
+        self.theoretical_vals = []
 
     def get_value_function(self, x):
         res = ten(x, DEVICE)

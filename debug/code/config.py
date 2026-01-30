@@ -14,7 +14,7 @@ W, L = 9, 9
 PROBABILITY_APPLE = 32.4 / (W * L)
 NUM_WORKERS = 8
 DISCOUNT_FACTOR = 0.99
-SEEDS = 5000
+SEEDS = 1000
 
 DEVICE = torch.device("cude") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -33,6 +33,8 @@ class TrainingConfig:
     supervised: bool = True
     reward_learning: bool = False
     input_dim: int = 3
+    use_library: bool = False
+    monte_carlo: bool = False
 
 
 @dataclass

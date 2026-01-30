@@ -47,6 +47,16 @@ def parse_args(args):
     parser.add_argument(
         "--input_dim", type=int, default=3
     )
+    parser.add_argument(
+        "--library",
+        action=argparse.BooleanOptionalAction,
+        default=False
+    )
+    parser.add_argument(
+        "--monte_carlo",
+        action=argparse.BooleanOptionalAction,
+        default=False
+    )
     return parser.parse_args(args)
 
 
@@ -61,7 +71,9 @@ def set_config(args):
         seed=args.seed,
         supervised=args.supervised,
         reward_learning=args.reward_learning,
-        input_dim=args.input_dim
+        input_dim=args.input_dim,
+        use_library=args.library,
+        monte_carlo=args.monte_carlo
     )
 
 

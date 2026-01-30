@@ -6,9 +6,10 @@ import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
 from typing import Literal
+from typing import Optional, Union
 
 from config import (
-    NUM_AGENTS,
+    DISCOUNT_FACTOR, NUM_AGENTS,
     W,
     L,
     PROBABILITY_APPLE,
@@ -66,7 +67,7 @@ def save_results(kind: str, seed: int, rewards_by_agent: np.ndarray, trajectory_
     )
 
     np.savez_compressed(filename, rewards_by_agent=rewards_by_agent, metadata=metadata)
-    logger.info(f"[{kind}] Results saved to {filename}")
+    # logger.info(f"[{kind}] Results saved to {filename}")
 
 
 StateType = Literal["none_on_apples", "agent_on_apple"]
@@ -75,18 +76,18 @@ StateType = Literal["none_on_apples", "agent_on_apple"]
 # ---------------------------------------------------------------------
 # Environment init
 # ---------------------------------------------------------------------
-def init_state(reward_module: Reward, state_type: StateType, trajectory_length) -> tuple[Orchard, np.ndarray]:
+def init_state(reward_module: Reward, state_type: StateType, trajectory_length):
     npz = np.load(
         data_dir / f"states/{state_type}/init_state_reward_{reward_module.picker_r}_{state_type}.npz",
         allow_pickle=True,  # needed if "dict" entry is an object array [web:109]
     )
     initial_state = npz["dict"].item()
     agent_positions = npz["extra"]
-    init_reward = npz["reward_vector"]
-
-    reward_vector = np.zeros((NUM_AGENTS, trajectory_length), dtype=float)
-
-    reward_vector[:, 0] = init_reward
+    # init_reward = npz["reward_vector"]
+    #
+    # reward_vector = np.zeros((NUM_AGENTS, trajectory_length), dtype=float)
+    #
+    # reward_vector[:, 0] = init_reward
 
     orchard = Orchard(
         W,
@@ -98,7 +99,7 @@ def init_state(reward_module: Reward, state_type: StateType, trajectory_length) 
         start_apples_map=initial_state["apples"],
         start_agent_positions=agent_positions,
     )
-    return orchard, reward_vector, initial_state["actor"], initial_state["mode"]
+    return orchard, initial_state["actor_id"], initial_state["mode"]
 
 
 def generate_initial_state(
@@ -269,9 +270,9 @@ def generate_initial_state_supervised(
     # ------------------------------------------------------------
     # compute reward vector for this initial state
 
-    reward_vector = np.asarray(
-        reward_module.get_reward(state, actor_id, orchard.agent_positions[actor_id], state["mode"])
-    )
+    # reward_vector = np.asarray(
+    #     reward_module.get_reward(state, actor_id, orchard.agent_positions[actor_id], state["mode"])
+    # )
     if save:
         out_dir = data_dir / "states" / state_type
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -282,7 +283,7 @@ def generate_initial_state_supervised(
             out_path,
             dict=np.array(state, dtype=object),
             extra=agent_positions,
-            reward_vector=reward_vector,
+            # reward_vector=reward_vector,
         )
         logger.info(f"[generate_state] Initial state '{state_type}' saved to {out_path}")
         return None
@@ -295,10 +296,10 @@ def generate_initial_state_supervised(
 # ---------------------------------------------------------------------
 def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: StateType = "none_on_apples", run_id=0) -> None:
     set_all_seeds(seed)
-    logger.info(
-        f"[mc] Starting Monte Carlo simulation with seed={seed} | "
-        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
-    )
+    # logger.info(
+    #     f"[mc] Starting Monte Carlo simulation with seed={seed} | "
+    #     f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
+    # )
 
     reward_module = Reward(reward, NUM_AGENTS)
     orchard, rewards_by_agent = init_state(reward_module, state, trajectory_length)
@@ -315,36 +316,82 @@ def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: S
     save_results("monte-carlo", run_id, rewards_by_agent, trajectory_length, reward, state)
 
 
-def monte_carlo_supervised(seed: int = 42069, trajectory_length=100000, reward=-1, state: StateType = "none_on_apples", run_id=0) -> None:
-    set_all_seeds(seed)
-    logger.info(
-        f"[mc] Starting Monte Carlo simulation with seed={seed} | "
-        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
+# (state_dict, agent_positions) OR (state_dict, agent_positions, init_actor, init_mode)
+InitPayload = Union[
+    tuple[dict, np.ndarray],
+    tuple[dict, np.ndarray, int, int],
+]
+
+
+def _orchard_from_payload(reward_module: Reward, payload: InitPayload):
+    state_dict = payload[0]
+    agent_positions = np.asarray(payload[1])
+
+    # Prefer explicit values in the payload tuple if provided
+    if len(payload) >= 4:
+        init_actor = int(payload[2])
+        init_mode = int(payload[3])
+    else:
+        init_actor = int(state_dict.get("actor_id", state_dict.get("actor", 0)))
+        init_mode = int(state_dict.get("mode", 1))
+
+    orchard = Orchard(
+        W,
+        L,
+        NUM_AGENTS,
+        reward_module,
+        PROBABILITY_APPLE,
+        start_agents_map=state_dict["agents"],
+        start_apples_map=state_dict["apples"],
+        start_agent_positions=agent_positions,
     )
+    return orchard, init_actor, init_mode
+
+
+def monte_carlo_supervised(
+        seed: int = 42069,
+        trajectory_length=100000,
+        reward=-1,
+        state: StateType = "none_on_apples",
+        run_id=0,
+        init_payload: Optional[InitPayload] = None,
+) -> float:
+    set_all_seeds(seed)
 
     reward_module = Reward(reward, NUM_AGENTS)
-    orchard, rewards_by_agent, init_actor, init_mode = init_state(reward_module, state, trajectory_length)
+    rewards_by_agent = np.zeros((NUM_AGENTS, trajectory_length), dtype=float)
+
+    if init_payload is None:
+        orchard, init_actor, init_mode = init_state(reward_module, state, trajectory_length)
+    else:
+        orchard, init_actor, init_mode = _orchard_from_payload(reward_module, init_payload)
+
     if init_mode == 0:
-        res = orchard.process_action(init_actor, teleport(W), mode=1)  # always act
+        res = orchard.process_action(init_actor, teleport(W), mode=0)
+        rewards_by_agent[:, 0] = res.reward_vector
+        res = orchard.process_action(init_actor, None, mode=1)
         rewards_by_agent[:, 1] = res.reward_vector
         start, end = 2, trajectory_length
     else:
+        res = orchard.process_action(init_actor, None, mode=1)
+        rewards_by_agent[:, 0] = res.reward_vector
         start, end = 1, trajectory_length
 
     for step in range(start, end, 2):
         actor_idx = random.randint(0, NUM_AGENTS - 1)
-        res = orchard.process_action(actor_idx, None, mode=0)  # Initial state
+
+        res = orchard.process_action(actor_idx, teleport(W), mode=0)
         rewards_by_agent[:, step] = res.reward_vector
 
         if step + 1 < end:
-            res = orchard.process_action(actor_idx, teleport(W), mode=1)  # always act
+            res = orchard.process_action(actor_idx, None, mode=1)
             rewards_by_agent[:, step + 1] = res.reward_vector
 
-    total_reward = rewards_by_agent.sum()
-    logger.info(f"[mc] Simulation complete. Total reward: {total_reward:.2f}")
-    logger.info(f"[mc] Reward by agent: {rewards_by_agent.sum(axis=1)}")
-
     save_results("monte-carlo", run_id, rewards_by_agent, trajectory_length, reward, state)
+    discounts = np.power(DISCOUNT_FACTOR, np.arange(trajectory_length, dtype=np.float64))
+    values_by_agent = (rewards_by_agent * discounts).sum(axis=1)
+
+    return values_by_agent
 
 
 # ---------------------------------------------------------------------
@@ -381,9 +428,15 @@ def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_ap
 # ---------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------
-def run(sim_fn=monte_carlo, kind="monte-carlo", trajectory_length=100000, reward=-1,
-        state_type: StateType = "agent_on_apple", seedgen_seed: int | None = None) -> None:
-
+def run(
+        sim_fn=monte_carlo_supervised,
+        kind="monte-carlo-supervised",
+        trajectory_length=100000,
+        reward=-1,
+        state_type: StateType = "agent_on_apple",
+        seedgen_seed: int | None = None,
+        init_payload: Optional[InitPayload] = None,
+) -> float:
     if seedgen_seed is not None:
         random.seed(seedgen_seed)
 
@@ -393,17 +446,12 @@ def run(sim_fn=monte_carlo, kind="monte-carlo", trajectory_length=100000, reward
     trajectory_lengths = itertools.repeat(trajectory_length)
     rewards = itertools.repeat(reward)
     states = itertools.repeat(state_type)
-    run_ids_it = iter(run_ids)
-
-    start = time.time()
-    logger.info(f"run({kind}) starting with {len(seeds)} seeds and {NUM_WORKERS} workers")
+    init_payloads = itertools.repeat(init_payload)
 
     with ProcessPoolExecutor(max_workers=NUM_WORKERS) as ex:
-        # sim_fn(seed, trajectory_length, reward, state, run_id)
-        list(ex.map(sim_fn, seeds, trajectory_lengths, rewards, states, run_ids_it))
+        results = list(ex.map(sim_fn, seeds, trajectory_lengths, rewards, states, run_ids, init_payloads))
 
-    elapsed = time.time() - start
-    logger.info(f"run({kind}) finished in {elapsed:.2f} seconds")
+    return np.mean(results, axis=0)
 
 
 def main():

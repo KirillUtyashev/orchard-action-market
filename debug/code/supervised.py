@@ -3,16 +3,20 @@ import random
 from pathlib import Path
 
 import numpy as np
-from config import data_dir
+from utils import ten
 from debug.code.controllers import ViewController
-from debug.code.monte_carlo import generate_initial_state_supervised
+from debug.code.library_value_function import TorchRLCritic, VNet
+from debug.code.monte_carlo import generate_initial_state_supervised, \
+    monte_carlo_supervised, run
 from debug.code.simple_agent import SimpleAgent
 from config import (
     NUM_AGENTS,
     W,
     L,
     PROBABILITY_APPLE,
-    DISCOUNT_FACTOR
+    DISCOUNT_FACTOR,
+    DEVICE,
+    data_dir
 )
 
 from debug.code.environment import Orchard
@@ -47,8 +51,11 @@ class Learning:
 
     def _init_critic_networks(self):
         for _ in range(NUM_AGENTS):
-            self.critic_networks.append(VNetwork(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.alpha, DISCOUNT_FACTOR,
-                                                 self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, supervised=self.exp_config.train_config.supervised))
+            if not self.exp_config.train_config.use_library:
+                self.critic_networks.append(VNetwork(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.alpha, DISCOUNT_FACTOR,
+                                                     self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, supervised=self.exp_config.train_config.supervised))
+            else:
+                self.critic_networks.append(TorchRLCritic(VNet(self.exp_config.train_config.input_dim, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 1000))
 
     def _init_agents_for_training(self):
         for i in range(NUM_AGENTS):
@@ -113,6 +120,13 @@ class Learning:
 
         eval_intervals = [self.trajectory_length // 5 * (i + 1) for i in range(5)]
 
+        # Optional: if you want each run to start with empty TD(lambda) buffers
+        # (recommended unless you intentionally want traces to carry over).
+        if self.exp_config.train_config.use_library:
+            for i in range(NUM_AGENTS):
+                if hasattr(self.critic_networks[i], "reset_trajectory"):
+                    self.critic_networks[i].reset_trajectory()
+
         for step in range(self.trajectory_length):
             self.env.process_action(actor_idx, teleport(W), mode=0)
 
@@ -127,21 +141,79 @@ class Learning:
             final_state["actor_id"] = actor_idx
             final_state["mode"] = 0
 
-            theoretical_values_z = self.theoretical_val.theoretical_value(curr_state, curr_state["actor_id"], curr_state["agent_positions"])
-            theoretical_values_y = self.theoretical_val.theoretical_value(semi_state, semi_state["actor_id"], semi_state["agent_positions"])
+            if self.exp_config.train_config.supervised:
+                theoretical_values_z = self.theoretical_val.theoretical_value(
+                    curr_state, curr_state["actor_id"], curr_state["agent_positions"]
+                )
+                theoretical_values_y = self.theoretical_val.theoretical_value(
+                    semi_state, semi_state["actor_id"], semi_state["agent_positions"]
+                )
+            if self.exp_config.train_config.monte_carlo:
+                mean_val_z = run(
+                    sim_fn=monte_carlo_supervised,
+                    kind="monte-carlo-supervised",
+                    trajectory_length=1000,
+                    reward=self.exp_config.train_config.picker_r,
+                    init_payload=(curr_state, curr_state["agent_positions"]),
+                )
+
+                mean_val_y = run(
+                    sim_fn=monte_carlo_supervised,
+                    kind="monte-carlo-supervised",
+                    trajectory_length=1000,
+                    reward=self.exp_config.train_config.picker_r,
+                    init_payload=(semi_state, semi_state["agent_positions"]),
+                )
 
             for i in range(NUM_AGENTS):
-                processed_old_state, processed_intermediate_state, processed_final_state = self.agent_controller(curr_state, i), self.agent_controller(semi_state, i), self.agent_controller(final_state, i)
+                processed_old_state = self.agent_controller(curr_state, i)
+                processed_intermediate_state = self.agent_controller(semi_state, i)
+                processed_final_state = self.agent_controller(final_state, i)
+
                 if self.exp_config.train_config.supervised:
                     self.critic_networks[i].add_experience(processed_old_state, None, None, theoretical_values_z[i])
                     self.critic_networks[i].add_experience(processed_intermediate_state, None, None, theoretical_values_y[i])
                     self.critic_networks[i].train_supervised()
+
                 elif self.exp_config.train_config.reward_learning:
                     self.critic_networks[i].add_experience(processed_old_state, None, 0)
-                    # self.critic_networks[i].train_reward_supervised()
-
                     self.critic_networks[i].add_experience(processed_intermediate_state, None, res.reward_vector[i])
                     self.critic_networks[i].train_reward_supervised()
+                elif self.exp_config.train_config.monte_carlo:
+                    self.critic_networks[i].add_experience(processed_old_state, None, None, mean_val_z[i])
+                    self.critic_networks[i].add_experience(processed_intermediate_state, None, None, mean_val_y[i])
+                    self.critic_networks[i].train_supervised()
+
+                elif self.exp_config.train_config.use_library:
+                    # ---- Push TWO consecutive transitions into the trajectory buffer ----
+                    # Transition 1: Z -> Y (reward 0)
+                    obs1 = ten(processed_old_state, DEVICE).view(-1)
+                    next_obs1 = ten(processed_intermediate_state, DEVICE).view(-1)
+                    self.critic_networks[i].push_transition(
+                        obs=obs1,
+                        next_obs=next_obs1,
+                        reward=0.0,
+                        done=False,
+                        terminated=False,
+                    )
+
+                    # Transition 2: Y -> Z_next (reward = env reward)
+                    obs2 = ten(processed_intermediate_state, DEVICE).view(-1)
+                    next_obs2 = ten(processed_final_state, DEVICE).view(-1)
+                    self.critic_networks[i].push_transition(
+                        obs=obs2,
+                        next_obs=next_obs2,
+                        reward=float(res.reward_vector[i]),
+                        done=False,
+                        terminated=False,
+                    )
+
+                    # If your TorchRLCritic is implemented as discussed, it returns
+                    # None until the deque reaches traj_len, then returns a float loss.
+                    # (You can log it if you want.)
+                    # if loss1 is not None or loss2 is not None:
+                    #     print(f"agent {i}: loss={(loss2 if loss2 is not None else loss1):.6f}")
+
                 else:
                     self.critic_networks[i].add_experience(processed_old_state, processed_intermediate_state, 0)
                     self.critic_networks[i].add_experience(processed_intermediate_state, processed_final_state, res.reward_vector[i])
@@ -151,7 +223,7 @@ class Learning:
 
             if (step + 1) in eval_intervals:
                 print(f"Running evaluation at step {step + 1}/{self.trajectory_length}")
-                self.evaluate_networks()
+                self.evaluate_networks(plot=True)
 
     def evaluate_networks(self, *, plot: bool = False, store_last: bool = True):
         errors_by_state = {
@@ -172,7 +244,11 @@ class Learning:
 
                 for i in range(NUM_AGENTS):
                     input_ = self.agent_controller(eval_state, i)
-                    pred = self.critic_networks[i].get_value_function(input_)
+                    if self.exp_config.train_config.use_library:
+                        obs = ten(input_, DEVICE).view(-1)
+                        pred = self.critic_networks[i].get_value_function(obs).cpu().item()
+                    else:
+                        pred = self.critic_networks[i].get_value_function(input_)
 
                     if not self.exp_config.train_config.reward_learning:
                         error = theoretical_values[i] - pred
