@@ -24,6 +24,7 @@ from debug.code.helpers import teleport
 from debug.code.reward import Reward
 from debug.code.value import Value
 from models.value_function import VNetwork
+import matplotlib.pyplot as plt
 
 
 class Learning:
@@ -39,14 +40,23 @@ class Learning:
 
         self.num_eval_states = exp_config.train_config.num_eval_states
 
-        self.theoretical_val = Value(exp_config.train_config.picker_r, NUM_AGENTS, DISCOUNT_FACTOR, PROBABILITY_APPLE)
+        self.theoretical_val = Value(exp_config.train_config.picker_r, NUM_AGENTS, DISCOUNT_FACTOR, PROBABILITY_APPLE, exp_config.train_config.variance)
 
         self._networks_for_eval = []
+
+        self.eval_history = []  # list of {"step": int, "mae_pct_overall": float, "mae_pct_by_state": {...}}
 
         default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
+
+        default_hist_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
+
+        self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path))
+
+        default_plot_path = self.mae_history_path.with_suffix(".png")
+        self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
         self._last_eval_errors_by_state = None
 
     def _init_critic_networks(self):
@@ -126,6 +136,8 @@ class Learning:
             for i in range(NUM_AGENTS):
                 if hasattr(self.critic_networks[i], "reset_trajectory"):
                     self.critic_networks[i].reset_trajectory()
+
+        self.evaluate_networks(step=0, plot=True, store_last=True)
 
         for step in range(self.trajectory_length):
             self.env.process_action(actor_idx, teleport(W), mode=0)
@@ -223,12 +235,15 @@ class Learning:
 
             if (step + 1) in eval_intervals:
                 print(f"Running evaluation at step {step + 1}/{self.trajectory_length}")
-                self.evaluate_networks(plot=True)
+                self.evaluate_networks(step=(step + 1), plot=True, store_last=True)
 
-    def evaluate_networks(self, *, plot: bool = False, store_last: bool = True):
+    def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
         errors_by_state = {
             "Z0": [], "Z1": [], "Y11": [], "Y10": [], "Y00": [], "Y01": []
-        }
+            }
+        ape_by_state = {k: [] for k in errors_by_state.keys()}  # absolute % error per sample
+
+        eps = 1e-8  # avoids blowups when true value is 0
 
         for state in self.evaluation_states:
             for eval_state in self.evaluation_states[state]:
@@ -246,14 +261,16 @@ class Learning:
                     input_ = self.agent_controller(eval_state, i)
                     if self.exp_config.train_config.use_library:
                         obs = ten(input_, DEVICE).view(-1)
-                        pred = self.critic_networks[i].get_value_function(obs).cpu().item()
+                        pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
                     else:
-                        pred = self.critic_networks[i].get_value_function(input_)
+                        pred = float(self.critic_networks[i].get_value_function(input_))
 
                     if not self.exp_config.train_config.reward_learning:
-                        error = theoretical_values[i] - pred
+                        true = float(theoretical_values[i])
                     else:
-                        error = rewards[i] - pred
+                        true = float(rewards[i])
+
+                    err = true - pred
 
                     agent_state = state
                     if eval_state["actor_id"] != i:
@@ -264,15 +281,74 @@ class Learning:
                         else:
                             agent_state = "Y00"
 
-                    errors_by_state[agent_state].append(float(error.item()))
+                    errors_by_state[agent_state].append(err)
+
+                    denom = max(abs(true), eps)
+                    ape = abs(err) / denom * 100.0
+                    ape_by_state[agent_state].append(float(ape))
 
         if store_last:
             self._last_eval_errors_by_state = errors_by_state
+
+        # ---- NEW: compute MAE% (mean absolute % error) summary ----
+        mae_pct_by_state = {}
+        all_apes = []
+        for k, v in ape_by_state.items():
+            if len(v) == 0:
+                mae_pct_by_state[k] = None
+            else:
+                mae_pct_by_state[k] = float(np.mean(v))
+                all_apes.extend(v)
+
+        mae_pct_overall = float(np.mean(all_apes)) if len(all_apes) > 0 else None
+
+        if step is not None:
+            self.eval_history.append({
+                "step": int(step),
+                "mae_pct_overall": mae_pct_overall,
+                "mae_pct_by_state": mae_pct_by_state,
+            })
+            # Only overall MAE curve by default
+            self._plot_mae_history(save_path=self.mae_plot_path, per_state=False)
 
         if plot:
             self._plot_errors(errors_by_state)
 
         return errors_by_state
+
+    def _plot_mae_history(self, save_path: Path, *, per_state: bool = False):
+        if len(self.eval_history) == 0:
+            return
+
+        steps = [h["step"] for h in self.eval_history]
+        overall = [h["mae_pct_overall"] for h in self.eval_history]
+
+        plt.figure(figsize=(9, 5))
+        plt.plot(steps, overall, marker="o", label="Overall MAE%")
+
+        if per_state:
+            state_types = ["Z0", "Z1", "Y11", "Y10", "Y00", "Y01"]
+            for st in state_types:
+                ys = []
+                ok_steps = []
+                for h in self.eval_history:
+                    y = h["mae_pct_by_state"].get(st, None)
+                    if y is not None:
+                        ok_steps.append(h["step"])
+                        ys.append(y)
+                if len(ys) > 0:
+                    plt.plot(ok_steps, ys, marker=".", linewidth=1, alpha=0.6, label=st)
+
+        plt.xlabel("Training step (evaluation point)")
+        plt.ylabel("MAE % of true value")
+        plt.title("Evaluation MAE% over training")
+        plt.grid(True, alpha=0.3)
+        plt.legend(ncol=3 if per_state else 1, fontsize=9)
+        plt.tight_layout()
+
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=250, bbox_inches="tight")
+        plt.close()
 
     def save_final_evaluation_errors(self):
         """Save ONLY the most recent evaluation errors to disk (JSON)."""
@@ -293,9 +369,20 @@ class Learning:
         self.build_experiment()
         self.step_and_collect_observation()
 
-        # Run ONE final evaluation and save it.
-        self.evaluate_networks(plot=True, store_last=True)
+        # Final evaluation at the last step
+        self.evaluate_networks(step=self.trajectory_length, plot=False, store_last=True)
         self.save_final_evaluation_errors()
+
+        # Save MAE% history to JSON (optional but useful)
+        self.mae_history_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.mae_history_path, "w") as f:
+            json.dump({"eval_history": self.eval_history}, f)
+        print(f"MAE% history saved to: {self.mae_history_path}")
+        print(f"MAE% plot saved to: {self.mae_plot_path}")
+
+        # ---- NEW: return the history to the caller ----
+        return self.eval_history
+
 
     def _plot_errors(self, errors_by_state):
         import matplotlib.pyplot as plt

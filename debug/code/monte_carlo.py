@@ -456,7 +456,6 @@ def iid_supervised(
     return values_by_agent
 
 
-
 # ---------------------------------------------------------------------
 # IID baseline simulation
 # ---------------------------------------------------------------------
@@ -467,7 +466,7 @@ def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_ap
         f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
     )
 
-    _, rewards_by_agent = init_state(Reward(reward, NUM_AGENTS), state, trajectory_length)
+    orchard, actor_id, init_mode = init_state(Reward(reward, NUM_AGENTS), state, trajectory_length)
 
     reward_other = (1 - reward) / (NUM_AGENTS - 1)
 

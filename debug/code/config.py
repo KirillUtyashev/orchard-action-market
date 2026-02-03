@@ -36,6 +36,7 @@ class TrainingConfig:
     use_library: bool = False
     monte_carlo: bool = False
     num_seeds: int = 1000
+    variance: float = 0
 
 
 @dataclass

@@ -1,41 +1,18 @@
-from config import DISCOUNT_FACTOR, PROBABILITY_APPLE
 import numpy as np
 
 
-# class Value:
-#     def __init__(self, picker_r, num_agents):
-#         self.picker_r = picker_r
-#         self.other_r = (1 - picker_r) / (num_agents - 1)
-#         self.num_agents = num_agents
-#
-#         self.future_value = (DISCOUNT_FACTOR * (
-#                 picker_r * (1.0 / num_agents) * PROBABILITY_APPLE
-#                 + self.other_r * (1.0 - 1.0 / num_agents) * PROBABILITY_APPLE
-#         )) / (1.0 - DISCOUNT_FACTOR)
-#
-#     def theoretical_value(self, state: dict, actor_id: int, agent_positions):
-#         res = np.zeros(self.num_agents)
-#
-#         r, c = agent_positions[actor_id]
-#         on_apple = state["apples"][r, c] >= 1
-#
-#         if on_apple:
-#             res[:] = self.other_r + self.future_value
-#             res[actor_id] = self.picker_r + self.future_value
-#         else:
-#             res[:] = self.future_value
-#
-#         return res
-
 class Value:
-    def __init__(self, picker_r, num_agents, discount, prob_apple):
+    def __init__(self, picker_r, num_agents, discount, prob_apple, variance=0.0):
         self.picker_r = float(picker_r)          # r_pick
         self.num_agents = int(num_agents)        # N
         self.gamma = float(discount)             # γ
         self.P = float(prob_apple)               # P
+        self.variance = float(variance)
 
         if self.num_agents <= 1:
             raise ValueError("num_agents must be >= 2")
+        if self.variance < 0:
+            raise ValueError("variance must be >= 0")
 
         # Your reward scheme: distribute total reward 1 across agents when an apple event happens.
         self.other_r = (1.0 - self.picker_r) / (self.num_agents - 1)
@@ -56,6 +33,13 @@ class Value:
         # Cache the mode-1 base term
         self.mode1_base = self.gamma * self.M
 
+    def _maybe_add_noise(self, v: np.ndarray) -> np.ndarray:
+        """If variance > 0, return Normal(mean=v, var=variance); else return v."""
+        if self.variance == 0.0:
+            return v
+        std = np.sqrt(self.variance)
+        return np.random.normal(loc=v, scale=std, size=v.shape).astype(v.dtype, copy=False)
+
     def theoretical_value(self, state: dict, actor_id: int, agent_positions):
         """
         Returns a vector res[j] = V_j(state) for all agents j, under the
@@ -73,15 +57,13 @@ class Value:
         mode = int(state["mode"])  # adjust key if yours differs
 
         if mode == 0:
-            # Mode 0: reward is always 0, actor persists to mode 1, apple under actor will be Bernoulli(P)
             res[:] = self.V_Z0
             res[actor_id] = self.V_Z1
-            return res
+            return self._maybe_add_noise(res)
 
         if mode != 1:
             raise ValueError(f"Unknown mode={mode}")
 
-        # Mode 1: reward depends on whether there is an apple under the acting agent now
         r, c = agent_positions[actor_id]
         on_apple = state["apples"][r, c] >= 1
 
@@ -91,4 +73,4 @@ class Value:
         else:
             res[:] = self.mode1_base
 
-        return res
+        return self._maybe_add_noise(res)
