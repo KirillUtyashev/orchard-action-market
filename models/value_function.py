@@ -20,7 +20,7 @@ class VNetwork(NetworkWrapper):
         res = ten(x, DEVICE)
         res = res.view(1, -1)
         with torch.no_grad():
-            val = self.model(res).cpu().numpy()
+            val = self.model(res).cpu().numpy().item()
         return val
 
     def get_input_dim(self):
