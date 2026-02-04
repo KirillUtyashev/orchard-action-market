@@ -23,7 +23,7 @@ from debug.code.environment import Orchard
 from debug.code.helpers import teleport
 from debug.code.reward import Reward
 from debug.code.value import Value
-from models.value_function import VNetwork
+from debug.code.value_function import VNetwork
 import matplotlib.pyplot as plt
 
 
