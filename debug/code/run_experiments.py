@@ -1,6 +1,6 @@
 import argparse
 import sys
-
+import multiprocessing as mp
 from debug.code.config import EnvironmentConfig, ExperimentConfig, \
     TrainingConfig, data_dir
 from debug.code.helpers import set_all_seeds
@@ -167,4 +167,5 @@ def plot_multi_run_mae(runs, args):
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main(sys.argv[1:])
