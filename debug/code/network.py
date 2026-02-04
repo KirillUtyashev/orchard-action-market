@@ -4,7 +4,7 @@ import torch
 from torch import optim
 
 from debug.code.config import DEVICE
-from models.main_net import MainNet
+from debug.code.main_net import MainNet
 
 
 class NetworkWrapper(ABC):
