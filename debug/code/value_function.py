@@ -2,16 +2,16 @@ import numpy as np
 import torch
 from utils import ten
 from config import DEVICE
-from models.network import NetworkWrapper
+from debug.code.network import NetworkWrapper
 
 torch.set_default_dtype(torch.float64)
 
 
 class VNetwork(NetworkWrapper):
     def __init__(
-            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, supervised=False
+            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False
     ):
-        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers)
+        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, num_training_steps, schedule)
         self.batch_rewards = []
 
         self.theoretical_vals = []
@@ -46,6 +46,7 @@ class VNetwork(NetworkWrapper):
         loss = criterion(approx, y)
         loss.backward()
         self.optimizer.step()
+        self._after_update()
 
         # self.optimizer.zero_grad()
         self.batch_states = []
@@ -77,6 +78,7 @@ class VNetwork(NetworkWrapper):
         loss = criterion(approx, y)
         loss.backward()
         self.optimizer.step()
+        self._after_update()
 
         # 5) Clear batch buffers
         self.batch_states = []

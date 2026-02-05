@@ -22,14 +22,18 @@ def _load_errors_json(path: Path) -> Dict[str, List[float]]:
     return payload["errors_by_state"] if "errors_by_state" in payload else payload
 
 
-def _mae_from_errors(errors_by_state: Dict[str, List[float]]) -> float:
-    all_errs: List[float] = []
-    for vals in errors_by_state.values():
-        all_errs.extend(vals)
-    if len(all_errs) == 0:
+def _mae_from_ape(ape_by_state: Dict[str, List[float]]) -> float:
+    all_apes: List[float] = []
+    for vals in ape_by_state.values():
+        all_apes.extend(vals)
+
+    if not all_apes:
         return float("nan")
-    arr = np.asarray(all_errs, dtype=np.float64)
-    return float(np.mean(np.abs(arr)))
+
+    arr = np.asarray(all_apes, dtype=np.float64)
+
+    # APE values are already in percent units (e.g., 12.3 == 12.3%)
+    return float(np.mean(np.abs(arr)))  # [code_file:0]
 
 
 def plot_mae_vs_nn_size_for_picker_r(
@@ -68,7 +72,7 @@ def plot_mae_vs_nn_size_for_picker_r(
                 nn_size = _extract_first_int(nn_folder.parent.name)
 
             errors_by_state = _load_errors_json(json_path)
-            mae = _mae_from_errors(errors_by_state)
+            mae = _mae_from_ape(errors_by_state)
 
             rows.append(
                 {
@@ -120,3 +124,42 @@ def plot_mae_vs_nn_size_for_picker_r(
     df_agg.to_csv(output_csv, index=False)
 
     return df_agg
+
+
+def plot_variance(data_dir, variances):
+    base = Path(data_dir) / "supervised" / "-1" / "3"
+    rows = []
+
+    for var in variances:
+        path = base / str(var) / "final_eval_errors_16_1000.json"
+        errors_by_state = _load_errors_json(path)
+        mae = _mae_from_ape(errors_by_state)
+        rows.append({"var": var, "mae": mae})
+
+    df = pd.DataFrame(rows).sort_values("var")
+
+    plt.figure(figsize=(7, 4.5))
+
+    # One curve, points connected by straight dotted segments
+    plt.plot(
+        df["var"], df["mae"],
+        marker="o",
+        linestyle=":",  # ":" is matplotlib's dotted linestyle [code_file:0]
+        linewidth=2,
+        label="MAE"
+    )
+
+    plt.xlabel("Variance")
+    plt.ylabel("MAE % of True Value")
+    plt.title("MAE vs Variance")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    plt.close()
+
+
+if __name__ == "__main__":
+    from config import data_dir
+    # plot_variance(data_dir, [0.0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2])
+    plot_variance(data_dir, [0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])

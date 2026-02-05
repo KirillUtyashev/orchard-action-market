@@ -33,14 +33,14 @@ class Value:
         # Cache the mode-1 base term
         self.mode1_base = self.gamma * self.M
 
-    def _maybe_add_noise(self, v: np.ndarray) -> np.ndarray:
+    def _maybe_add_noise(self, v: np.ndarray, eval_) -> np.ndarray:
         """If variance > 0, return Normal(mean=v, var=variance); else return v."""
-        if self.variance == 0.0:
+        if self.variance == 0.0 or eval_ is True:
             return v
         std = np.sqrt(self.variance)
         return np.random.normal(loc=v, scale=std, size=v.shape).astype(v.dtype, copy=False)
 
-    def theoretical_value(self, state: dict, actor_id: int, agent_positions):
+    def theoretical_value(self, state: dict, actor_id: int, agent_positions, eval_=False):
         """
         Returns a vector res[j] = V_j(state) for all agents j, under the
         2-mode supervised dynamics in the PDF.
@@ -59,7 +59,7 @@ class Value:
         if mode == 0:
             res[:] = self.V_Z0
             res[actor_id] = self.V_Z1
-            return self._maybe_add_noise(res)
+            return self._maybe_add_noise(res, eval_)
 
         if mode != 1:
             raise ValueError(f"Unknown mode={mode}")
@@ -73,4 +73,4 @@ class Value:
         else:
             res[:] = self.mode1_base
 
-        return self._maybe_add_noise(res)
+        return self._maybe_add_noise(res, eval_)

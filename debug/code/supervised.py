@@ -3,9 +3,11 @@ import random
 from pathlib import Path
 
 import numpy as np
+
+from debug.code.main_net import MainNet
 from utils import ten
 from debug.code.controllers import ViewController
-from debug.code.library_value_function import TorchRLCritic, VNet
+from debug.code.library_value_function import TorchRLCritic
 from debug.code.monte_carlo import generate_initial_state_supervised, \
     iid_supervised, monte_carlo_supervised, run
 from debug.code.simple_agent import SimpleAgent
@@ -46,7 +48,7 @@ class Learning:
 
         self.eval_history = []  # list of {"step": int, "mae_pct_overall": float, "mae_pct_by_state": {...}}
 
-        default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
+        default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
@@ -63,9 +65,9 @@ class Learning:
         for _ in range(NUM_AGENTS):
             if not self.exp_config.train_config.use_library:
                 self.critic_networks.append(VNetwork(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.alpha, DISCOUNT_FACTOR,
-                                                     self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, supervised=self.exp_config.train_config.supervised))
+                                                     self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
             else:
-                self.critic_networks.append(TorchRLCritic(VNet(self.exp_config.train_config.input_dim, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 1000))
+                self.critic_networks.append(TorchRLCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 0, self.trajectory_length))
 
     def _init_agents_for_training(self):
         for i in range(NUM_AGENTS):
@@ -248,7 +250,7 @@ class Learning:
         for state in self.evaluation_states:
             for eval_state in self.evaluation_states[state]:
                 theoretical_values = self.theoretical_val.theoretical_value(
-                    eval_state, eval_state["actor_id"], eval_state["agent_positions"]
+                    eval_state, eval_state["actor_id"], eval_state["agent_positions"], eval_=True
                 )
                 rewards = self.reward_module.get_reward(
                     eval_state,
@@ -288,7 +290,7 @@ class Learning:
                     ape_by_state[agent_state].append(float(ape))
 
         if store_last:
-            self._last_eval_errors_by_state = errors_by_state
+            self._last_eval_errors_by_state = ape_by_state
 
         # ---- NEW: compute MAE% (mean absolute % error) summary ----
         mae_pct_by_state = {}
@@ -329,14 +331,13 @@ class Learning:
         if per_state:
             state_types = ["Z0", "Z1", "Y11", "Y10", "Y00", "Y01"]
             for st in state_types:
-                ys = []
-                ok_steps = []
+                ys, ok_steps = [], []
                 for h in self.eval_history:
                     y = h["mae_pct_by_state"].get(st, None)
                     if y is not None:
                         ok_steps.append(h["step"])
                         ys.append(y)
-                if len(ys) > 0:
+                if ys:
                     plt.plot(ok_steps, ys, marker=".", linewidth=1, alpha=0.6, label=st)
 
         plt.xlabel("Training step (evaluation point)")
@@ -344,8 +345,20 @@ class Learning:
         plt.title("Evaluation MAE% over training")
         plt.grid(True, alpha=0.3)
         plt.legend(ncol=3 if per_state else 1, fontsize=9)
-        plt.tight_layout()
 
+        # ---- add this ----
+        plt.ylim(bottom=0)  # ensure 0 is visible [web:223]
+        ymax = max(overall) if overall else 0.0
+        if per_state:
+            for h in self.eval_history:
+                for v in h.get("mae_pct_by_state", {}).values():
+                    if v is not None:
+                        ymax = max(ymax, float(v))
+        top = int(np.ceil(ymax / 10.0) * 10)  # next multiple of 10
+        plt.yticks(np.arange(0, top + 1, 10))  # 0,10,20,... [web:219]
+        # -------------------
+
+        plt.tight_layout()
         save_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
         plt.close()
@@ -368,9 +381,7 @@ class Learning:
     def train(self):
         self.build_experiment()
         self.step_and_collect_observation()
-
         # Final evaluation at the last step
-        self.evaluate_networks(step=self.trajectory_length, plot=False, store_last=True)
         self.save_final_evaluation_errors()
 
         # Save MAE% history to JSON (optional but useful)
@@ -382,7 +393,6 @@ class Learning:
 
         # ---- NEW: return the history to the caller ----
         return self.eval_history
-
 
     def _plot_errors(self, errors_by_state):
         import matplotlib.pyplot as plt
