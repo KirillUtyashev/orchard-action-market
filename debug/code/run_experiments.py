@@ -3,6 +3,7 @@ import os
 import sys
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 
 from debug.code.config import EnvironmentConfig, ExperimentConfig, \
     TrainingConfig, data_dir
@@ -169,7 +170,19 @@ def main(args):
 #     plot_multi_run_mae(all_histories, args)
 
 
-def plot_multi_run_mae(runs, args):
+def _next_available_path(path: Path) -> Path:
+    """If path exists, return path with _2, _3, ... inserted before suffix."""
+    if not path.exists():
+        return path
+    i = 2
+    while True:
+        candidate = path.with_name(f"{path.stem}_{i}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def plot_multi_run_mae(runs, args, data_dir):
     plt.figure(figsize=(9, 5))
 
     ymax = 0.0
@@ -184,8 +197,8 @@ def plot_multi_run_mae(runs, args):
 
     ax = plt.gca()
     top = int(np.ceil(ymax / 10.0) * 10)
-    ax.set_ylim(0, top)                               # [web:291]
-    ax.yaxis.set_major_locator(MultipleLocator(10))   # [web:291]
+    ax.set_ylim(0, top)
+    ax.yaxis.set_major_locator(MultipleLocator(10))
 
     plt.xlabel("Training step (evaluation point)")
     plt.ylabel("MAE % of true value")
@@ -194,9 +207,11 @@ def plot_multi_run_mae(runs, args):
     plt.legend()
     plt.tight_layout()
 
-    path = data_dir / "plots" / "supervised_w_variance" / f"res_{args.variance}.png"
+    path = Path(data_dir) / "plots" / "supervised_w_variance" / f"res_{args.variance}.png"
     path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(path, dpi=250, bbox_inches="tight")   # save first [web:298]
+
+    path = _next_available_path(path)
+    plt.savefig(path, dpi=250, bbox_inches="tight")
     plt.show()
 
 
