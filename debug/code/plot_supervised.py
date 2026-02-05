@@ -126,38 +126,36 @@ def plot_mae_vs_nn_size_for_picker_r(
     return df_agg
 
 
-def plot_variance(data_dir, variances):
+def plot_variance(data_dir, variances, alphas):
     base = Path(data_dir) / "supervised" / "-1" / "3"
-    rows = []
-
-    for var in variances:
-        path = base / str(var) / "final_eval_errors_16_1000.json"
-        errors_by_state = _load_errors_json(path)
-        mae = _mae_from_ape(errors_by_state)
-        rows.append({"var": var, "mae": mae})
-
-    df = pd.DataFrame(rows).sort_values("var")
 
     plt.figure(figsize=(7, 4.5))
 
-    # One curve, points connected by straight dotted segments
-    plt.plot(
-        df["var"], df["mae"],
-        marker="o",
-        linestyle=":",  # ":" is matplotlib's dotted linestyle [code_file:0]
-        linewidth=2,
-        label="MAE"
-    )
+    for alpha in alphas:
+        rows = []
+        for var in variances:
+            path = base / str(var) / f"final_eval_errors_16_1000_{alpha}.json"
+            errors_by_state = _load_errors_json(path)
+            mae = _mae_from_ape(errors_by_state)
+            rows.append({"var": var, "mae": mae})
+
+        df = pd.DataFrame(rows).sort_values("var")
+        plt.plot(
+            df["var"], df["mae"],
+            marker="o",
+            linestyle=":",
+            linewidth=2,
+            label=f"lr={alpha:g}",
+        )
 
     plt.xlabel("Variance")
     plt.ylabel("MAE % of True Value")
-    plt.title("MAE vs Variance")
+    plt.title("MAE vs Variance (by Learning Rate)")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
     plt.close()
-
 
 if __name__ == "__main__":
     from config import data_dir

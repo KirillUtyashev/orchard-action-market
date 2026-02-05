@@ -147,11 +147,12 @@ def main(args):
     # stable legend order by lr
     runs.sort(key=lambda d: d["lr"])
 
-    base_args["schedule_lr"] = True
-    res = run_one(args.alpha[0], base_args, len(args.alpha))
-    res["lr"] = f"schedule_{res["lr"]}"
-    runs.append(res)
-    plot_multi_run_mae(runs, args)
+    if base_args["schedule_lr"] is False:
+        base_args["schedule_lr"] = True
+        res = run_one(args.alpha[0], base_args, len(args.alpha))
+        res["lr"] = f"schedule_{res["lr"]}"
+        runs.append(res)
+        plot_multi_run_mae(runs, args)
 
 # def main(args):
 #     args = parse_args(args)

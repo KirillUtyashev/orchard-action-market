@@ -48,7 +48,7 @@ class Learning:
 
         self.eval_history = []  # list of {"step": int, "mae_pct_overall": float, "mae_pct_by_state": {...}}
 
-        default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
+        default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
@@ -237,12 +237,12 @@ class Learning:
 
             if (step + 1) in eval_intervals:
                 print(f"Running evaluation at step {step + 1}/{self.trajectory_length}")
-                self.evaluate_networks(step=(step + 1), plot=True, store_last=True)
+                self.evaluate_networks(step=(step + 1), plot=False, store_last=True)
 
     def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
         errors_by_state = {
             "Z0": [], "Z1": [], "Y11": [], "Y10": [], "Y00": [], "Y01": []
-            }
+        }
         ape_by_state = {k: [] for k in errors_by_state.keys()}  # absolute % error per sample
 
         eps = 1e-8  # avoids blowups when true value is 0
@@ -439,7 +439,7 @@ class Learning:
                 # Add statistics text box
                 stats_text = f'Mean: {mean_error:.4f}\nStd: {std_error:.4f}\nN: {len(errors)}'
                 ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
                 ax.set_title(f'State {state_type} Error Distribution')
                 ax.set_xlabel('Error (Theoretical - Predicted)')
@@ -449,7 +449,7 @@ class Learning:
             else:
                 # No data for this state
                 ax.text(0.5, 0.5, f'No data for\nState {state_type}',
-                       transform=ax.transAxes, ha='center', va='center', fontsize=12)
+                        transform=ax.transAxes, ha='center', va='center', fontsize=12)
                 ax.set_title(f'State {state_type} Error Distribution')
 
         plt.tight_layout()
@@ -473,20 +473,20 @@ class Learning:
 
                 # Create histogram
                 ax.hist(errors, bins=30, alpha=0.7, color=f'C{state_types.index(state_type)}',
-                       edgecolor='black', linewidth=0.5)
+                        edgecolor='black', linewidth=0.5)
 
                 # Add vertical lines for mean and std
                 ax.axvline(mean_error, color='red', linestyle='--', linewidth=2,
-                          label=f'Mean: {mean_error:.4f}')
+                           label=f'Mean: {mean_error:.4f}')
                 ax.axvline(mean_error + std_error, color='orange', linestyle=':',
-                          linewidth=1.5, alpha=0.7, label=f'+1 Std')
+                           linewidth=1.5, alpha=0.7, label=f'+1 Std')
                 ax.axvline(mean_error - std_error, color='orange', linestyle=':',
-                          linewidth=1.5, alpha=0.7, label=f'-1 Std')
+                           linewidth=1.5, alpha=0.7, label=f'-1 Std')
 
                 # Add statistics text box
                 stats_text = f'Mean: {mean_error:.4f}\nStd: {std_error:.4f}\nN: {len(errors)}'
                 ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
-                       verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                        verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
 
                 ax.set_title(f'State {state_type} Error Distribution\n(Theoretical Value - Predicted Value)')
                 ax.set_xlabel('Error')
