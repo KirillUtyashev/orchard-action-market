@@ -136,14 +136,22 @@ def _pick_error_path(base: Path, var: int | float, alpha: float, scheduled: bool
             var_dir / f"final_eval_errors_16_1000_{alpha}_True.json",
             var_dir / f"final_eval_errors_16_1000_{alpha}_true.json",
             var_dir / f"final_eval_errors_16_1000_{alpha}_{True}.json",
+<<<<<<< HEAD
             ]
+=======
+        ]
+>>>>>>> 7d9a105 (Plots)
     else:
         candidates += [
             var_dir / f"final_eval_errors_16_1000_{alpha}.json",
             var_dir / f"final_eval_errors_16_1000_{alpha}_False.json",
             var_dir / f"final_eval_errors_16_1000_{alpha}_false.json",
             var_dir / f"final_eval_errors_16_1000_{alpha}_{False}.json",
+<<<<<<< HEAD
             ]
+=======
+        ]
+>>>>>>> 7d9a105 (Plots)
 
     for p in candidates:
         if p.exists():  # Path.exists() checks if the filesystem path exists. [web:3]
@@ -211,6 +219,7 @@ def plot_variance(data_dir, variances, alphas):
     plt.savefig(base / "main.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+<<<<<<< HEAD
 
 def _pick_error_path_nn(base: Path, var: int | float, nn_size: int, *, alpha: float = 0.001) -> Path:
     """Return the first existing path among known naming patterns for NN-size runs."""
@@ -293,10 +302,16 @@ def plot_variance_by_nn_size(data_dir, variances, nn_sizes, *, alpha: float = 0.
     plt.savefig(base / out_name, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+=======
+>>>>>>> 7d9a105 (Plots)
 
 if __name__ == "__main__":
     from config import data_dir
     # plot_variance(data_dir, [0.0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2])
+<<<<<<< HEAD
     # plot_variance(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [0.01, 0.001, 0.0001])
     plot_variance_by_nn_size(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [4, 8, 16, 32, 64, 128])
 
+=======
+    plot_variance(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [0.01, 0.001, 0.0001])
+>>>>>>> 7d9a105 (Plots)
