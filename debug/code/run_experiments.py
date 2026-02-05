@@ -1,6 +1,9 @@
 import argparse
+import os
 import sys
 import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
 from debug.code.config import EnvironmentConfig, ExperimentConfig, \
     TrainingConfig, data_dir
 from debug.code.helpers import set_all_seeds
@@ -122,42 +125,47 @@ def run_one(alpha, base_args, run_idx):
     algo = Learning(exp_config)
     history = algo.train()
 
-    return {"lr": float(alpha), "seed": seed, "history": history}
+    return {"lr": str(alpha), "seed": seed, "history": history}
 
-
-# def main(args):
-#     args = parse_args(args)
-#     base_args = vars(args)  # convert Namespace -> dict for safer pickling
-#
-#     futures = []
-#     runs = []
-#
-#     max_workers = min(len(args.alpha), os.cpu_count() or 1)
-#
-#     with ProcessPoolExecutor(max_workers=max_workers) as ex:
-#         for i, a in enumerate(args.alpha):
-#             futures.append(ex.submit(run_one, a, base_args, i))
-#
-#         for f in as_completed(futures):
-#             runs.append(f.result())
-#
-#     # stable legend order by lr
-#     runs.sort(key=lambda d: d["lr"])
-#     plot_multi_run_mae(runs, args)
 
 def main(args):
     args = parse_args(args)
-    all_histories = []
-    for i in range(len(args.alpha)):
-        train_config = set_config(args, i)
-        exp_config = ExperimentConfig(
-            env_config=EnvironmentConfig(), train_config=train_config
-        )
-        algo = Learning(exp_config)
-        set_all_seeds(seed=args.seed)
-        all_histories.append({"lr": exp_config.train_config.alpha, "history": algo.train()})
+    base_args = vars(args)  # convert Namespace -> dict for safer pickling
 
-    plot_multi_run_mae(all_histories, args)
+    futures = []
+    runs = []
+
+    max_workers = min(len(args.alpha), os.cpu_count() or 1)
+
+    with ProcessPoolExecutor(max_workers=max_workers) as ex:
+        for i, a in enumerate(args.alpha):
+            futures.append(ex.submit(run_one, a, base_args, i))
+
+        for f in as_completed(futures):
+            runs.append(f.result())
+
+    # stable legend order by lr
+    runs.sort(key=lambda d: d["lr"])
+
+    base_args["schedule_lr"] = True
+    res = run_one(args.alpha[0], base_args, len(args.alpha))
+    res["lr"] = f"schedule_{res["lr"]}"
+    runs.append(res)
+    plot_multi_run_mae(runs, args)
+
+# def main(args):
+#     args = parse_args(args)
+#     all_histories = []
+#     for i in range(len(args.alpha)):
+#         train_config = set_config(args, i)
+#         exp_config = ExperimentConfig(
+#             env_config=EnvironmentConfig(), train_config=train_config
+#         )
+#         algo = Learning(exp_config)
+#         set_all_seeds(seed=args.seed)
+#         all_histories.append({"lr": exp_config.train_config.alpha, "history": algo.train()})
+#
+#     plot_multi_run_mae(all_histories, args)
 
 
 def plot_multi_run_mae(runs, args):
@@ -168,10 +176,10 @@ def plot_multi_run_mae(runs, args):
         lr = run["lr"]
         hist = run["history"]
         steps = [h["step"] for h in hist]
-        maes  = [h["mae_pct_overall"] for h in hist]
+        maes = [h["mae_pct_overall"] for h in hist]
         if maes:
             ymax = max(ymax, max(maes))
-        plt.plot(steps, maes, marker="o", linewidth=2, label=f"lr={lr:g}")
+        plt.plot(steps, maes, marker="o", linewidth=2, label=f"lr={lr}")
 
     ax = plt.gca()
     top = int(np.ceil(ymax / 10.0) * 10)
