@@ -153,7 +153,7 @@ def main(args):
         res = run_one(args.alpha[0], base_args, len(args.alpha))
         res["lr"] = f"schedule_{res["lr"]}"
         runs.append(res)
-        plot_multi_run_mae(runs, args)
+    plot_multi_run_mae(runs, args, data_dir)
 
 # def main(args):
 #     args = parse_args(args)
