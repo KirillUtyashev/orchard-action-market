@@ -67,7 +67,7 @@ class Learning:
     def _init_critic_networks(self):
         for _ in range(NUM_AGENTS):
             if self.exp_config.train_config.eligibility:
-                self.critic_networks.append(EligibilityCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 0, self.trajectory_length))
+                self.critic_networks.append(EligibilityCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, lambda_coeff=self.exp_config.train_config.lmda, num_training_steps=self.trajectory_length))
             elif self.exp_config.train_config.forward:
                 self.critic_networks.append(TorchRLCritic(VNet(self.exp_config.train_config.input_dim, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 1000, num_training_steps=self.trajectory_length, lambda_coeff=self.exp_config.train_config.lmda))
             else:
