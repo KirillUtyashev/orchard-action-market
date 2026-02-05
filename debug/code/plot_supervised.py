@@ -126,38 +126,177 @@ def plot_mae_vs_nn_size_for_picker_r(
     return df_agg
 
 
+def _pick_error_path(base: Path, var: int | float, alpha: float, scheduled: bool) -> Path:
+    """Return the first existing path among known naming patterns."""
+    var_dir = base / str(var)
+
+    candidates = []
+    if scheduled:
+        candidates += [
+            var_dir / f"final_eval_errors_16_1000_{alpha}_True.json",
+            var_dir / f"final_eval_errors_16_1000_{alpha}_true.json",
+            var_dir / f"final_eval_errors_16_1000_{alpha}_{True}.json",
+            ]
+    else:
+        candidates += [
+            var_dir / f"final_eval_errors_16_1000_{alpha}.json",
+            var_dir / f"final_eval_errors_16_1000_{alpha}_False.json",
+            var_dir / f"final_eval_errors_16_1000_{alpha}_false.json",
+            var_dir / f"final_eval_errors_16_1000_{alpha}_{False}.json",
+            ]
+
+    for p in candidates:
+        if p.exists():  # Path.exists() checks if the filesystem path exists. [web:3]
+            return p
+
+    raise FileNotFoundError(
+        f"No eval error file found for var={var}, alpha={alpha}, scheduled={scheduled}. "
+        f"Tried: {[str(p) for p in candidates]}"
+    )
+
+
 def plot_variance(data_dir, variances, alphas):
     base = Path(data_dir) / "supervised" / "-1" / "3"
+    variances = sorted(set(variances))
 
-    plt.figure(figsize=(7, 4.5))
+    fig, ax = plt.subplots(figsize=(8, 4.8))
 
-    for alpha in alphas:
+    def plot_series(alpha: float, scheduled: bool, *, linestyle: str, marker: str, label_suffix: str = ""):
         rows = []
         for var in variances:
-            path = base / str(var) / f"final_eval_errors_16_1000_{alpha}.json"
+            path = _pick_error_path(base, var, alpha, scheduled)
             errors_by_state = _load_errors_json(path)
             mae = _mae_from_ape(errors_by_state)
             rows.append({"var": var, "mae": mae})
 
         df = pd.DataFrame(rows).sort_values("var")
-        plt.plot(
+        ax.plot(
             df["var"], df["mae"],
-            marker="o",
-            linestyle=":",
-            linewidth=2,
-            label=f"lr={alpha:g}",
+            marker=marker,
+            markersize=5.5,
+            linestyle=linestyle,
+            linewidth=2.2,
+            label=f"lr={alpha:g}{label_suffix}",
         )
 
-    plt.xlabel("Variance")
-    plt.ylabel("MAE % of True Value")
-    plt.title("MAE vs Variance (by Learning Rate)")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-    plt.close()
+    # Unscheduled runs
+    for alpha in alphas:
+        plot_series(alpha, scheduled=False, linestyle=":", marker="o")
+
+    # Scheduled runs (keep your existing choice; feel free to parameterize)
+    for alpha in [0.001, 0.0001]:
+        plot_series(alpha, scheduled=True, linestyle="-", marker="s", label_suffix=" (sched)")
+
+    # ---- unclump x-axis (supports 0) ----
+    pos = [v for v in variances if v > 0]
+    linthresh = min(pos) if pos else 1.0
+    ax.set_xscale("symlog", linthresh=linthresh)  # symlog has a linear region set by linthresh. [web:65]
+
+    ax.set_xlim(min(variances), max(variances))
+    if len(variances) <= 12:
+        ax.set_xticks(variances)
+    else:
+        ax.set_xticks([0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000])
+    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.ticklabel_format(style="plain", axis="x")
+    # -----------------------------------
+
+    ax.set_xlabel("Variance")
+    ax.set_ylabel("MAE % of True Value")
+    ax.set_title("MAE vs Variance (by Learning Rate)")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(frameon=True, framealpha=0.9, ncols=2)
+
+    fig.tight_layout()
+    plt.savefig(base / "main.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _pick_error_path_nn(base: Path, var: int | float, nn_size: int, *, alpha: float = 0.001) -> Path:
+    """Return the first existing path among known naming patterns for NN-size runs."""
+    var_dir = base / str(var)
+
+    # You said: replace "16" with NN size, and the later part should be "0.001_True"
+    candidates = [
+        var_dir / f"final_eval_errors_{nn_size}_1000_{alpha}_True.json",
+        var_dir / f"final_eval_errors_{nn_size}_1000_{alpha}_true.json",
+        var_dir / f"final_eval_errors_{nn_size}_1000_{alpha}_{True}.json",
+        ]
+
+    for p in candidates:
+        if p.exists():
+            return p
+
+    raise FileNotFoundError(
+        f"No eval error file found for var={var}, nn_size={nn_size} (alpha={alpha}, scheduled=True). "
+        f"Tried: {[str(p) for p in candidates]}"
+    )
+
+
+def plot_variance_by_nn_size(data_dir, variances, nn_sizes, *, alpha: float = 0.001, out_name: str = "main_by_nn.png"):
+    base = Path(data_dir) / "supervised" / "-1" / "3"
+    variances = sorted(set(variances))
+    nn_sizes = sorted(set(nn_sizes))
+
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+
+    # simple style cycling (optional)
+    markers = ["o", "s", "D", "^", "v", "P", "X"]
+    linestyles = ["-", "--", "-.", ":"]
+
+    def plot_series(nn_size: int, *, linestyle: str, marker: str):
+        rows = []
+        for var in variances:
+            path = _pick_error_path_nn(base, var, nn_size, alpha=alpha)
+            errors_by_state = _load_errors_json(path)
+            mae = _mae_from_ape(errors_by_state)
+            rows.append({"var": var, "mae": mae})
+
+        df = pd.DataFrame(rows).sort_values("var")
+        ax.plot(
+            df["var"], df["mae"],
+            marker=marker,
+            markersize=5.5,
+            linestyle=linestyle,
+            linewidth=2.2,
+            label=f"hid_dim={nn_size}",
+        )
+
+    for i, nn_size in enumerate(nn_sizes):
+        plot_series(
+            nn_size,
+            linestyle=linestyles[i % len(linestyles)],
+            marker=markers[i % len(markers)],
+        )
+
+    # ---- unclump x-axis (supports 0) ----
+    pos = [v for v in variances if v > 0]
+    linthresh = min(pos) if pos else 1.0
+    ax.set_xscale("symlog", linthresh=linthresh)  # linear region is (-linthresh, linthresh) [web:2]
+
+    ax.set_xlim(min(variances), max(variances))
+    if len(variances) <= 12:
+        ax.set_xticks(variances)
+    else:
+        ax.set_xticks([0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000])
+    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.ticklabel_format(style="plain", axis="x")
+    # -----------------------------------
+
+    ax.set_xlabel("Variance")
+    ax.set_ylabel("MAE % of True Value")
+    ax.set_title("MAE vs Variance (by NN size)")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(frameon=True, framealpha=0.9, ncols=2)
+
+    fig.tight_layout()
+    plt.savefig(base / out_name, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
 
 if __name__ == "__main__":
     from config import data_dir
     # plot_variance(data_dir, [0.0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2])
-    plot_variance(data_dir, [0, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0])
+    # plot_variance(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [0.01, 0.001, 0.0001])
+    plot_variance_by_nn_size(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [4, 8, 16, 32, 64, 128])
+

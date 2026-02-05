@@ -4,26 +4,22 @@ import torch.nn as nn
 from torch import optim
 from torch.optim.lr_scheduler import LambdaLR
 
+from debug.code.config import DEVICE
 
-class TorchRLCritic:
+
+class EligibilityCritic:
     """
     Online semi-gradient TD(lambda) with eligibility traces (backward view).
     No trajectory window needed; updates every transition.
     """
     def __init__(self, model: nn.Module, alpha, gamma: float,
-                 lambda_coeff: float = 0.9, device="cpu",
-                 optimizer="sgd", num_training_steps=10000):
-        self.device = "cpu"
+                 lambda_coeff: float = 0.9, num_training_steps=10000):
+        self.device = DEVICE
         self.model = model.to(self.device)
         self.gamma = float(gamma)
         self.lmbda = float(lambda_coeff)
 
-        # NOTE: eligibility-trace TD(lambda) is derived for (semi-)gradient updates.
-        # If you want the "textbook" behavior, prefer plain SGD.
-        # if optimizer.lower() == "adamw":
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=alpha, amsgrad=True)
-        # else:
-        #     self.optimizer = optim.SGD(self.model.parameters(), lr=alpha)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=alpha)
 
         self._lr_step = 0
         self.scheduler = LambdaLR(

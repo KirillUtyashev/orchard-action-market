@@ -2,8 +2,6 @@ from pathlib import Path
 from dataclasses import dataclass, field
 
 import torch
-
-from orchard.algorithms import despawn_apple, spawn_apple
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
@@ -33,11 +31,13 @@ class TrainingConfig:
     supervised: bool = True
     reward_learning: bool = False
     input_dim: int = 3
-    use_library: bool = False
+    forward: bool = False
+    eligibility: bool = False
     monte_carlo: bool = False
     num_seeds: int = 1000
     variance: float = 0
     schedule_lr: bool = False
+    lmda: float = 0.5
 
 
 @dataclass

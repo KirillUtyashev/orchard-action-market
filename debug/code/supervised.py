@@ -4,10 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
+from debug.code.forward_view import TorchRLCritic, VNet
 from debug.code.main_net import MainNet
 from utils import ten
 from debug.code.controllers import ViewController
-from debug.code.library_value_function import TorchRLCritic
+from debug.code.library_value_function import EligibilityCritic
 from debug.code.monte_carlo import generate_initial_state_supervised, \
     iid_supervised, monte_carlo_supervised, run
 from debug.code.simple_agent import SimpleAgent
@@ -48,12 +49,14 @@ class Learning:
 
         self.eval_history = []  # list of {"step": int, "mae_pct_overall": float, "mae_pct_by_state": {...}}
 
-        default_final_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}.json"
+        type_ = "supervised" if exp_config.train_config.supervised else "forward" if exp_config.train_config.forward else "eligibility" if exp_config.train_config.eligibility else "td0"
+
+        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
 
-        default_hist_path = data_dir / "supervised" / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
+        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
 
         self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path))
 
@@ -63,11 +66,13 @@ class Learning:
 
     def _init_critic_networks(self):
         for _ in range(NUM_AGENTS):
-            if not self.exp_config.train_config.use_library:
+            if self.exp_config.train_config.eligibility:
+                self.critic_networks.append(EligibilityCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 0, self.trajectory_length))
+            elif self.exp_config.train_config.forward:
+                self.critic_networks.append(TorchRLCritic(VNet(self.exp_config.train_config.input_dim, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 1000, num_training_steps=self.trajectory_length, lambda_coeff=self.exp_config.train_config.lmda))
+            else:
                 self.critic_networks.append(VNetwork(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.alpha, DISCOUNT_FACTOR,
                                                      self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
-            else:
-                self.critic_networks.append(TorchRLCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 0, self.trajectory_length))
 
     def _init_agents_for_training(self):
         for i in range(NUM_AGENTS):
@@ -134,7 +139,7 @@ class Learning:
 
         # Optional: if you want each run to start with empty TD(lambda) buffers
         # (recommended unless you intentionally want traces to carry over).
-        if self.exp_config.train_config.use_library:
+        if self.exp_config.train_config.forward:
             for i in range(NUM_AGENTS):
                 if hasattr(self.critic_networks[i], "reset_trajectory"):
                     self.critic_networks[i].reset_trajectory()
@@ -198,7 +203,7 @@ class Learning:
                     self.critic_networks[i].add_experience(processed_intermediate_state, None, None, mean_val_y[i])
                     self.critic_networks[i].train_supervised()
 
-                elif self.exp_config.train_config.use_library:
+                elif self.exp_config.train_config.forward or self.exp_config.train_config.eligibility:
                     # ---- Push TWO consecutive transitions into the trajectory buffer ----
                     # Transition 1: Z -> Y (reward 0)
                     obs1 = ten(processed_old_state, DEVICE).view(-1)
@@ -221,12 +226,6 @@ class Learning:
                         done=False,
                         terminated=False,
                     )
-
-                    # If your TorchRLCritic is implemented as discussed, it returns
-                    # None until the deque reaches traj_len, then returns a float loss.
-                    # (You can log it if you want.)
-                    # if loss1 is not None or loss2 is not None:
-                    #     print(f"agent {i}: loss={(loss2 if loss2 is not None else loss1):.6f}")
 
                 else:
                     self.critic_networks[i].add_experience(processed_old_state, processed_intermediate_state, 0)
@@ -261,7 +260,7 @@ class Learning:
 
                 for i in range(NUM_AGENTS):
                     input_ = self.agent_controller(eval_state, i)
-                    if self.exp_config.train_config.use_library:
+                    if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                         obs = ten(input_, DEVICE).view(-1)
                         pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
                     else:

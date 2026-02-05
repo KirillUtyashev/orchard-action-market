@@ -11,7 +11,7 @@ class VNetwork(NetworkWrapper):
     def __init__(
             self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False
     ):
-        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, num_training_steps, schedule)
+        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps)
         self.batch_rewards = []
 
         self.theoretical_vals = []

@@ -55,7 +55,12 @@ def parse_args(args):
         "--input_dim", type=int, default=3
     )
     parser.add_argument(
-        "--library",
+        "--forward",
+        action=argparse.BooleanOptionalAction,
+        default=False
+    )
+    parser.add_argument(
+        "--eligibility",
         action=argparse.BooleanOptionalAction,
         default=False
     )
@@ -69,6 +74,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--variance", type=float, default=0
+    )
+    parser.add_argument(
+        "--lmda", type=float, default=0.5
     )
     parser.add_argument(
         "--schedule_lr",
@@ -90,11 +98,13 @@ def set_config(args, i):
         supervised=args.supervised,
         reward_learning=args.reward_learning,
         input_dim=args.input_dim,
-        use_library=args.library,
+        forward=args.forward,
+        eligibility=args.eligibility,
         monte_carlo=args.monte_carlo,
         num_seeds=args.num_seeds,
         variance=args.variance,
-        schedule_lr=args.schedule_lr
+        schedule_lr=args.schedule_lr,
+        lmda=args.lmda
     )
 
 
@@ -113,11 +123,13 @@ def run_one(alpha, base_args, run_idx):
         supervised=bool(base_args["supervised"]),
         reward_learning=bool(base_args["reward_learning"]),
         input_dim=int(base_args["input_dim"]),
-        use_library=bool(base_args["library"]),
+        forward=bool(base_args["forward"]),
+        eligibility=bool(base_args["eligibility"]),
         monte_carlo=bool(base_args["monte_carlo"]),
         num_seeds=int(base_args["num_seeds"]),
         variance=float(base_args["variance"]),
-        schedule_lr=base_args["schedule_lr"]
+        schedule_lr=base_args["schedule_lr"],
+        lmda=base_args["lmda"]
     )
 
     exp_config = ExperimentConfig(env_config=EnvironmentConfig(), train_config=train_config)
@@ -132,27 +144,28 @@ def run_one(alpha, base_args, run_idx):
 def main(args):
     args = parse_args(args)
     base_args = vars(args)  # convert Namespace -> dict for safer pickling
-
-    futures = []
     runs = []
+    if args.supervised:
+        futures = []
+        max_workers = min(len(args.alpha), os.cpu_count() or 1)
+        with ProcessPoolExecutor(max_workers=max_workers) as ex:
+            for i, a in enumerate(args.alpha):
+                futures.append(ex.submit(run_one, a, base_args, i))
 
-    max_workers = min(len(args.alpha), os.cpu_count() or 1)
+            for f in as_completed(futures):
+                runs.append(f.result())
 
-    with ProcessPoolExecutor(max_workers=max_workers) as ex:
-        for i, a in enumerate(args.alpha):
-            futures.append(ex.submit(run_one, a, base_args, i))
+        # stable legend order by lr
+        runs.sort(key=lambda d: d["lr"])
 
-        for f in as_completed(futures):
-            runs.append(f.result())
+        if base_args["schedule_lr"] is False:
+            base_args["schedule_lr"] = True
+            res = run_one(args.alpha[0], base_args, len(args.alpha))
+            res["lr"] = f"schedule_{res["lr"]}"
+            runs.append(res)
+    else:
+        runs.append(run_one(args.alpha[0], base_args, len(args.alpha)))
 
-    # stable legend order by lr
-    runs.sort(key=lambda d: d["lr"])
-
-    if base_args["schedule_lr"] is False:
-        base_args["schedule_lr"] = True
-        res = run_one(args.alpha[0], base_args, len(args.alpha))
-        res["lr"] = f"schedule_{res["lr"]}"
-        runs.append(res)
     plot_multi_run_mae(runs, args, data_dir)
 
 # def main(args):
