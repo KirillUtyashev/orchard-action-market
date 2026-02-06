@@ -51,12 +51,12 @@ class Learning:
 
         type_ = "supervised" if exp_config.train_config.supervised else "forward" if exp_config.train_config.forward else "eligibility" if exp_config.train_config.eligibility else "td0"
 
-        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}.json"
+        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
 
-        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}.json"
+        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
 
         self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path))
 
