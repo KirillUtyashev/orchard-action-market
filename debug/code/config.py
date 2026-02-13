@@ -27,10 +27,10 @@ class TrainingConfig:
     num_layers: int = 4
     seed: int = 1234
     num_eval_states: int = 0
-    picker_r: int = 0
+    picker_r: int = -5
     supervised: bool = True
     reward_learning: bool = False
-    input_dim: int = 3
+    input_dim: int = 0
     forward: bool = False
     eligibility: bool = False
     monte_carlo: bool = False
@@ -38,6 +38,10 @@ class TrainingConfig:
     variance: float = 0
     schedule_lr: bool = False
     lmda: float = 0.5
+    random_policy: bool = False
+    q_agent: float = 1
+    apple_life: float = 8
+    debug: bool = True
 
 
 @dataclass

@@ -2,39 +2,13 @@ import random
 import torch
 import os
 import numpy as np
-from orchard.environment import (
-    Orchard,
-    OrchardBasic,
-    OrchardBasicNewDynamic,
-    OrchardEuclideanNegativeRewardsNewDynamic,
-    OrchardEuclideanRewardsNewDynamic,
-)
 
+from debug.code.config import NUM_AGENTS, W
+from debug.code.environment import Orchard
 
 same_cell_no_reward = 0
 count = 0
-
-
-def create_env(
-    env_config,
-    num_agents,
-    agent_pos,
-    apples,
-    agents_list,
-    env_cls=OrchardBasic,
-    debug=False,
-):
-    env = env_cls(
-        env_config.length,
-        env_config.width,
-        num_agents,
-        agents_list,
-        s_target=env_config.s_target,
-        apple_mean_lifetime=env_config.apple_mean_lifetime,
-        debug=debug,
-    )
-    env.initialize(agents_list, agent_pos=agent_pos, apples=apples)
-    return env
+UP, DOWN, LEFT, RIGHT, STAY = 0, 1, 2, 3, 4
 
 
 def set_all_seeds(seed: int = 42, deterministic: bool = False) -> None:
@@ -74,99 +48,71 @@ def teleport(n):
     new_j = np.random.randint(0, n - 1)
     return np.array([new_i, new_j])
 
-def convert_position(pos):
-    if pos is not None:
-        temp = np.zeros((len(pos), 1), dtype=int)
-        for i in range(len(pos)):
-            temp[i] = np.array(pos[i])
-        return temp
-    return None
 
-
-def get_empty_fields(env_length, env_width):
-    return {
-        "agents": np.zeros((env_width, env_length), dtype=int),
-        "apples": np.zeros((env_width, env_length), dtype=int),
-        "poses": np.zeros((env_width, env_length), dtype=int),
-    }
-
-
-def generate_sample_states(env_length, env_width, num_agents, alt_vision=False):
+def random_policy(agent_pos):
     """
-    Create three sample states. In state i (i=0,1,2), all agents are placed at (row=0, col=i+1),
-    and a single apple is placed at (0, 0). Returns a tuple of three state dicts.
-
-    Assumes get_empty_fields(L, W) -> dict with keys:
-      - "agents": 2D array-like [L x W] (agent count per cell)
-      - "apples": 2D array-like [L x W]
-      - "poses":  array of shape [num_agents, 2] (row, col) for each agent
+    Returns the *new (r, c) position* after taking a uniformly random action
+    from {UP, DOWN, LEFT, RIGHT, STAY}. If the sampled move would go off-grid,
+    the agent stays in place. [web:198]
     """
-    if num_agents < 0:
-        raise ValueError("num_agents must be non-negative")
-    # Need columns 1,2,3 => require width >= 4 (since we index i+1)
-    if env_width < 4:
-        raise ValueError(
-            "env_width must be at least 4 (to place agents at columns 1..3)"
-        )
-    if env_length < 1:
-        raise ValueError("env_length must be >= 1")
+    r, c = agent_pos
+    a = random.randrange(5)  # 0..4
 
-    states = []
-    for i in range(3):
-        s = get_empty_fields(env_length, env_width)
+    nr, nc = r, c
+    if a == UP:
+        nr = r - 1
+    elif a == DOWN:
+        nr = r + 1
+    elif a == LEFT:
+        nc = c - 1
+    elif a == RIGHT:
+        nc = c + 1
+    elif a == STAY:
+        pass
 
-        # Place all agents at (0, i+1)
-        col = i + 1
-        # Use numpy-style indexing if arrays, but remain compatible with lists
-        s["agents"][0][col] = num_agents
-        s["poses"] = (
-            np.repeat([[0, col]], repeats=num_agents, axis=0)
-            if num_agents > 0
-            else np.empty((0, 2), dtype=int)
-        )
+    # If illegal, "pick stay" (i.e., revert)
+    if not (0 <= nr < W and 0 <= nc < W):
+        nr, nc = r, c
 
-        # One apple at (0, 0)
-        s["apples"][0][0] = 1
-
-        states.append(s)
-
-    return tuple(states)
+    return np.array([nr, nc])
 
 
-def generate_alt_states(env_length, num_agents):
-    res = [
-        get_empty_fields(env_length),
-        get_empty_fields(env_length),
-        get_empty_fields(env_length),
-    ]
-    for i in range(len(res)):
-        res[i]["agents"][i + 1] = np.array(num_agents)
+def transition(step, curr_state, env, actor_idx):
+    if step == -1:
+        # init-only: do NOT mutate env
+        if curr_state is None:
+            curr_state = dict(env.get_state())
+        if actor_idx is None:
+            actor_idx = random.randint(0, NUM_AGENTS - 1)
+        curr_state["actor_id"] = actor_idx
+        curr_state["mode"] = 0
+        return curr_state, None, None, actor_idx
+
+    env.process_action(
+        actor_idx,
+        random_policy(curr_state["agent_positions"][actor_idx]),
+        mode=0,
+    )
+
+    semi_state = dict(env.get_state())
+    semi_state["actor_id"] = actor_idx
+    semi_state["mode"] = 1
+
+    res = env.process_action(actor_idx, None, mode=1)
+
+    if step == NUM_AGENTS - 1:
+        env.despawn_apples()
+        env.spawn_apples()
+
+    final_state = dict(env.get_state())
+    actor_idx = random.randint(0, NUM_AGENTS - 1)
+    final_state["actor_id"] = actor_idx
+    final_state["mode"] = 0
+
+    # return final_state as the next curr_state
+    return final_state, semi_state, res, actor_idx
 
 
-def get_discounted_value(old, new, discount_factor=0.05):
-    return old * (1 - discount_factor) + new * discount_factor
-
-
-def step(agents_list, environment: Orchard, agent_controller, epsilon, inference=False):
-    agent_idx = random.randint(0, len(agents_list) - 1)
-    agent = agents_list[agent_idx]
-    action = None
-    # if agents_list[agent].policy is not random_policy:
-    #     action = agent_controller.agent_get_action(environment, agent, epsilon)
-    # else:
-    #     action = random_policy(environment.available_actions)
-    if agent_controller is not None:
-        action = agent_controller.agent_get_action(environment, agent_idx, epsilon)
-    else:
-        state = environment.get_state()
-        action = agent.policy(state, agent.position, environment.available_actions)
-        # action = random_policy(environment.available_actions)
-    environment.process_action_eval(agent_idx, agent.position.copy(), action)
-
-    if (
-        isinstance(environment, OrchardBasicNewDynamic)
-        or isinstance(environment, OrchardEuclideanRewardsNewDynamic)
-        or isinstance(environment, OrchardEuclideanNegativeRewardsNewDynamic)
-    ):
-        environment.remove_apple(agents_list[agent_idx].position.copy())
-
+def make_env(reward_module, p_apple, d_apple, apples, agents, agent_positions):
+    return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
+                   start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions)

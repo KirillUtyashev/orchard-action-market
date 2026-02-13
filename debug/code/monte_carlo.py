@@ -5,9 +5,10 @@ import logging
 import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 from typing import Literal
 from typing import Optional, Union
-
+import copy
 from config import (
     DISCOUNT_FACTOR, NUM_AGENTS,
     W,
@@ -21,7 +22,7 @@ from config import (
 import numpy as np
 
 from debug.code.environment import Orchard
-from debug.code.helpers import set_all_seeds, teleport
+from debug.code.helpers import make_env, set_all_seeds, teleport, transition
 from debug.code.reward import Reward
 
 
@@ -168,7 +169,7 @@ def generate_initial_state_supervised(
         *,
         max_attempts: int = 10000,
         actor_id: int = 0,
-        save=True
+        save=True,
 ):
     """
     Generates and saves one of the 6 abstract states used in the supervised-learning setup.
@@ -346,6 +347,264 @@ def _orchard_from_payload(reward_module: Reward, payload: InitPayload):
         start_agent_positions=agent_positions.copy(),
     )
     return orchard, init_actor, init_mode
+
+
+def deep_copy_state(s: dict) -> dict:
+    # safer than s.copy() for nested structures [web:394]
+    return copy.deepcopy(s)
+
+
+def monte_carlo_full(
+        seed: int = 42069,
+        trajectory_length: int = 1000,
+        init_env=None,
+        init_state: dict = None,
+        discount_factor: float = 0.99,
+        num_trajectories: int = 20,      # how many times to repeat "1000 rollouts then average"
+        num_rollouts: int = 200,        # run 1000 trajectories per repeat
+):
+    assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
+    assert init_state is not None
+
+    # Total reward-vector slots per rollout (matches your t += 2 logic)
+    T = trajectory_length * NUM_AGENTS * 2
+    discounts = discount_factor ** np.arange(T)
+
+    base_state = deep_copy_state(init_state)
+
+    stored_means = np.zeros((NUM_AGENTS, num_trajectories), dtype=float)
+
+    for i in range(num_trajectories):
+        returns = np.zeros((NUM_AGENTS, num_rollouts), dtype=float)
+
+        for j in range(num_rollouts):
+            # Seed ONCE per rollout (don’t reseed every step)
+            set_all_seeds(seed + i * num_rollouts + j)
+
+            curr_state = deep_copy_state(base_state)
+
+            env = make_env(
+                init_env.reward_module,
+                init_env.p_apple,
+                init_env.d_apple,
+                curr_state["agents"],
+                curr_state["apples"].copy(),
+                curr_state["agent_positions"].copy(),
+            )
+
+            actor_idx = curr_state["actor_id"]
+
+            rewards_by_agent = np.zeros((NUM_AGENTS, T), dtype=float)
+            t = 0
+
+            for _ in range(trajectory_length):
+                for step in range(NUM_AGENTS):
+                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx)
+
+                    # Your environment seems to have a "mode 0 then mode 1" structure,
+                    # so you store a 0 slot then the actual reward slot.
+                    rewards_by_agent[:, t] = 0.0
+                    t += 1
+                    rewards_by_agent[:, t] = res.reward_vector
+                    t += 1
+
+            assert t == T, f"Filled {t} reward slots, expected {T}"
+
+            # Discounted return for this rollout
+            returns[:, j] = rewards_by_agent @ discounts
+
+        # Mean over 1000 rollouts; store it for repetition i
+        stored_means[:, i] = returns.mean(axis=1)
+
+    # MC estimate of the mean = average of the stored means across repetitions
+    mc_estimate = stored_means.mean(axis=1)
+    return mc_estimate
+
+
+def generate_initial_state_full(
+        reward_module: Reward,
+        run_id: int,
+        seed: int,
+        discount_factor: float,
+        p_apple: float,
+        d_apple: float,
+        save=True
+):
+    """
+    Generates and saves one of the 6 abstract states used in the supervised-learning setup.
+
+    State types:
+        Z1  : mode=0, actor=self
+        Z0  : mode=0, actor=other
+        Y11 : mode=1, actor=self,  apple under actor
+        Y10 : mode=1, actor=self,  no apple under actor
+        Y01 : mode=1, actor=other, apple under actor
+        Y00 : mode=1, actor=other, no apple under actor
+    """
+
+    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=0.2, d_apple=d_apple)
+    orchard.p_apple = p_apple
+    orchard.set_positions()
+    state = dict(orchard.get_state())
+    state["actor_id"] = random.randint(0, NUM_AGENTS - 1)
+    state["mode"] = 0
+
+    mc = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
+
+    state["mc"] = mc
+    if save:
+        out_dir = data_dir / "states" / "full"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        out_path = out_dir / f"init_state_reward_{reward_module.picker_r}_{run_id}.npz"
+
+        np.savez_compressed(
+            out_path,
+            dict=np.array(state, dtype=object),
+        )
+    return state
+
+
+def _sample_other_agents_positions(rng, width, length, num_agents, reserved):
+    """
+    Returns positions array (num_agents, 2) with unique cells.
+    reserved: set of (x,y) that cannot be used.
+    """
+    positions = np.full((num_agents, 2), -1, dtype=int)
+
+    used = set(reserved)
+    for a in range(num_agents):
+        while True:
+            x = int(rng.integers(0, width))
+            y = int(rng.integers(0, length))
+            if (x, y) not in used:
+                used.add((x, y))
+                positions[a] = (x, y)
+                break
+    return positions
+
+
+def _agents_map_from_positions(width, length, agent_positions):
+    agents = np.zeros((width, length), dtype=int)
+    for (x, y) in agent_positions:
+        agents[x, y] += 1
+    return agents
+
+
+def _make_distance_positions(center, distances, width, length):
+    """
+    Produce self positions at given Manhattan distances from center along a line,
+    clamped to valid cells. Keeps it simple/deterministic.
+    """
+    cx, cy = center
+    out = []
+    for d in distances:
+        x = cx - d
+        y = cy
+        if x < 0:
+            # fallback: go upward instead
+            x = cx
+            y = cy - d
+        if not (0 <= x < width and 0 <= y < length):
+            raise ValueError(f"Distance {d} doesn't fit on grid from center {center}.")
+        out.append((x, y))
+    return out
+
+
+def generate_careful_distance_series(
+        reward_module,
+        seed: int,
+        discount_factor: float,
+        p_apple: float,
+        d_apple: float,
+        distances=(4, 3, 2, 1, 0),
+        self_id: int = 0,
+        num_trajectories: int = 50,
+        trajectory_length: int = 1000,
+):
+    # For a pure proximity test, strongly consider freezing apple dynamics:
+    # p_apple=0, d_apple=0 so the only apple is your fixed one. (No citation)
+
+    width, length = W, L
+    center = (width // 2, length // 2)
+
+    # Fixed apples map: single apple in center
+    start_apples = np.zeros((width, length), dtype=int)
+    start_apples[center[0], center[1]] = 1
+
+    # Choose self positions at different Manhattan distances
+    self_positions = _make_distance_positions(center, distances, width, length)
+
+    # Fix other agents' positions ONCE (reused across all distances)
+    rng = np.random.default_rng(seed)
+
+    results = []  # list of dicts: {distance, init_state, mc_value_vector}
+
+    # Sample a base placement for other agents, avoiding the apple and any potential self cells
+    reserved = {center} | set(self_positions)
+    other_positions = _sample_other_agents_positions(
+        rng, width, length, NUM_AGENTS - 1, reserved=reserved
+    )
+
+    for d, self_pos in zip(distances, self_positions):
+        # Build full agent_positions (NUM_AGENTS,2)
+        agent_positions = np.zeros((NUM_AGENTS, 2), dtype=int)
+        agent_positions[self_id] = np.array(self_pos, dtype=int)
+
+        k = 0
+        for a in range(NUM_AGENTS):
+            if a == self_id:
+                continue
+            agent_positions[a] = other_positions[k]
+            k += 1
+
+        start_agents = _agents_map_from_positions(width, length, agent_positions)
+
+        # Build init_state explicitly (don’t rely on get_state())
+        init_state = {
+            "apples": start_apples.copy(),
+            "agents": start_agents.copy(),
+            "agent_positions": agent_positions.copy(),
+            "actor_id": self_id,
+            "mode": 0,  # start in move mode so distance can matter [file:1]
+        }
+
+        # Build an env factory that recreates the exact same env per trajectory
+        def init_env_factory():
+            return Orchard(
+                length=length,
+                width=width,
+                num_agents=NUM_AGENTS,
+                reward=reward_module,
+                p_apple=p_apple,
+                d_apple=d_apple,
+                start_agents_map=start_agents,
+                start_apples_map=start_apples,
+                start_agent_positions=agent_positions,
+            )
+
+        mc = monte_carlo_full(
+            seed=seed,
+            trajectory_length=trajectory_length,
+            init_env=init_env_factory(),
+            init_state=init_state,
+            discount_factor=discount_factor,
+            num_trajectories=num_trajectories,
+        )
+
+        init_state["distance"] = d
+        init_state["mc"] = mc
+
+        out_dir = data_dir / "states" / "careful"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        out_path = out_dir / f"careful_agent{self_id}_seed{seed}_d{d}.npz"
+
+        np.savez_compressed(
+            out_path,
+            dict=np.array(init_state, dtype=object),
+        )
+    return results
 
 
 def monte_carlo_supervised(
