@@ -88,6 +88,9 @@ def parse_args(args):
         action=argparse.BooleanOptionalAction,
         default=False
     )
+    parser.add_argument(
+        "--top_k_num_apples", type=int, default=1
+    )
     return parser.parse_args(args)
 
 
@@ -110,7 +113,8 @@ def set_config(args, i):
         variance=args.variance,
         schedule_lr=args.schedule_lr,
         lmda=args.lmda,
-        random_policy=args.random_policy
+        random_policy=args.random_policy,
+        top_k_num_apples=args.top_k_num_apples
     )
 
 
@@ -136,7 +140,8 @@ def run_one(alpha, base_args, run_idx):
         variance=float(base_args["variance"]),
         schedule_lr=base_args["schedule_lr"],
         lmda=base_args["lmda"],
-        random_policy=base_args["random_policy"]
+        random_policy=base_args["random_policy"],
+        top_k_num_apples=base_args["top_k_num_apples"]
     )
 
     exp_config = ExperimentConfig(env_config=EnvironmentConfig(), train_config=train_config)

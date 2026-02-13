@@ -7,6 +7,7 @@ import numpy as np
 import multiprocessing as mp
 from debug.code.forward_view import TorchRLCritic, VNet
 from debug.code.main_net import MainNet
+from debug.code.td_lambda import TDLambda
 from utils import ten
 from debug.code.controllers import ViewController
 from debug.code.library_value_function import EligibilityCritic
@@ -99,14 +100,23 @@ class Learning:
 
         self.eval_history = []  # list of {"step": int, "mae_pct_overall": float, "mae_pct_by_state": {...}}
 
-        type_ = "supervised" if exp_config.train_config.supervised else "forward" if exp_config.train_config.forward else "eligibility" if exp_config.train_config.eligibility else "td0"
+        type_ = "supervised" if exp_config.train_config.supervised else \
+            "forward" if exp_config.train_config.forward else \
+                "reward_learning" if exp_config.train_config.reward_learning else \
+                    "eligibility" if exp_config.train_config.eligibility else "td0"
 
-        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
+        self.input_dim = 0
+        if self.exp_config.train_config.input_dim != 3 and  self.exp_config.train_config.input_dim != 326:
+            self.input_dim = 3 + 3 * NUM_AGENTS + 4 * self.exp_config.train_config.top_k_num_apples
+        else:
+            self.input_dim = self.exp_config.train_config.input_dim
+
+        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
 
-        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.exp_config.train_config.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
+        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
 
         self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path))
 
@@ -120,34 +130,33 @@ class Learning:
 
         self.careful_eval_steps = []
 
-        self.careful_distances = (4, 0)
+        self.careful_distances = (4, 1)
         self.careful_ape_history = [
             [[] for _ in range(len(self.careful_distances))]
             for _ in range(NUM_AGENTS)
         ]
-        type_ = "supervised" if exp_config.train_config.supervised else \
-            "forward" if exp_config.train_config.forward else \
-                "eligibility" if exp_config.train_config.eligibility else "td0"
 
         self.careful_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / "careful"
         self.careful_plot_dir = self.careful_dir / "plots"
         self.careful_json_path = self.careful_dir / "careful_eval_history.json"
 
     def _init_critic_networks(self):
+
         for _ in range(NUM_AGENTS):
             if self.exp_config.train_config.eligibility:
-                self.critic_networks.append(EligibilityCritic(MainNet(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, lambda_coeff=self.exp_config.train_config.lmda, num_training_steps=self.trajectory_length))
+                self.critic_networks.append(EligibilityCritic(MainNet(self.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, lambda_coeff=self.exp_config.train_config.lmda, num_training_steps=self.trajectory_length))
             elif self.exp_config.train_config.forward:
-                self.critic_networks.append(TorchRLCritic(VNet(self.exp_config.train_config.input_dim, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, 1000, num_training_steps=self.trajectory_length, lambda_coeff=self.exp_config.train_config.lmda))
+                self.critic_networks.append(TDLambda(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor, self.exp_config.train_config.hidden_dimensions,
+                                                     self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr, self.exp_config.train_config.lmda))
             else:
-                self.critic_networks.append(VNetwork(self.exp_config.train_config.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
+                self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
                                                      self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
 
     def _init_agents_for_training(self):
         for i in range(NUM_AGENTS):
             self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
 
-    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
+    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = True, processes: int = 8):
         start = time.time()
 
         # ----- existing full-state logic unchanged -----
@@ -214,6 +223,26 @@ class Learning:
         end = time.time()
         print(f"Generated/loaded {num} eval states in {end - start:.3f}s")
 
+    def _generate_evaluation_states_reward_learning(self):
+        if not hasattr(self, 'evaluation_states'):
+            self.evaluation_states = {
+                'Z1': [],
+                'Y11': [],
+                'Y10': []
+            }
+
+        # State types to iterate over
+        state_types = ['Z1', 'Y11', 'Y10']
+
+        for state_type in state_types:
+            for _ in range(self.num_eval_states):
+                state_dict, agent_positions = generate_initial_state_supervised(self.reward_module, state_type, save=False)
+
+                state_dict["agent_positions"] = agent_positions
+
+                # Save to class attribute
+                self.evaluation_states[state_type].append(state_dict)
+
     def build_experiment(self):
         # 1. Initialize our CNN critic network.
         self._init_critic_networks()
@@ -224,10 +253,13 @@ class Learning:
         p_apple = self.exp_config.train_config.q_agent / (W ** 2)
         d_apple = 1 / (self.exp_config.train_config.apple_life * NUM_AGENTS)
 
-        self._generate_evaluation_states(p_apple, d_apple)
+        if not self.exp_config.train_config.reward_learning:
+            self._generate_evaluation_states(p_apple, d_apple)
+        else:
+            self._generate_evaluation_states_reward_learning()
 
         # 3. Initialize OUR agent controller. ignore test flag.
-        self.agent_controller = ViewController(self.exp_config.train_config.input_dim, 1)
+        self.agent_controller = ViewController(self.input_dim, self.exp_config.train_config.top_k_num_apples)
 
         # 4. Create the environment.
         self.env = Orchard(
@@ -250,8 +282,10 @@ class Learning:
         corresponding experience to the training buffer.
         """
         eval_intervals = [self.trajectory_length // 5 * (i + 1) for i in range(5)]
-
-        self.evaluate_networks(step=0, plot=True, store_last=True)
+        if self.exp_config.train_config.reward_learning is False:
+            self.evaluate_networks(step=0, plot=True, store_last=True)
+        else:
+            self.evaluate_networks_reward(step=0, plot=True, store_last=True)
         curr_state = None
         actor_idx = None
         for sec in range(self.trajectory_length):
@@ -285,10 +319,16 @@ class Learning:
             # Eval NNs
             if (sec + 1) in eval_intervals:
                 print(f"Running evaluation at step {sec + 1}/{self.trajectory_length}")
-                if sec == self.trajectory_length - 1:
-                    self.evaluate_networks(step=(sec + 1), plot=True, store_last=True)
+                if self.exp_config.train_config.reward_learning is False:
+                    if sec == self.trajectory_length - 1:
+                        self.evaluate_networks(step=(sec + 1), plot=True, store_last=True)
+                    else:
+                        self.evaluate_networks(step=(sec + 1), plot=False, store_last=True)
                 else:
-                    self.evaluate_networks(step=(sec + 1), plot=False, store_last=True)
+                    if sec == self.trajectory_length - 1:
+                        self.evaluate_networks_reward(step=(sec + 1), plot=True, store_last=True)
+                    else:
+                        self.evaluate_networks_reward(step=(sec + 1), plot=False, store_last=True)
 
     def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
         errors_by_agent = {i: [] for i in range(NUM_AGENTS)}
@@ -380,6 +420,86 @@ class Learning:
 
         return errors_by_agent
 
+    def evaluate_networks_reward(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
+        errors_by_state = {
+            "Z0": [], "Z1": [], "Y11": [], "Y10": [], "Y00": [], "Y01": []
+        }
+        ape_by_state = {k: [] for k in errors_by_state.keys()}  # absolute % error per sample
+
+        eps = 1e-8  # avoids blowups when true value is 0
+
+        for state in self.evaluation_states:
+            for eval_state in self.evaluation_states[state]:
+                theoretical_values = self.theoretical_val.theoretical_value(
+                    eval_state, eval_state["actor_id"], eval_state["agent_positions"], eval_=True
+                )
+                rewards = self.reward_module.get_reward(
+                    eval_state,
+                    eval_state["actor_id"],
+                    eval_state["agent_positions"][eval_state["actor_id"]],
+                    eval_state["mode"],
+                )
+
+                for i in range(NUM_AGENTS):
+                    input_ = self.agent_controller(eval_state, i)
+                    if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
+                        obs = ten(input_, DEVICE).view(-1)
+                        pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
+                    else:
+                        pred = float(self.critic_networks[i].get_value_function(input_))
+
+                    if not self.exp_config.train_config.reward_learning:
+                        true = float(theoretical_values[i])
+                    else:
+                        true = float(rewards[i])
+
+                    err = true - pred
+
+                    agent_state = state
+                    if eval_state["actor_id"] != i:
+                        if state == "Z1":
+                            agent_state = "Z0"
+                        elif state == "Y11":
+                            agent_state = "Y01"
+                        else:
+                            agent_state = "Y00"
+
+                    errors_by_state[agent_state].append(err)
+
+                    if abs(true) > eps:
+                        ape_by_state[agent_state].append((abs(err) / abs(true)) * 100.0)
+                    else:
+                        ape_by_state[agent_state].append(abs(err))
+
+        if store_last:
+            self._last_eval_errors_by_state = ape_by_state
+
+        # ---- NEW: compute MAE% (mean absolute % error) summary ----
+        mae_pct_by_state = {}
+        all_apes = []
+        for k, v in ape_by_state.items():
+            if len(v) == 0:
+                mae_pct_by_state[k] = None
+            else:
+                mae_pct_by_state[k] = float(np.mean(v))
+                all_apes.extend(v)
+
+        mae_pct_overall = float(np.mean(all_apes)) if len(all_apes) > 0 else None
+
+        if step is not None:
+            self.eval_history.append({
+                "step": int(step),
+                "mae_pct_overall": mae_pct_overall,
+                "mae_pct_by_state": mae_pct_by_state,
+            })
+            # Only overall MAE curve by default
+            self._plot_mae_history_reward(save_path=self.mae_plot_path, per_state=False)
+
+        if plot:
+            self._plot_errors(errors_by_state)
+
+        return errors_by_state
+
     def _plot_careful_history(self):
         """
         Plot raw predictions for careful states across eval steps.
@@ -424,7 +544,7 @@ class Learning:
 
             plt.xlabel("Training step (evaluation point)")
             plt.ylabel("Predicted value")
-            plt.title(f"Careful-state predictions vs distance (Agent {agent_id})")
+            plt.title(f"State predictions vs distance (Agent {agent_id})")
             plt.grid(True, alpha=0.3)
             plt.legend(fontsize=9, ncol=3)
 
@@ -476,6 +596,51 @@ class Learning:
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
         plt.close()
 
+    def _plot_mae_history_reward(self, save_path: Path, *, per_state: bool = False):
+        if len(self.eval_history) == 0:
+            return
+
+        steps = [h["step"] for h in self.eval_history]
+        overall = [h["mae_pct_overall"] for h in self.eval_history]
+
+        plt.figure(figsize=(9, 5))
+        plt.plot(steps, overall, marker="o", label="Overall MAE%")
+
+        if per_state:
+            state_types = ["Z0", "Z1", "Y11", "Y10", "Y00", "Y01"]
+            for st in state_types:
+                ys, ok_steps = [], []
+                for h in self.eval_history:
+                    y = h["mae_pct_by_state"].get(st, None)
+                    if y is not None:
+                        ok_steps.append(h["step"])
+                        ys.append(y)
+                if ys:
+                    plt.plot(ok_steps, ys, marker=".", linewidth=1, alpha=0.6, label=st)
+
+        plt.xlabel("Training step (evaluation point)")
+        plt.ylabel("MAE % of true value")
+        plt.title("Evaluation MAE% over training")
+        plt.grid(True, alpha=0.3)
+        plt.legend(ncol=3 if per_state else 1, fontsize=9)
+
+        # ---- add this ----
+        plt.ylim(bottom=0)  # ensure 0 is visible [web:223]
+        ymax = max(overall) if overall else 0.0
+        if per_state:
+            for h in self.eval_history:
+                for v in h.get("mae_pct_by_state", {}).values():
+                    if v is not None:
+                        ymax = max(ymax, float(v))
+        top = int(np.ceil(ymax / 10.0) * 10)  # next multiple of 10
+        plt.yticks(np.arange(0, top + 1, 10))  # 0,10,20,... [web:219]
+        # -------------------
+
+        plt.tight_layout()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(save_path, dpi=250, bbox_inches="tight")
+        plt.close()
+
     def save_final_evaluation_errors(self):
         """Save ONLY the most recent evaluation errors to disk (JSON)."""
         if getattr(self, "_last_eval_errors_by_agent", None) is None:
@@ -495,7 +660,7 @@ class Learning:
         self.build_experiment()
         self.step_and_collect_observation()
         # Final evaluation at the last step
-        self.save_final_evaluation_errors()
+        # self.save_final_evaluation_errors()
 
         # Save MAE% history to JSON (optional but useful)
         self.mae_history_path.parent.mkdir(parents=True, exist_ok=True)

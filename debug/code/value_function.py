@@ -54,6 +54,13 @@ class VNetwork(NetworkWrapper):
         self.batch_rewards = []
         return loss.item()
 
+    def add_experience(self, state, new_state, reward, theoretical_val=None):
+        self.batch_states.append(state)
+        self.batch_new_states.append(new_state)
+        self.batch_rewards.append(reward)
+        if theoretical_val:
+            self.theoretical_vals.append(theoretical_val)
+
     def train_supervised(self):
         # 1) Batch states -> tensor [B, obs_dim]
         states_np = np.stack(self.batch_states, axis=0).squeeze()
@@ -106,10 +113,3 @@ class VNetwork(NetworkWrapper):
         self.batch_states = []
         self.batch_rewards = []
         return loss.item()
-
-    def add_experience(self, state, new_state, reward, theoretical_val=None):
-        self.batch_states.append(state)
-        self.batch_new_states.append(new_state)
-        self.batch_rewards.append(reward)
-        if theoretical_val:
-            self.theoretical_vals.append(theoretical_val)

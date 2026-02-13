@@ -360,7 +360,7 @@ def monte_carlo_full(
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 20,      # how many times to repeat "1000 rollouts then average"
+        num_trajectories: int = 5,      # how many times to repeat "1000 rollouts then average"
         num_rollouts: int = 200,        # run 1000 trajectories per repeat
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
@@ -531,6 +531,10 @@ def generate_careful_distance_series(
     # Fixed apples map: single apple in center
     start_apples = np.zeros((width, length), dtype=int)
     start_apples[center[0], center[1]] = 1
+    start_apples[center[0], center[1]] = 1
+    start_apples[center[0] - 2, center[1]] = 1
+    start_apples[center[0] - 1, center[1] + 1] = 1
+    start_apples[center[0] - 1, center[1] - 1] = 1
 
     # Choose self positions at different Manhattan distances
     self_positions = _make_distance_positions(center, distances, width, length)

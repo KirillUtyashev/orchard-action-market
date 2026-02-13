@@ -42,6 +42,7 @@ class TrainingConfig:
     q_agent: float = 1
     apple_life: float = 8
     debug: bool = True
+    top_k_num_apples: int = 1
 
 
 @dataclass
