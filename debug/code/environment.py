@@ -12,7 +12,6 @@ The Orchard environment. Includes provisions for transition actions, spawning, a
 action_algo: an algorithm that is used to process actions (agent movements). Defaults to just updating the environment from the singular agent action.
 """
 
-
 class ActionMixin:
     """Mixin providing common methods for action enums."""
 
@@ -41,16 +40,6 @@ class ActionMixin:
             return next(a for a in cls if a.idx == idx)
         except StopIteration:
             raise ValueError(f"Invalid action index: {idx}")
-
-
-class Action1D(ActionMixin, Enum):
-    LEFT = (0, [0, -1])
-    RIGHT = (1, [0, 1])
-    STAY = (2, [0, 0])
-
-    def __init__(self, idx, vector):
-        self._idx = idx
-        self._vector = vector
 
 
 class MoveAction(ActionMixin, Enum):
@@ -90,6 +79,7 @@ class Orchard:
             num_agents: int,
             reward: Reward | None,
             p_apple: float = 0.1,
+            d_apple: float = 0.0,
             start_agents_map: Optional[np.ndarray] = None,
             start_apples_map: Optional[np.ndarray] = None,
             start_agent_positions: Optional[np.ndarray] = None,
@@ -99,6 +89,7 @@ class Orchard:
         self.n = num_agents
         self.reward_module = reward
         self.p_apple = p_apple
+        self.d_apple = d_apple
 
         # Initialize agent positions (n x 2 array)
         if start_agent_positions is not None:
@@ -172,9 +163,6 @@ class Orchard:
             self.remove_apple(new_pos)
             self.total_picked += 1
 
-        if mode == 1:
-            self.spawn_apples()
-
         return ProcessAction(reward_vector=reward_vector, picked=picked)
 
     def remove_apple(self, pos: np.ndarray) -> None:
@@ -186,9 +174,22 @@ class Orchard:
         """Return the total number of apples in the orchard."""
         return int(np.sum(self.apples))
 
-    def spawn_apples(self) -> None:
-        """Spawn apples randomly across the grid based on p_apple."""
-        self.apples = np.zeros((self.width, self.length), dtype=int)
-        spawn_mask = np.random.rand(self.width, self.length) < self.p_apple
-        self.apples[spawn_mask] = 1
-        self.apples_spawned = int(np.sum(self.apples))
+    # def spawn_apples(self) -> None:
+    #     """Spawn apples randomly across the grid based on p_apple."""
+    #     self.apples = np.zeros((self.width, self.length), dtype=int)
+    #     spawn_mask = np.random.rand(self.width, self.length) < self.p_apple
+    #     self.apples[spawn_mask] = 1
+    #     self.apples_spawned = int(np.sum(self.apples))
+
+    def spawn_apples(self) -> int:
+        spawn_mask = np.random.rand(*self.apples.shape) < self.p_apple
+        spawned = int(spawn_mask.sum())
+        self.apples[spawn_mask] += 1
+        # self.apples_spawned += spawned
+        return spawned
+
+    def despawn_apples(self) -> int:
+        removed = np.random.binomial(self.apples, self.d_apple)
+        total_removed = int(removed.sum())
+        self.apples -= removed
+        return total_removed

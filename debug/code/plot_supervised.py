@@ -3,11 +3,12 @@
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-
+from typing import Dict, List, Optional, Tuple, Iterable, Sequence, Union, Literal
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+LambdaT = Union[str, float, int]
 
 
 def _extract_first_int(s: str) -> Optional[int]:
@@ -294,9 +295,142 @@ def plot_variance_by_nn_size(data_dir, variances, nn_sizes, *, alpha: float = 0.
     plt.close(fig)
 
 
+def _pick_error_path_lambda(
+        base_dir: Path,
+        lam: LambdaT,
+        *,
+        nn_size: int = 16,
+        steps: int = 1000,
+        alpha: float = 0.001,
+        scheduled: bool = True,
+) -> Path:
+    """
+    base_dir is .../{method}/-1/3/0
+    filenames look like: final_errors_16_1000_0.001_True_{lambda}.json
+    """
+    # Prefer exact string (best if user passes lambdas as strings).
+    lam_str_exact = str(lam)
+
+    # If lam is numeric, also try a compact formatting.
+    lam_str_g = None
+    if isinstance(lam, (int, float)):
+        lam_str_g = f"{lam:g}"
+
+    sched_strs = ["True"] if scheduled else ["False"]
+
+    candidates = []
+    for sched_str in sched_strs:
+        candidates.append(
+            base_dir / f"final_eval_errors_{nn_size}_{steps}_{alpha}_{sched_str}_{lam_str_exact}.json"
+        )
+        candidates.append(
+            base_dir / f"final_eval_errors_{nn_size}_{steps}_{alpha}_{sched_str}_{lam_str_exact}.json"
+        )
+        if lam_str_g is not None and lam_str_g != lam_str_exact:
+            candidates.append(
+                base_dir / f"final_eval_errors_{nn_size}_{steps}_{alpha}_{sched_str}_{lam_str_g}.json"
+            )
+            candidates.append(
+                base_dir / f"final_eval_errors_{nn_size}_{steps}_{alpha}_{sched_str}_{lam_str_g}.json"
+            )
+
+    for p in candidates:
+        if p.exists():  # Path.exists() returns True if the filesystem path exists. [web:1]
+            return p
+
+    raise FileNotFoundError(f"No error json found for lambda={lam}. Tried: {candidates}")
+
+
+def plot_mae_vs_lambda_by_method(
+        data_dir: Path,
+        lambdas: Sequence[LambdaT],
+        *,
+        methods: Sequence[str] = ("td0", "eligibility", "forward"),
+        subdir: Sequence[str] = ("-1", "3", "0.0"),
+        nn_size: int = 16,
+        steps: int = 1000,
+        alpha: float = 0.001,
+        scheduled: bool = True,
+        on_missing: Literal["skip", "nan", "raise"] = "skip",
+        output_png: Optional[Path] = None,
+        output_csv: Optional[Path] = None,
+) -> pd.DataFrame:
+    rows = []
+
+    for method in methods:
+        base_dir = Path(data_dir) / method
+        for part in subdir:
+            base_dir = base_dir / str(part)
+
+        for lam in lambdas:
+            try:
+                path = _pick_error_path_lambda(
+                    base_dir, lam,
+                    nn_size=nn_size, steps=steps, alpha=alpha, scheduled=scheduled,
+                )
+                errors_by_state = _load_errors_json(path)
+                mae = _mae_from_ape(errors_by_state)
+                rows.append({
+                    "method": method,
+                    "lambda": str(lam),
+                    "mae": mae,
+                    "json_path": str(path),
+                })
+
+            except FileNotFoundError as e:
+                if on_missing == "raise":
+                    raise  # FileNotFoundError is a standard exception for missing files. [web:31]
+                if on_missing == "skip":
+                    continue
+                if on_missing == "nan":
+                    rows.append({
+                        "method": method,
+                        "lambda": str(lam),
+                        "mae": float("nan"),
+                        "json_path": None,
+                    })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise FileNotFoundError("No matching json files found (all missing or wrong directory structure).")  # [web:31]
+
+    # Always create lambda_num (fixes your KeyError).
+    df["lambda_num"] = pd.to_numeric(df["lambda"], errors="coerce")  # [web:46]
+
+    # Sort x-axis: prefer numeric if possible, else stable string sort
+    if df["lambda_num"].notna().all():
+        df = df.sort_values(["method", "lambda_num"])  # sort_values sorts by columns. [web:58]
+        xcol = "lambda_num"
+        xlabel = "Lambda"
+    else:
+        df = df.sort_values(["method", "lambda"])
+        xcol = "lambda"
+        xlabel = "Lambda (string)"
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    for method in methods:
+        sub = df[df["method"] == method]
+        if sub.empty:
+            continue
+        ax.plot(sub[xcol], sub["mae"], marker="o", linewidth=2.2, label=method)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("MAE, % of True Value")
+    ax.set_title(f"MAE vs Lambda")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=True)  # Axes.legend places a legend on the axes. [web:13]
+    fig.tight_layout()
+
+    if output_png is None:
+        output_png = Path(data_dir) / "mae_vs_lambda_by_method.png"
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     from config import data_dir
-    # plot_variance(data_dir, [0.0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2])
-    # plot_variance(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [0.01, 0.001, 0.0001])
-    plot_variance_by_nn_size(data_dir, [0.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1000.0], [4, 8, 16, 32, 64, 128])
+    lambdas = ["0.5"]
 
+    plot_mae_vs_lambda_by_method(Path(data_dir), lambdas)
