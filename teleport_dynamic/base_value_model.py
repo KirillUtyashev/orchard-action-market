@@ -77,7 +77,7 @@ class BaseValueModelV2(nn.Module, ABC):
                     nn.init.constant_(last_layer.bias, 0.0)
                 print(f"[INIT] BaseValueModelV2: Scaled last Linear layer {last_layer}")
 
-    def init_scheduler(self, max_steps: int, min_lr: float = 1e-7):
+    def init_scheduler(self, max_steps: int, min_lr: float = 1e-5):
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             self.optimizer, T_max=max_steps, eta_min=min_lr
         )

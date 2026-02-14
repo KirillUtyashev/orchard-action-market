@@ -76,7 +76,7 @@ def train_supervised(
 
     targets_flat = targets.squeeze(-1) if targets.dim() > 1 else targets
     
-    loss = nn.HuberLoss()(preds, targets_flat)
+    loss = nn.MSELoss()(preds, targets_flat)
     
     if torch.isnan(loss) or torch.isinf(loss):
         debug_print(f"NaN/Inf loss! Preds: [{preds.min():.4f}, {preds.max():.4f}], Targets: [{targets_flat.min():.4f}, {targets_flat.max():.4f}]")
@@ -146,7 +146,7 @@ def train_td0(
         next_v = model.target_net(next_states).squeeze(-1)
         td_targets = rewards + model.discount * next_v
 
-    loss = nn.HuberLoss()(curr_v, td_targets)
+    loss = nn.MSELoss()(curr_v, td_targets)
 
     model.optimizer.zero_grad()
     loss.backward()

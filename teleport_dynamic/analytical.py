@@ -8,8 +8,7 @@ def calculate_stream_values(rho: float, gamma: float, num_agents: int, p_hit: fl
     Calculates v_RAND, v_OFF, v_ON for a given reward magnitude rho.
     Implements the algebraic solution from Section 1.5.
     """
-    if gamma == 1.0:
-        raise ValueError("Gamma must be < 1")
+    assert 0 <= gamma < 1, "Gamma must be in [0, 1)"
 
     # 1.5 Algebraic Solution for v_RAND
     # v_RAND = (p_hit * alpha * rho) / (1 - gamma)

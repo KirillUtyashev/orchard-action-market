@@ -96,8 +96,8 @@ class ValueCNNDecentralized5Ch(BaseValueModelV2):
         if check_nan_params(self.policy_net, "policy_net_AFTER_MOVE"):
             raise ValueError("NaN AFTER move to CUDA!")
 
-        self.optimizer = torch.optim.AdamW(
-            self.policy_net.parameters(), lr=lr, amsgrad=True
+        self.optimizer = torch.optim.Adam(
+    self.policy_net.parameters(), lr=lr
         )
         
         print(f"  [INIT OK] Agent {self_agent_idx} CNN initialized")
@@ -200,8 +200,8 @@ class ValueMLPDecentralized5Ch(BaseValueModelV2):
         self.policy_net.to(self.device)
         self.target_net.to(self.device)
 
-        self.optimizer = torch.optim.AdamW(
-            self.policy_net.parameters(), lr=lr, amsgrad=True
+        self.optimizer = torch.optim.Adam(
+    self.policy_net.parameters(), lr=lr
         )
         
         with torch.no_grad():
