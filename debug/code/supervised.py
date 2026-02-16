@@ -63,8 +63,7 @@ def _worker_generate_careful(arg):
         distances=(distance,),
         self_id=agent_id
     )
-    # res is a list with one element
-    return res[0]
+    return res
 
 
 def _state_path(picker_r: float, run_id: int) -> Path:
@@ -124,14 +123,19 @@ class Learning:
         self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
         self._last_eval_errors_by_state = None
 
-        self.discount_factor = DISCOUNT_FACTOR ** (1 / (2 * NUM_AGENTS))
+        self.discount_factor = DISCOUNT_FACTOR
 
         self.careful_evals = []
 
-        self.careful_eval_steps = []
-
+        self.focus_actor_id = 0
         self.careful_distances = (4, 1)
-        self.careful_ape_history = [
+
+        # actor-0 careful states by distance (same states used to evaluate every agent)
+        self.careful_actor_states = [None for _ in range(len(self.careful_distances))]
+
+        # history: predictions of each eval-agent on the same actor-0 state at each distance
+        self.careful_eval_steps = []
+        self.careful_pred_history_actor0 = [
             [[] for _ in range(len(self.careful_distances))]
             for _ in range(NUM_AGENTS)
         ]
@@ -220,6 +224,8 @@ class Learning:
                 j = distances.index(d)
                 self.careful_evals[agent_id][j] = item
 
+        self.careful_actor_states = self.careful_evals[0]
+
         end = time.time()
         print(f"Generated/loaded {num} eval states in {end - start:.3f}s")
 
@@ -250,8 +256,10 @@ class Learning:
         # 2.
         self._init_agents_for_training()
 
-        p_apple = self.exp_config.train_config.q_agent / (W ** 2)
-        d_apple = 1 / (self.exp_config.train_config.apple_life * NUM_AGENTS)
+        p_apple = (self.exp_config.train_config.q_agent * NUM_AGENTS) / (W ** 2)
+        d_apple = 1 / self.exp_config.train_config.apple_life
+        # p_apple = self.exp_config.train_config.q_agent / (W ** 2)
+        # d_apple = 1 / (self.exp_config.train_config.apple_life * NUM_AGENTS)
 
         if not self.exp_config.train_config.reward_learning:
             self._generate_evaluation_states(p_apple, d_apple)
@@ -299,11 +307,25 @@ class Learning:
                         processed_final_state = self.agent_controller(final_state, i)
 
                         if self.exp_config.train_config.reward_learning:
-                            self.critic_networks[i].add_experience(processed_old_state, None, 0)
-                            self.critic_networks[i].add_experience(processed_intermediate_state, None, res.reward_vector[i])
+                            self.critic_networks[i].add_experience(
+                                processed_old_state, None, 0, discount_factor=self.discount_factor
+                            )
+                            self.critic_networks[i].add_experience(
+                                processed_intermediate_state, None, res.reward_vector[i],
+                                discount_factor=self.discount_factor
+                            )
                         else:
-                            self.critic_networks[i].add_experience(processed_old_state, processed_intermediate_state, 0)
-                            self.critic_networks[i].add_experience(processed_intermediate_state, processed_final_state, res.reward_vector[i])
+                            # Mode 0 → Mode 1: use gamma discount
+                            self.critic_networks[i].add_experience(
+                                processed_old_state, processed_intermediate_state, 0,
+                                discount_factor=self.discount_factor  # γ
+                            )
+                            # Mode 1 → Mode 0: NO discount (discount = 1.0)
+                            self.critic_networks[i].add_experience(
+                                processed_intermediate_state, processed_final_state,
+                                res.reward_vector[i],
+                                discount_factor=1.0  # No discount!
+                            )
 
                 curr_state = final_state
 
@@ -393,30 +415,38 @@ class Learning:
             dtype=float
         )
 
-        for agent_id in range(NUM_AGENTS):
-            for j, d in enumerate(self.careful_distances):
-                item = self.careful_evals[agent_id][j]
-                if item is None:
-                    continue
+        for j, d in enumerate(self.careful_distances):
+            item = self.careful_actor_states[j]
+            if item is None:
+                continue
 
-                st = item["init_state"] if isinstance(item, dict) and "init_state" in item else item
+            st = item["init_state"] if isinstance(item, dict) and "init_state" in item else item
 
-                input_ = self.agent_controller(st, agent_id)
+            # sanity check: ensure we're focusing on actor 0
+            if st.get("actor_id", None) != 0:
+                raise RuntimeError(f"Expected actor_id=0, got {st.get('actor_id')} at distance {d}")
+
+            # evaluate all agents' critics on this same state
+            for eval_agent_id in range(NUM_AGENTS):
+                input_ = self.agent_controller(st, eval_agent_id)
+
                 if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                     obs = ten(input_, DEVICE).view(-1)
-                    pred = float(self.critic_networks[agent_id].get_value_function(obs).cpu().item())
+                    pred = float(self.critic_networks[eval_agent_id].get_value_function(obs).cpu().item())
                 else:
-                    pred = float(self.critic_networks[agent_id].get_value_function(input_))
+                    pred = float(self.critic_networks[eval_agent_id].get_value_function(input_))
 
-                careful_pred_this_eval[agent_id, j] = pred
+                careful_pred_this_eval[eval_agent_id, j] = pred
 
         if step is not None:
             self.careful_eval_steps.append(int(step))
-            for agent_id in range(NUM_AGENTS):
+            for eval_agent_id in range(NUM_AGENTS):
                 for j in range(len(self.careful_distances)):
-                    self.careful_ape_history[agent_id][j].append(float(careful_pred_this_eval[agent_id, j]))
+                    self.careful_pred_history_actor0[eval_agent_id][j].append(
+                        float(careful_pred_this_eval[eval_agent_id, j])
+                    )
 
-            self._plot_careful_history()  # now plots raw predictions
+            self._plot_careful_history_actor0()
 
         return errors_by_agent
 
@@ -500,29 +530,9 @@ class Learning:
 
         return errors_by_state
 
-    def _plot_careful_history(self):
-        """
-        Plot raw predictions for careful states across eval steps.
-
-        Expects a nested list structure:
-          hist[agent_id][dist_idx] = list of predicted scalars over evaluations
-        and:
-          self.careful_eval_steps = list of eval steps (same length as each series).
-        """
-        if not getattr(self, "careful_eval_steps", None):
+    def _plot_careful_history_actor0(self):
+        if not self.careful_eval_steps:
             return
-
-        # Use pred history if you created it; otherwise reuse the existing container
-        hist = getattr(self, "careful_pred_history", None)
-        if hist is None:
-            hist = getattr(self, "careful_ape_history", None)
-        if hist is None:
-            raise RuntimeError("No careful prediction history found (need careful_pred_history or careful_ape_history).")
-
-        distances = getattr(self, "careful_distances", None)
-        if distances is None:
-            # fallback if you hard-coded elsewhere
-            distances = (4, 3, 2, 1, 0)
 
         plot_dir = getattr(self, "careful_plot_dir", None)
         if plot_dir is None:
@@ -530,25 +540,25 @@ class Learning:
         plot_dir.mkdir(parents=True, exist_ok=True)
 
         x = list(self.careful_eval_steps)
+        distances = self.careful_distances
+        hist = self.careful_pred_history_actor0
 
-        for agent_id in range(NUM_AGENTS):
+        for eval_agent_id in range(NUM_AGENTS):
             plt.figure(figsize=(8, 4.5))
 
             for j, d in enumerate(distances):
-                y = hist[agent_id][j]
+                y = hist[eval_agent_id][j]
                 if not y:
                     continue
-
-                # If any NaNs, matplotlib will break the line automatically
                 plt.plot(x, y, marker="o", linewidth=1.5, label=f"d={d}")
 
             plt.xlabel("Training step (evaluation point)")
             plt.ylabel("Predicted value")
-            plt.title(f"State predictions vs distance (Agent {agent_id})")
+            plt.title(f"Actor=0 state predictions over time (Eval agent {eval_agent_id})")
             plt.grid(True, alpha=0.3)
             plt.legend(fontsize=9, ncol=3)
 
-            out = plot_dir / f"careful_predictions_agent{agent_id}.png"
+            out = plot_dir / f"careful_actor0_predictions_evalagent{eval_agent_id}.png"
             plt.tight_layout()
             plt.savefig(out, dpi=250, bbox_inches="tight")
             plt.close()

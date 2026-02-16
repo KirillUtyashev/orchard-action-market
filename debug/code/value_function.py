@@ -13,7 +13,7 @@ class VNetwork(NetworkWrapper):
     ):
         super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps)
         self.batch_rewards = []
-
+        self.batch_discounts = []
         self.theoretical_vals = []
 
     def get_value_function(self, x):
@@ -29,18 +29,18 @@ class VNetwork(NetworkWrapper):
     def train(self):
         states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
         states = states.view(states.size(0), -1)
-        approx = self.model(states)  # shape [B]
+        approx = self.model(states)
         approx = approx.squeeze(1)
-        # 2) Build TD‐target: y = r + γ·V_target(s')
+
         with torch.no_grad():
             next_states = ten(np.stack(self.batch_new_states, axis=0).squeeze(), DEVICE)
             next_states = next_states.view(next_states.size(0), -1)
-            target = self.model(next_states)  # [B]
-            y = ten(
-                np.array(self.batch_rewards), DEVICE
-            ) + self.discount * target.squeeze(1)
+            target = self.model(next_states)
 
-        # 3) Compute MSE loss & backpropagate
+            # Use per-transition discount factors
+            discounts = ten(np.array(self.batch_discounts), DEVICE)
+            y = ten(np.array(self.batch_rewards), DEVICE) + discounts * target.squeeze(1)
+
         criterion = torch.nn.MSELoss(reduction="mean")
         self.optimizer.zero_grad()
         loss = criterion(approx, y)
@@ -48,16 +48,17 @@ class VNetwork(NetworkWrapper):
         self.optimizer.step()
         self._after_update()
 
-        # self.optimizer.zero_grad()
         self.batch_states = []
         self.batch_new_states = []
         self.batch_rewards = []
+        self.batch_discounts = []  # Clear discount buffer
         return loss.item()
 
-    def add_experience(self, state, new_state, reward, theoretical_val=None):
+    def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)
         self.batch_new_states.append(new_state)
         self.batch_rewards.append(reward)
+        self.batch_discounts.append(discount_factor)  # Store per-transition discount
         if theoretical_val:
             self.theoretical_vals.append(theoretical_val)
 

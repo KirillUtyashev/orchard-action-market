@@ -140,8 +140,8 @@ class TestEnvironment:
         q_agent = 1
         apple_mean = 4
         reward_module = Reward(REWARD, NUM_AGENTS)
-        p_apple = q_agent / (W ** 2)
-        d_apple = 1 / (apple_mean * NUM_AGENTS)
+        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
+        d_apple = 1 / apple_mean
         self.env = Orchard(
             W,
             L,
@@ -179,8 +179,8 @@ class TestEnvironment:
         q_agent = 1
         apple_mean = 4
         reward_module = Reward(REWARD, NUM_AGENTS)
-        p_apple = q_agent / (W ** 2)
-        d_apple = 1 / (apple_mean * NUM_AGENTS)
+        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
+        d_apple = 1 / apple_mean
         self.env = Orchard(
             W,
             L,
@@ -194,9 +194,13 @@ class TestEnvironment:
 
         tracker = TimeToAppleTracker(self.env.apples.shape)
 
+        # NEW: counters
+        total_picked = 0
+        total_spawned = int(self.env.apples.sum())  # count initial apples as "spawned"
+
         seconds = 10_000
         tracker.observe_grid(self.env.apples)
-        # carry variables across iterations
+
         curr_state = None
         actor_idx = None
         for sec in range(seconds):
@@ -209,7 +213,7 @@ class TestEnvironment:
                         curr_state["mode"] = 0
                     continue
 
-                # ---- from here down, your original loop body stays the same ----
+                # Mode 0: move
                 self.env.process_action(
                     actor_idx,
                     random_policy(curr_state["agent_positions"][actor_idx]),
@@ -224,16 +228,33 @@ class TestEnvironment:
                 cx, cy = curr_state["agent_positions"][actor_idx]
                 assert abs(sx - cx) + abs(sy - cy) <= 1
 
+                # Mode 1: pick
                 ax, ay = semi_state["agent_positions"][actor_idx]
+
+                # NEW: robust pick detection via apple grid (not reward sign/magnitude)
+                had_apple_before = bool(self.env.apples[ax, ay])
+
                 res = self.env.process_action(actor_idx, None, mode=1)
-                if res.reward_vector[actor_idx] != 0:
+
+                has_apple_after = bool(self.env.apples[ax, ay])
+                picked = had_apple_before and (not has_apple_after)
+
+                if picked:
+                    total_picked += 1
                     tracker.on_pick(ax, ay)
 
                 tracker.observe_grid(self.env.apples)
 
                 if step == NUM_AGENTS - 1:
+                    # End-of-second: despawn then spawn
                     self.env.despawn_apples()
+
+                    # NEW: count how many *new* apples appear at spawn time
+                    apples_before_spawn = self.env.apples.copy()
                     self.env.spawn_apples()
+                    new_spawns = np.logical_and(self.env.apples == 1, apples_before_spawn == 0).sum()
+                    total_spawned += int(new_spawns)
+
                     tracker.observe_grid(self.env.apples)
 
                 final_state = self.env.get_state()
@@ -242,26 +263,29 @@ class TestEnvironment:
                 final_state["mode"] = 0
 
                 curr_state = final_state
-                # tick advance (define tick as one full move+pick cycle)
                 tracker.ticks += 1
+
+        # NEW: print pickup fraction
+        if total_spawned > 0:
+            print(f"Picked apples: {total_picked} / {total_spawned} ({total_picked / total_spawned:.4%})")
+        else:
+            print("No apples ever spawned? total_spawned=0")
 
         ages_ticks = np.array(tracker.ages, dtype=np.int64)
         if ages_ticks.size == 0:
             print("No apples were picked; nothing to plot.")
             return
 
-        ages_sec = ages_ticks / NUM_AGENTS  # ticks -> seconds if n ticks/sec
+        ages_sec = ages_ticks / NUM_AGENTS
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))  # [web:237]
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
-        # 1) Distribution
-        ax1.hist(ages_sec, bins=50, density=True, alpha=0.8)  # [web:229]
+        ax1.hist(ages_sec, bins=50, density=True, alpha=0.8)
         ax1.set_xlabel("Time to apple (seconds)")
         ax1.set_ylabel("Density")
         ax1.set_title("Pickup time distribution")
 
-        # 2) Running mean over pickups
-        running_mean = np.cumsum(ages_sec) / (np.arange(len(ages_sec)) + 1)  # [web:236]
+        running_mean = np.cumsum(ages_sec) / (np.arange(len(ages_sec)) + 1)
         ax2.plot(running_mean)
         ax2.set_xlabel("Pickup event index")
         ax2.set_ylabel("Mean time to apple (seconds)")
@@ -269,4 +293,3 @@ class TestEnvironment:
 
         plt.tight_layout()
         plt.show()
-

@@ -356,29 +356,38 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 1000,
+        trajectory_length: int = 300,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 5,      # how many times to repeat "1000 rollouts then average"
-        num_rollouts: int = 200,        # run 1000 trajectories per repeat
+        num_trajectories: int = 5,
+        num_rollouts: int = 200,
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
 
     # Total reward-vector slots per rollout (matches your t += 2 logic)
     T = trajectory_length * NUM_AGENTS * 2
-    discounts = discount_factor ** np.arange(T)
+
+    gamma = float(discount_factor)
+
+    # Per-slot discounts d_t (not weights): alternate gamma and 1.0
+    d = np.tile(np.array([gamma, 1.0], dtype=float), T // 2 + 1)[:T]
+
+    # Convert per-slot discounts into per-slot weights:
+    # weight[t] = Π_{k=0}^{t-1} d[k], with weight[0] = 1
+    weights = np.empty(T, dtype=float)
+    weights[0] = 1.0
+    if T > 1:
+        weights[1:] = np.cumprod(d[:-1])
 
     base_state = deep_copy_state(init_state)
-
     stored_means = np.zeros((NUM_AGENTS, num_trajectories), dtype=float)
 
     for i in range(num_trajectories):
         returns = np.zeros((NUM_AGENTS, num_rollouts), dtype=float)
 
         for j in range(num_rollouts):
-            # Seed ONCE per rollout (don’t reseed every step)
             set_all_seeds(seed + i * num_rollouts + j)
 
             curr_state = deep_copy_state(base_state)
@@ -401,8 +410,7 @@ def monte_carlo_full(
                 for step in range(NUM_AGENTS):
                     curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx)
 
-                    # Your environment seems to have a "mode 0 then mode 1" structure,
-                    # so you store a 0 slot then the actual reward slot.
+                    # Keep your two-slot logging convention:
                     rewards_by_agent[:, t] = 0.0
                     t += 1
                     rewards_by_agent[:, t] = res.reward_vector
@@ -410,13 +418,11 @@ def monte_carlo_full(
 
             assert t == T, f"Filled {t} reward slots, expected {T}"
 
-            # Discounted return for this rollout
-            returns[:, j] = rewards_by_agent @ discounts
+            # Discounted return for this rollout, using variable-discount weights
+            returns[:, j] = rewards_by_agent @ weights
 
-        # Mean over 1000 rollouts; store it for repetition i
         stored_means[:, i] = returns.mean(axis=1)
 
-    # MC estimate of the mean = average of the stored means across repetitions
     mc_estimate = stored_means.mean(axis=1)
     return mc_estimate
 
@@ -542,8 +548,6 @@ def generate_careful_distance_series(
     # Fix other agents' positions ONCE (reused across all distances)
     rng = np.random.default_rng(seed)
 
-    results = []  # list of dicts: {distance, init_state, mc_value_vector}
-
     # Sample a base placement for other agents, avoiding the apple and any potential self cells
     reserved = {center} | set(self_positions)
     other_positions = _sample_other_agents_positions(
@@ -608,7 +612,7 @@ def generate_careful_distance_series(
             out_path,
             dict=np.array(init_state, dtype=object),
         )
-    return results
+    return init_state
 
 
 def monte_carlo_supervised(
