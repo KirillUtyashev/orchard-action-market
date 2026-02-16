@@ -1,0 +1,35 @@
+{
+    "phase": 1,
+    "R_PICKER": -1,
+    "R_OTHER": 0.6666666666666666,
+    "LAMBDA": 0.9,
+    "WINDOW_SIZE": 100,
+    "MLP_LAYERS": [
+        16,
+        16,
+        16,
+        16
+    ],
+    "LR": 0.001,
+    "LR_MIN": 1e-06,
+    "LR_DECAY_FRAC": 0.8,
+    "TRAIN_TICKS": 500000,
+    "EVAL_FREQ": 100,
+    "SEED": 42,
+    "H": 9,
+    "W": 9,
+    "NUM_AGENTS": 4,
+    "GAMMA": 0.9,
+    "GAMMA_STEP": 0.9740037464252967,
+    "K_NEAREST": 3,
+    "INPUT_DIM": 24,
+    "L": 1,
+    "P_SPAWN": 0.04,
+    "P_DESPAWN": 0.12,
+    "avg_magnitude_true_value": {
+        "agent_0": 1.2809821499055454,
+        "agent_1": 1.076377616067909,
+        "agent_2": 1.097248934311035,
+        "agent_3": 1.2370519766577863
+    }
+}
