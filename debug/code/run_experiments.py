@@ -52,7 +52,7 @@ def parse_args(args):
         default=False
     )
     parser.add_argument(
-        "--input_dim", type=int, default=3
+        "--input_dim", type=int, default=0
     )
     parser.add_argument(
         "--forward",
@@ -83,6 +83,14 @@ def parse_args(args):
         action=argparse.BooleanOptionalAction,
         default=False
     )
+    parser.add_argument(
+        "--random_policy",
+        action=argparse.BooleanOptionalAction,
+        default=False
+    )
+    parser.add_argument(
+        "--top_k_num_apples", type=int, default=1
+    )
     return parser.parse_args(args)
 
 
@@ -104,7 +112,9 @@ def set_config(args, i):
         num_seeds=args.num_seeds,
         variance=args.variance,
         schedule_lr=args.schedule_lr,
-        lmda=args.lmda
+        lmda=args.lmda,
+        random_policy=args.random_policy,
+        top_k_num_apples=args.top_k_num_apples
     )
 
 
@@ -129,7 +139,9 @@ def run_one(alpha, base_args, run_idx):
         num_seeds=int(base_args["num_seeds"]),
         variance=float(base_args["variance"]),
         schedule_lr=base_args["schedule_lr"],
-        lmda=base_args["lmda"]
+        lmda=base_args["lmda"],
+        random_policy=base_args["random_policy"],
+        top_k_num_apples=base_args["top_k_num_apples"]
     )
 
     exp_config = ExperimentConfig(env_config=EnvironmentConfig(), train_config=train_config)
@@ -158,11 +170,11 @@ def main(args):
         # stable legend order by lr
         runs.sort(key=lambda d: d["lr"])
 
-        if base_args["schedule_lr"] is False:
-            base_args["schedule_lr"] = True
-            res = run_one(args.alpha[0], base_args, len(args.alpha))
-            res["lr"] = f"schedule_{res["lr"]}"
-            runs.append(res)
+        # if base_args["schedule_lr"] is False:
+        #     base_args["schedule_lr"] = True
+        #     res = run_one(args.alpha[0], base_args, len(args.alpha))
+        #     res["lr"] = f"schedule_{res["lr"]}"
+        #     runs.append(res)
     else:
         runs.append(run_one(args.alpha[0], base_args, len(args.alpha)))
 
