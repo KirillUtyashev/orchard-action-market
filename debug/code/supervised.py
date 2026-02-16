@@ -160,7 +160,7 @@ class Learning:
         for i in range(NUM_AGENTS):
             self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
 
-    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = True, processes: int = 8):
+    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
         start = time.time()
 
         # ----- existing full-state logic unchanged -----
