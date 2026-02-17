@@ -1,10 +1,14 @@
 import json
+import os
 import random
 import time
 from pathlib import Path
 
 import numpy as np
 import multiprocessing as mp
+
+import torch
+
 from debug.code.forward_view import TorchRLCritic, VNet
 from debug.code.main_net import MainNet
 from debug.code.td_lambda import TDLambda
@@ -110,14 +114,18 @@ class Learning:
         else:
             self.input_dim = self.exp_config.train_config.input_dim
 
+        self.data_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim)
+
         default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
+
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
 
-        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"
+        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance)
 
-        self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path))
+        self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.json"))
+        self.coverage_plot_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"coverage_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}.png"))
 
         default_plot_path = self.mae_history_path.with_suffix(".png")
         self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
@@ -356,10 +364,18 @@ class Learning:
         errors_by_agent = {i: [] for i in range(NUM_AGENTS)}
         ape_by_agent = {i: [] for i in range(NUM_AGENTS)}
 
+        # NEW: CI coverage tracking
+        in_ci_by_agent = {i: [] for i in range(NUM_AGENTS)}
+
         eps = 1e-8  # avoids blowups when true value is 0
 
         for eval_state in self.evaluation_states:
             mc_values = eval_state["mc"]
+
+            # NEW: only if present (lets you roll this out incrementally)
+            ci_low = eval_state.get("ci95_low", None)
+            ci_high = eval_state.get("ci95_high", None)
+
             rewards = self.reward_module.get_reward(
                 eval_state,
                 eval_state["actor_id"],
@@ -377,13 +393,18 @@ class Learning:
 
                 true = float(mc_values[i]) if not self.exp_config.train_config.reward_learning else float(rewards[i])
                 err = true - pred
-
                 errors_by_agent[i].append(err)
 
                 if abs(true) > eps:
                     ape_by_agent[i].append((abs(err) / abs(true)) * 100.0)
                 else:
                     ape_by_agent[i].append(abs(err))
+
+                # NEW: coverage check (using MC CI only when mc target is used)
+                if (not self.exp_config.train_config.reward_learning) and (ci_low is not None) and (ci_high is not None):
+                    lo = float(ci_low[i])
+                    hi = float(ci_high[i])
+                    in_ci_by_agent[i].append(1.0 if (pred >= lo and pred <= hi) else 0.0)
 
         if store_last:
             self._last_eval_errors_by_agent = ape_by_agent
@@ -393,18 +414,25 @@ class Learning:
         mae_pct_overall = float(np.mean(all_ape)) if all_ape else float("nan")
 
         # Per-agent MAE%
-        mae_pct_by_agent = {
-            i: (float(np.mean(xs)) if len(xs) else None)
-            for i, xs in ape_by_agent.items()
-        }
+        mae_pct_by_agent = {i: (float(np.mean(xs)) if len(xs) else None) for i, xs in ape_by_agent.items()}
+
+        # NEW: coverage summaries (mean of 0/1 indicators = fraction inside)
+        all_in_ci = [x for xs in in_ci_by_agent.values() for x in xs]
+        coverage_overall = float(np.mean(all_in_ci)) if all_in_ci else None
+        coverage_by_agent = {i: (float(np.mean(xs)) if len(xs) else None) for i, xs in in_ci_by_agent.items()}
 
         if step is not None:
             self.eval_history.append({
                 "step": int(step),
                 "mae_pct_overall": mae_pct_overall,
                 "mae_pct_by_agent": mae_pct_by_agent,
+                # NEW:
+                "coverage_overall": coverage_overall,
+                "coverage_by_agent": coverage_by_agent,
             })
             self._plot_mae_history(save_path=self.mae_plot_path, per_agent=True)
+            # NEW:
+            self._plot_coverage_history(save_path=self.coverage_plot_path, per_agent=True)
 
         if plot:
             self._plot_errors(errors_by_agent)
@@ -529,6 +557,38 @@ class Learning:
             self._plot_errors(errors_by_state)
 
         return errors_by_state
+
+    def _plot_coverage_history(self, save_path: str, per_agent: bool = True):
+        if not self.eval_history:
+            return
+
+        steps = np.array([h["step"] for h in self.eval_history], dtype=int)
+        cov = np.array([
+            (h.get("coverage_overall", np.nan) if h.get("coverage_overall", None) is not None else np.nan)
+            for h in self.eval_history
+        ], dtype=float)
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(steps, cov, label="Overall coverage", linewidth=2)
+        plt.ylim(0.0, 1.0)
+        plt.xlabel("Step")
+        plt.ylabel("Fraction inside MC 95% CI")
+        plt.title("NN coverage vs MC 95% CI")
+        plt.grid(True, alpha=0.3)
+
+        if per_agent:
+            for i in range(NUM_AGENTS):
+                series = []
+                for h in self.eval_history:
+                    by_agent = h.get("coverage_by_agent", None) or {}
+                    series.append(by_agent.get(i, np.nan))
+                series = np.array(series, dtype=float)
+                plt.plot(steps, series, alpha=0.5, linewidth=1, label=f"Agent {i}")
+
+        plt.legend(loc="best", fontsize=8)
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
 
     def _plot_careful_history_actor0(self):
         if not self.careful_eval_steps:
@@ -672,6 +732,8 @@ class Learning:
         # Final evaluation at the last step
         # self.save_final_evaluation_errors()
 
+        self.save_networks(self.data_dir / "weights")
+
         # Save MAE% history to JSON (optional but useful)
         self.mae_history_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.mae_history_path, "w") as f:
@@ -736,3 +798,19 @@ class Learning:
         plt.close(fig)
 
         print(f"Error distribution plots saved to: {plots_dir}")
+
+    def save_networks(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
+
+        print("Saving networks: ", random.getstate()[1][0])
+
+        payload = {
+            "critics": [],  # list of {name, blob}
+        }
+
+        # critics (unique, deduped)
+        for crit in self.critic_networks:
+            payload["critics"].append({"blob": crit.export_net_state()})
+
+        dst = os.path.join(path, f"weights_{self.exp_config.train_config.hidden_dimensions}_{self.exp_config.train_config.alpha}_{self.exp_config.train_config.lmda}.pt")
+        torch.save(payload, dst)

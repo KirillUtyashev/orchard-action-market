@@ -356,37 +356,34 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 300,
+        trajectory_length: int = 100,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 5,
-        num_rollouts: int = 200,
+        num_trajectories: int = 3,
+        num_rollouts: int = 10,
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
 
-    # Total reward-vector slots per rollout (matches your t += 2 logic)
     T = trajectory_length * NUM_AGENTS * 2
-
     gamma = float(discount_factor)
 
-    # Per-slot discounts d_t (not weights): alternate gamma and 1.0
     d = np.tile(np.array([gamma, 1.0], dtype=float), T // 2 + 1)[:T]
 
-    # Convert per-slot discounts into per-slot weights:
-    # weight[t] = Π_{k=0}^{t-1} d[k], with weight[0] = 1
     weights = np.empty(T, dtype=float)
     weights[0] = 1.0
     if T > 1:
         weights[1:] = np.cumprod(d[:-1])
 
     base_state = deep_copy_state(init_state)
-    stored_means = np.zeros((NUM_AGENTS, num_trajectories), dtype=float)
 
+    # Collect ALL rollout returns as samples for mean/std/SE
+    n_total = int(num_trajectories * num_rollouts)
+    all_returns = np.zeros((NUM_AGENTS, n_total), dtype=float)
+
+    k = 0
     for i in range(num_trajectories):
-        returns = np.zeros((NUM_AGENTS, num_rollouts), dtype=float)
-
         for j in range(num_rollouts):
             set_all_seeds(seed + i * num_rollouts + j)
 
@@ -396,8 +393,8 @@ def monte_carlo_full(
                 init_env.reward_module,
                 init_env.p_apple,
                 init_env.d_apple,
-                curr_state["agents"],
-                curr_state["apples"].copy(),
+                curr_state["apples"],
+                curr_state["agents"].copy(),
                 curr_state["agent_positions"].copy(),
             )
 
@@ -409,8 +406,6 @@ def monte_carlo_full(
             for _ in range(trajectory_length):
                 for step in range(NUM_AGENTS):
                     curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx)
-
-                    # Keep your two-slot logging convention:
                     rewards_by_agent[:, t] = 0.0
                     t += 1
                     rewards_by_agent[:, t] = res.reward_vector
@@ -418,13 +413,30 @@ def monte_carlo_full(
 
             assert t == T, f"Filled {t} reward slots, expected {T}"
 
-            # Discounted return for this rollout, using variable-discount weights
-            returns[:, j] = rewards_by_agent @ weights
+            # One return sample per agent
+            all_returns[:, k] = rewards_by_agent @ weights
+            k += 1
 
-        stored_means[:, i] = returns.mean(axis=1)
+    # Mean return per agent
+    mc_mean = all_returns.mean(axis=1)
 
-    mc_estimate = stored_means.mean(axis=1)
-    return mc_estimate
+    # Std of returns across rollouts (sample std with ddof=1)
+    mc_std = all_returns.std(axis=1, ddof=1)
+
+    # Standard error of the MC mean: SE = std / sqrt(n) [web:49]
+    mc_se = mc_std / np.sqrt(n_total)
+
+    # 95% CI for the MC mean using normal approx: mean ± 1.96*SE [web:52]
+    ci_low = mc_mean - 1.96 * mc_se
+    ci_high = mc_mean + 1.96 * mc_se
+
+    return {
+        "mc_mean": mc_mean,     # shape (NUM_AGENTS,)
+        "mc_se": mc_se,         # shape (NUM_AGENTS,)
+        "ci95_low": ci_low,     # shape (NUM_AGENTS,)
+        "ci95_high": ci_high,   # shape (NUM_AGENTS,)
+        "n": n_total,
+    }
 
 
 def generate_initial_state_full(
@@ -455,9 +467,12 @@ def generate_initial_state_full(
     state["actor_id"] = random.randint(0, NUM_AGENTS - 1)
     state["mode"] = 0
 
-    mc = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
+    res = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
 
-    state["mc"] = mc
+    state["mc"] = res["mc_mean"]
+    state["std"] = res["mc_se"]
+    state["ci95_low"] = res["ci95_low"]
+    state["ci95_high"] = res["ci95_high"]
     if save:
         out_dir = data_dir / "states" / "full"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -525,8 +540,6 @@ def generate_careful_distance_series(
         d_apple: float,
         distances=(4, 3, 2, 1, 0),
         self_id: int = 0,
-        num_trajectories: int = 50,
-        trajectory_length: int = 1000,
 ):
     # For a pure proximity test, strongly consider freezing apple dynamics:
     # p_apple=0, d_apple=0 so the only apple is your fixed one. (No citation)
@@ -591,17 +604,18 @@ def generate_careful_distance_series(
                 start_agent_positions=agent_positions,
             )
 
-        mc = monte_carlo_full(
+        res = monte_carlo_full(
             seed=seed,
-            trajectory_length=trajectory_length,
             init_env=init_env_factory(),
             init_state=init_state,
             discount_factor=discount_factor,
-            num_trajectories=num_trajectories,
         )
 
         init_state["distance"] = d
-        init_state["mc"] = mc
+        init_state["mc"] = res["mc_mean"]
+        init_state["std"] = res["mc_se"]
+        init_state["ci95_low"] = res["ci95_low"]
+        init_state["ci95_high"] = res["ci95_high"]
 
         out_dir = data_dir / "states" / "careful"
         out_dir.mkdir(parents=True, exist_ok=True)
