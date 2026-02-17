@@ -356,12 +356,12 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 100,
+        trajectory_length: int = 500,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 3,
-        num_rollouts: int = 10,
+        num_trajectories: int = 20,
+        num_rollouts: int = 200,
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
