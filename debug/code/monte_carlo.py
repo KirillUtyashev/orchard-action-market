@@ -22,7 +22,8 @@ from config import (
 import numpy as np
 
 from debug.code.environment import Orchard
-from debug.code.helpers import make_env, set_all_seeds, teleport, transition
+from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport, \
+    transition
 from debug.code.reward import Reward
 
 
@@ -356,7 +357,7 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 500,
+        trajectory_length: int = 750,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
@@ -405,7 +406,7 @@ def monte_carlo_full(
 
             for _ in range(trajectory_length):
                 for step in range(NUM_AGENTS):
-                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx)
+                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx, random_policy(curr_state["agent_positions"][actor_idx]))
                     rewards_by_agent[:, t] = 0.0
                     t += 1
                     rewards_by_agent[:, t] = res.reward_vector

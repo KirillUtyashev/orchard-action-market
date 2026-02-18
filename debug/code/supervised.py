@@ -117,7 +117,7 @@ class Learning:
 
         self.data_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim)
 
-        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.config.random_policy}.json"
+        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"
 
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
@@ -125,14 +125,15 @@ class Learning:
 
         default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance)
 
-        self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.config.random_policy}.json"))
-        self.coverage_plot_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"coverage_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.config.random_policy}.png"))
+        self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"))
+        self.coverage_plot_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"coverage_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.png"))
 
         default_plot_path = self.mae_history_path.with_suffix(".png")
         self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
         self._last_eval_errors_by_state = None
 
-        self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
+        # self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
+        self.discount_factor = DISCOUNT_FACTOR
 
         self.careful_evals = []
 
