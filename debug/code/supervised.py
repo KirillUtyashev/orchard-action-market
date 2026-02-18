@@ -13,7 +13,7 @@ from debug.code.forward_view import TorchRLCritic, VNet
 from debug.code.main_net import MainNet
 from debug.code.td_lambda import TDLambda
 from utils import ten
-from debug.code.controllers import ViewController
+from debug.code.controllers import AgentControllerDecentralized, ViewController
 from debug.code.library_value_function import EligibilityCritic
 from debug.code.monte_carlo import generate_careful_distance_series, \
     generate_initial_state_full, \
@@ -87,6 +87,7 @@ def _careful_state_path(agent_id: int, seed: int, distance: int):
 class Learning:
     def __init__(self, exp_config):
         self.env = None
+        self.view_controller = None
         self.agent_controller = None
         self.input_type = None
         self.agents = []
@@ -109,7 +110,7 @@ class Learning:
                     "eligibility" if exp_config.train_config.eligibility else "td0"
 
         self.input_dim = 0
-        if self.exp_config.train_config.input_dim != 3 and  self.exp_config.train_config.input_dim != 326:
+        if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
             self.input_dim = 3 + 3 * NUM_AGENTS + 4 * self.exp_config.train_config.top_k_num_apples
         else:
             self.input_dim = self.exp_config.train_config.input_dim
@@ -131,7 +132,7 @@ class Learning:
         self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
         self._last_eval_errors_by_state = None
 
-        self.discount_factor = DISCOUNT_FACTOR
+        self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
 
         self.careful_evals = []
 
@@ -275,7 +276,9 @@ class Learning:
             self._generate_evaluation_states_reward_learning()
 
         # 3. Initialize OUR agent controller. ignore test flag.
-        self.agent_controller = ViewController(self.input_dim, self.exp_config.train_config.top_k_num_apples)
+        self.view_controller = ViewController(self.input_dim, self.exp_config.train_config.top_k_num_apples)
+
+        self.agent_controller = AgentControllerDecentralized(self.agents, self.view_controller, self.discount_factor)
 
         # 4. Create the environment.
         self.env = Orchard(
@@ -304,15 +307,21 @@ class Learning:
             self.evaluate_networks_reward(step=0, plot=True, store_last=True)
         curr_state = None
         actor_idx = None
+        new_pos = None
         for sec in range(self.trajectory_length):
             for step in range(-1, NUM_AGENTS):
-                final_state, semi_state, res, actor_idx = transition(step, curr_state, self.env, actor_idx)
+                if step != -1:
+                    if self.exp_config.train_config.random_policy:
+                        new_pos = random_policy(curr_state["agent_positions"][actor_idx])
+                    else:
+                        new_pos = self.agent_controller.agent_get_action(self.env, actor_idx)
+                final_state, semi_state, res, actor_idx = transition(step, curr_state, self.env, actor_idx, new_pos)
 
                 if step != -1:
                     for i in range(NUM_AGENTS):
-                        processed_old_state = self.agent_controller(curr_state, i)
-                        processed_intermediate_state = self.agent_controller(semi_state, i)
-                        processed_final_state = self.agent_controller(final_state, i)
+                        processed_old_state = self.view_controller(curr_state, i)
+                        processed_intermediate_state = self.view_controller(semi_state, i)
+                        processed_final_state = self.view_controller(final_state, i)
 
                         if self.exp_config.train_config.reward_learning:
                             self.critic_networks[i].add_experience(
@@ -384,7 +393,7 @@ class Learning:
             )
 
             for i in range(NUM_AGENTS):
-                input_ = self.agent_controller(eval_state, i)
+                input_ = self.view_controller(eval_state, i)
                 # if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                 #     obs = ten(input_, DEVICE).view(-1)
                 #     pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
@@ -456,7 +465,7 @@ class Learning:
 
             # evaluate all agents' critics on this same state
             for eval_agent_id in range(NUM_AGENTS):
-                input_ = self.agent_controller(st, eval_agent_id)
+                input_ = self.view_controller(st, eval_agent_id)
 
                 # if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                 #     obs = ten(input_, DEVICE).view(-1)
@@ -499,7 +508,7 @@ class Learning:
                 )
 
                 for i in range(NUM_AGENTS):
-                    input_ = self.agent_controller(eval_state, i)
+                    input_ = self.view_controller(eval_state, i)
                     if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                         obs = ten(input_, DEVICE).view(-1)
                         pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())

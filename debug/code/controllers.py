@@ -1,4 +1,101 @@
+import copy
+from abc import abstractmethod
+
+from debug.code.config import W
+from debug.code.environment import MoveAction
 import numpy as np
+import random
+
+import torch
+
+from debug.code.helpers import random_policy
+
+
+class AgentController:
+    def __init__(self, agents, critic_view_controller, discount):
+        self.agents_list = agents
+        self.critic_view_controller = critic_view_controller
+        self.discount = discount
+
+    @abstractmethod
+    def get_best_action(self, env, agent_id):
+        raise NotImplementedError
+
+    def get_agent_obs(self, state, agent_id=None):
+        return self.critic_view_controller.state_to_nn_input(state, agent_id)
+
+    def get_all_agent_obs(self, state):
+        obs = []
+        for agent in range(len(self.agents_list)):
+            obs.append(self.get_agent_obs(state, agent))
+        return obs
+
+    @abstractmethod
+    def get_collective_value(self, states, agent_id):
+        raise NotImplementedError
+
+    @abstractmethod
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        raise NotImplementedError
+
+
+class AgentControllerValue(AgentController):
+    def __init__(self, agents, critic_view_controller, discount):
+        super().__init__(agents, critic_view_controller, discount)
+
+    @abstractmethod
+    def get_collective_value(self, processed_states, agent_id) -> float:
+        pass
+
+    def get_best_action(self, env, actor_id):
+        action = env.agent_positions[actor_id]
+        best_val = -1000000
+        position = env.agent_positions[actor_id]
+
+        for act in MoveAction:
+
+            curr_state = copy.deepcopy(env.get_state())
+            r, c = curr_state["agent_positions"][actor_id]
+            nr = r + act.vector[0]
+            nc = c + act.vector[1]
+            if not (0 <= nr < W and 0 <= nc < W):
+                continue
+
+            new_pos = np.array([nr, nc])
+            curr_state["agents"][tuple(new_pos)] += 1
+            curr_state["agents"][tuple(position)] -= 1
+
+            curr_state["agent_positions"][actor_id] = new_pos
+
+            curr_state["mode"] = 0
+            curr_state["actor_id"] = actor_id
+
+            observations = self.get_all_agent_obs(curr_state)
+            val = self.discount * self.get_collective_value(
+                observations, actor_id
+            )
+            if val > best_val:
+                action = new_pos
+                best_val = val
+        return action
+
+    def agent_get_action(self, env, agent_id, epsilon=0.1):
+        action = None
+        if random.random() < epsilon:
+            action = random_policy(env.agent_positions[agent_id])
+        else:
+            with torch.no_grad():
+                action = self.get_best_action(env, agent_id)
+        return action
+
+
+class AgentControllerDecentralized(AgentControllerValue):
+    def get_collective_value(self, states, agent_id):
+        sum_ = 0
+        for num, agent in enumerate(self.agents_list):
+            value = agent.get_value_function(states[num])
+            sum_ += value
+        return sum_
 
 
 class ViewController:

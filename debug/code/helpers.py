@@ -77,7 +77,7 @@ def random_policy(agent_pos):
     return np.array([nr, nc])
 
 
-def transition(step, curr_state, env, actor_idx):
+def transition(step, curr_state, env, actor_idx, new_pos):
     if step == -1:
         # init-only: do NOT mutate env
         if curr_state is None:
@@ -90,7 +90,7 @@ def transition(step, curr_state, env, actor_idx):
 
     env.process_action(
         actor_idx,
-        random_policy(curr_state["agent_positions"][actor_idx]),
+        new_pos,
         mode=0,
     )
 
