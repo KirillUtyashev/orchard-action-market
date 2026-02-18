@@ -385,11 +385,11 @@ class Learning:
 
             for i in range(NUM_AGENTS):
                 input_ = self.agent_controller(eval_state, i)
-                if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
-                    obs = ten(input_, DEVICE).view(-1)
-                    pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
-                else:
-                    pred = float(self.critic_networks[i].get_value_function(input_))
+                # if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
+                #     obs = ten(input_, DEVICE).view(-1)
+                #     pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
+                # else:
+                pred = float(self.critic_networks[i].get_value_function(input_))
 
                 true = float(mc_values[i]) if not self.exp_config.train_config.reward_learning else float(rewards[i])
                 err = true - pred
@@ -458,11 +458,11 @@ class Learning:
             for eval_agent_id in range(NUM_AGENTS):
                 input_ = self.agent_controller(st, eval_agent_id)
 
-                if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
-                    obs = ten(input_, DEVICE).view(-1)
-                    pred = float(self.critic_networks[eval_agent_id].get_value_function(obs).cpu().item())
-                else:
-                    pred = float(self.critic_networks[eval_agent_id].get_value_function(input_))
+                # if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
+                #     obs = ten(input_, DEVICE).view(-1)
+                #     pred = float(self.critic_networks[eval_agent_id].get_value_function(obs).cpu().item())
+                # else:
+                pred = float(self.critic_networks[eval_agent_id].get_value_function(input_))
 
                 careful_pred_this_eval[eval_agent_id, j] = pred
 

@@ -36,6 +36,16 @@ class TDLambda(NetworkWrapper):
 
         self._num_appended = 0
 
+    def get_value_function(self, x):
+        res = ten(x, DEVICE)
+        res = res.view(1, -1)
+        with torch.no_grad():
+            val = self.model(res).cpu().numpy().item()
+        return val
+
+    def get_input_dim(self):
+        return self._input_dim
+
     def ready_to_train(self) -> bool:
         return len(self.batch_states) == self.batch_size
 
