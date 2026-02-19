@@ -137,8 +137,8 @@ class TestEnvironment:
             assert (orchard.get_state()["apples"] != prev).any()
 
     def test_spawn_despawn(self):
-        q_agent = 1
-        apple_mean = 4
+        q_agent = 0.5
+        apple_mean = 5
         reward_module = Reward(REWARD, NUM_AGENTS)
         p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
         d_apple = 1 / apple_mean
@@ -176,8 +176,8 @@ class TestEnvironment:
         plt.show()
 
     def test_how_much_time_to_apple(self):
-        q_agent = 1
-        apple_mean = 4
+        q_agent = 0.5
+        apple_mean = 5
         reward_module = Reward(REWARD, NUM_AGENTS)
         p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
         d_apple = 1 / apple_mean
@@ -200,6 +200,8 @@ class TestEnvironment:
 
         seconds = 10_000
         tracker.observe_grid(self.env.apples)
+        num_apples = np.zeros(seconds + 1, dtype=int)
+        num_apples[0] = self.env.get_sum_apples()
 
         curr_state = None
         actor_idx = None
@@ -264,6 +266,7 @@ class TestEnvironment:
 
                 curr_state = final_state
                 tracker.ticks += 1
+            num_apples[sec] = self.env.get_sum_apples()
 
         # NEW: print pickup fraction
         if total_spawned > 0:
@@ -292,4 +295,10 @@ class TestEnvironment:
         ax2.set_title("Running mean time-to-apple")
 
         plt.tight_layout()
+        plt.show()
+
+        plt.plot(np.arange(seconds + 1), num_apples)
+        plt.xlabel("Time steps")
+        plt.ylabel("Number of apples")
+        plt.title("Apple count over time")
         plt.show()

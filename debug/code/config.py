@@ -39,8 +39,8 @@ class TrainingConfig:
     schedule_lr: bool = False
     lmda: float = 0.5
     random_policy: bool = False
-    q_agent: float = 1
-    apple_life: float = 8
+    q_agent: float = 0.5
+    apple_life: float = 5
     debug: bool = True
     top_k_num_apples: int = 1
     centralized: bool = False

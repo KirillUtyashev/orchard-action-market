@@ -116,3 +116,87 @@ def transition(step, curr_state, env, actor_idx, new_pos):
 def make_env(reward_module, p_apple, d_apple, apples, agents, agent_positions):
     return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
                    start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions)
+
+
+def eval_performance(
+        num_agents,
+        agent_controller,
+        env,
+        name,
+        timesteps=5000,
+        agents_list=None,
+        epsilon=0.1,
+        inference=False,
+):
+    reward = 0
+    apples_picked = []
+    apples_dropped = []
+
+    # Calculate mean distance between agents and their nearest neighbors at each timestep
+    nearest_neighbour_mean_distance = []
+
+    num_of_apples_per_second = []
+
+    # Function to compute distance between two points
+    def distance(pos1, pos2):
+        return np.sqrt(np.sum((pos1 - pos2) ** 2))
+
+    # Function to find nearest neighbor distance for one agent
+    def get_nearest_neighbor_distance(agent_idx, agents):
+        current_pos = agents[agent_idx].position
+        distances = []
+        for i, other_agent in enumerate(agents):
+            if i != agent_idx:
+                distances.append(distance(current_pos, other_agent.position))
+        return min(distances) if distances else float("inf")
+
+    os.makedirs("positions", exist_ok=True)
+    for i in range(timesteps):
+        num_of_apples_per_second.append(env.apples.sum())
+        before = env.total_apples
+        after = env.total_apples
+        apples_dropped.append(after - before)
+        apples_per_second = 0
+        for tick in range(num_agents):
+            apples_before = env.get_sum_apples()
+            env_step(agents_list, env, agent_controller, epsilon, inference)
+            change = apples_before - env.get_sum_apples()
+            reward += change
+            rec.log(agents_list)
+            apples_picked.append(apples_per_second)
+        timestep_distances = []
+        for agent_idx in range(len(agents_list)):
+            nearest_dist = get_nearest_neighbor_distance(agent_idx, agents_list)
+            timestep_distances.append(nearest_dist)
+        nearest_neighbour_mean_distance.append(np.mean(timestep_distances))
+        ### IGNORE END #####
+        if i % 1000 == 0:
+            print(i)
+        env.total_despawned += env.despawn_algorithm(env, env.despawn_rate)
+        env.total_apples += env.spawn_algorithm(env, env.spawn_rate)
+    print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
+    print("Average distance:", np.mean(nearest_neighbour_mean_distance))
+    print("Number of nearest actions: ", nearest_apple_actions)
+    print("Number of idle actions: ", idle_actions)
+    print("Results for", name)
+    print("Reward: ", reward)
+    print("Total Apples: ", env.total_apples)
+    print("Apples per agent:", reward / num_agents)
+    print("Average Reward: ", reward / env.total_apples)
+    print(
+        "Picked vs Spawned per agent",
+        (reward / num_agents) / (env.total_apples / num_agents),
+        )
+    if not inference:
+        return (
+            env.total_apples,  # always here
+            reward,
+            reward / num_agents,
+            (reward / num_agents) / (env.total_apples / num_agents),
+            np.mean(nearest_neighbour_mean_distance),
+            np.mean(num_of_apples_per_second),
+            nearest_apple_actions,
+            idle_actions,
+        )
+    else:
+        return personal_q_values, agent_distance_hist
