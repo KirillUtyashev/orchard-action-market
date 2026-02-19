@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt
 
 
 def _worker_generate_state(args):
-    reward_module, run_id, seed, discount_factor, p_apple, d_apple = args
+    reward_module, run_id, seed, discount_factor, p_apple, d_apple, q_agent, tau = args
     state = generate_initial_state_full(
         reward_module=reward_module,
         run_id=run_id,
@@ -48,7 +48,9 @@ def _worker_generate_state(args):
         discount_factor=discount_factor,
         p_apple=p_apple,
         d_apple=d_apple,
-        save=True,  # writes the npz so next run can load
+        q_agent=q_agent,
+        tau=tau,
+        save=True  # writes the npz so next run can load
     )
     return state  # you can also return (state, mc) if you want
 
@@ -198,7 +200,8 @@ class Learning:
                 results[i] = _load_state_npz(path)
             else:
                 missing_indices.append(i)
-                missing_args.append((self.reward_module, i, i, self.discount_factor, p_apple, d_apple))
+                missing_args.append((self.reward_module, i, i, self.discount_factor, p_apple, d_apple, self.exp_config.train_config.q_agent,
+                                     self.exp_config.train_config.apple_life))
 
         if missing_args:
             if sequential:

@@ -447,6 +447,8 @@ def generate_initial_state_full(
         discount_factor: float,
         p_apple: float,
         d_apple: float,
+        q_agent: float,
+        tau: float,
         save=True
 ):
     """
@@ -461,7 +463,7 @@ def generate_initial_state_full(
         Y00 : mode=1, actor=other, no apple under actor
     """
 
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=0.2, d_apple=d_apple)
+    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=(q_agent * NUM_AGENTS * tau) / (W ** 2), d_apple=d_apple)
     orchard.p_apple = p_apple
     orchard.set_positions()
     state = dict(orchard.get_state())

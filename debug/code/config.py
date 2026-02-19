@@ -14,7 +14,7 @@ NUM_WORKERS = 8
 DISCOUNT_FACTOR = 0.99
 SEEDS = 1000
 
-DEVICE = torch.device("cude") if torch.cuda.is_available() else torch.device("cpu")
+DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
 @dataclass
