@@ -13,7 +13,8 @@ from debug.code.forward_view import TorchRLCritic, VNet
 from debug.code.main_net import MainNet
 from debug.code.td_lambda import TDLambda
 from utils import ten
-from debug.code.controllers import AgentControllerDecentralized, ViewController
+from debug.code.controllers import AgentControllerDecentralized, \
+    ViewControllerCen, ViewControllerDec
 from debug.code.library_value_function import EligibilityCritic
 from debug.code.monte_carlo import generate_careful_distance_series, \
     generate_initial_state_full, \
@@ -132,8 +133,8 @@ class Learning:
         self.mae_plot_path = Path(getattr(exp_config.train_config, "mae_plot_path", default_plot_path))
         self._last_eval_errors_by_state = None
 
-        # self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
-        self.discount_factor = DISCOUNT_FACTOR
+        self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
+        # self.discount_factor = DISCOUNT_FACTOR
 
         self.careful_evals = []
 
@@ -155,20 +156,29 @@ class Learning:
         self.careful_json_path = self.careful_dir / "careful_eval_history.json"
 
     def _init_critic_networks(self):
-
-        for _ in range(NUM_AGENTS):
-            if self.exp_config.train_config.eligibility:
-                self.critic_networks.append(EligibilityCritic(MainNet(self.input_dim, 1, self.exp_config.train_config.hidden_dimensions), self.exp_config.train_config.alpha, DISCOUNT_FACTOR, lambda_coeff=self.exp_config.train_config.lmda, num_training_steps=self.trajectory_length))
-            elif self.exp_config.train_config.forward:
+        if self.exp_config.train_config.centralized:
+            if self.exp_config.train_config.forward:
                 self.critic_networks.append(TDLambda(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor, self.exp_config.train_config.hidden_dimensions,
                                                      self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr, self.exp_config.train_config.lmda))
             else:
                 self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
                                                      self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
+        else:
+            for _ in range(NUM_AGENTS):
+                if self.exp_config.train_config.forward:
+                    self.critic_networks.append(TDLambda(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor, self.exp_config.train_config.hidden_dimensions,
+                                                         self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr, self.exp_config.train_config.lmda))
+                else:
+                    self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
+                                                         self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
 
     def _init_agents_for_training(self):
-        for i in range(NUM_AGENTS):
-            self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
+        if self.exp_config.train_config.centralized:
+            for i in range(NUM_AGENTS):
+                self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[0]))
+        else:
+            for i in range(NUM_AGENTS):
+                self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
 
     def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
         start = time.time()
@@ -277,7 +287,10 @@ class Learning:
             self._generate_evaluation_states_reward_learning()
 
         # 3. Initialize OUR agent controller. ignore test flag.
-        self.view_controller = ViewController(self.input_dim, self.exp_config.train_config.top_k_num_apples)
+        if not self.exp_config.train_config.centralized:
+            self.view_controller = ViewControllerDec(self.input_dim, self.exp_config.train_config.top_k_num_apples)
+        else:
+            self.view_controller = ViewControllerCen(self.exp_config.train_config.top_k_num_apples, self.exp_config.train_config.concat, ViewControllerDec(self.input_dim, self.exp_config.train_config.top_k_num_apples))
 
         self.agent_controller = AgentControllerDecentralized(self.agents, self.view_controller, self.discount_factor)
 
@@ -319,31 +332,46 @@ class Learning:
                 final_state, semi_state, res, actor_idx = transition(step, curr_state, self.env, actor_idx, new_pos)
 
                 if step != -1:
-                    for i in range(NUM_AGENTS):
-                        processed_old_state = self.view_controller(curr_state, i)
-                        processed_intermediate_state = self.view_controller(semi_state, i)
-                        processed_final_state = self.view_controller(final_state, i)
+                    if not self.exp_config.train_config.centralized:
+                        for i in range(NUM_AGENTS):
+                            processed_old_state = self.view_controller(curr_state, i)
+                            processed_intermediate_state = self.view_controller(semi_state, i)
+                            processed_final_state = self.view_controller(final_state, i)
 
-                        if self.exp_config.train_config.reward_learning:
-                            self.critic_networks[i].add_experience(
-                                processed_old_state, None, 0, discount_factor=self.discount_factor
-                            )
-                            self.critic_networks[i].add_experience(
-                                processed_intermediate_state, None, res.reward_vector[i],
-                                discount_factor=self.discount_factor
-                            )
-                        else:
-                            # Mode 0 → Mode 1: use gamma discount
-                            self.critic_networks[i].add_experience(
-                                processed_old_state, processed_intermediate_state, 0,
-                                discount_factor=self.discount_factor  # γ
-                            )
-                            # Mode 1 → Mode 0: NO discount (discount = 1.0)
-                            self.critic_networks[i].add_experience(
-                                processed_intermediate_state, processed_final_state,
-                                res.reward_vector[i],
-                                discount_factor=1.0  # No discount!
-                            )
+                            if self.exp_config.train_config.reward_learning:
+                                self.critic_networks[i].add_experience(
+                                    processed_old_state, None, 0, discount_factor=self.discount_factor
+                                )
+                                self.critic_networks[i].add_experience(
+                                    processed_intermediate_state, None, res.reward_vector[i],
+                                    discount_factor=self.discount_factor
+                                )
+                            else:
+                                # Mode 0 → Mode 1: use gamma discount
+                                self.critic_networks[i].add_experience(
+                                    processed_old_state, processed_intermediate_state, 0,
+                                    discount_factor=self.discount_factor  # γ
+                                )
+                                # Mode 1 → Mode 0: NO discount (discount = 1.0)
+                                self.critic_networks[i].add_experience(
+                                    processed_intermediate_state, processed_final_state,
+                                    res.reward_vector[i],
+                                    discount_factor=1.0  # No discount!
+                                )
+                    else:
+                        processed_old_state = self.view_controller(curr_state)
+                        processed_intermediate_state = self.view_controller(semi_state)
+                        processed_final_state = self.view_controller(final_state)
+                        self.critic_networks[0].add_experience(
+                            processed_old_state, processed_intermediate_state, 0,
+                            discount_factor=self.discount_factor  # γ
+                        )
+                        # Mode 1 → Mode 0: NO discount (discount = 1.0)
+                        self.critic_networks[0].add_experience(
+                            processed_intermediate_state, processed_final_state,
+                            sum(res.reward_vector),
+                            discount_factor=1.0  # No discount!
+                        )
 
                 curr_state = final_state
 
@@ -399,7 +427,10 @@ class Learning:
                 #     obs = ten(input_, DEVICE).view(-1)
                 #     pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
                 # else:
-                pred = float(self.critic_networks[i].get_value_function(input_))
+                if not self.exp_config.train_config.centralized:
+                    pred = float(self.critic_networks[eval_state["actor_id"]].get_value_function(input_))
+                else:
+                    pred = float(self.critic_networks[0].get_value_function(input_))
 
                 true = float(mc_values[i]) if not self.exp_config.train_config.reward_learning else float(rewards[i])
                 err = true - pred
@@ -472,7 +503,10 @@ class Learning:
                 #     obs = ten(input_, DEVICE).view(-1)
                 #     pred = float(self.critic_networks[eval_agent_id].get_value_function(obs).cpu().item())
                 # else:
-                pred = float(self.critic_networks[eval_agent_id].get_value_function(input_))
+                if not self.exp_config.train_config.centralized:
+                    pred = float(self.critic_networks[eval_agent_id].get_value_function(input_))
+                else:
+                    pred = float(self.critic_networks[0].get_value_function(input_))
 
                 careful_pred_this_eval[eval_agent_id, j] = pred
 

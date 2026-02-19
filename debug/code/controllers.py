@@ -98,7 +98,7 @@ class AgentControllerDecentralized(AgentControllerValue):
         return sum_
 
 
-class ViewController:
+class ViewControllerDec:
     def __init__(self, input_dim, k):
         self.input_dim = input_dim
         self.k = k
@@ -231,3 +231,113 @@ class ViewController:
     def __call__(self, state, agent_id):
             """Make the controller callable for compatibility with existing code."""
             return self.state_to_nn_input(state, agent_id)
+
+
+class ViewControllerCen:
+    """
+    Centralized critic view controller with two modes:
+
+    1) concat=True:
+       - Calls ViewControllerDec(state, agent_id=i) for each agent i
+       - Concatenates all per-agent NN inputs into a single vector
+
+    2) concat=False (actor_view):
+       - Builds ONE global, actor-centric (egocentric) encoding:
+         everything is expressed relative to the current actor position.
+    """
+
+    def __init__(self, k, concat: bool, dec_controller=None):
+        self.k = k
+        self.concat = bool(concat)
+        self.dec = dec_controller  # expected to be callable: dec(state, agent_id) -> np.ndarray
+
+        if self.concat and self.dec is None:
+            # Lazily require ViewControllerDec only in concat mode
+            try:
+                self.dec = ViewControllerDec(input_dim=0, k=self.k)  # noqa: F821 (ViewControllerDec expected in your codebase)
+            except NameError as e:
+                raise ValueError(
+                    "concat=True requires a dec_controller or a ViewControllerDec in scope."
+                ) from e
+
+    def state_to_nn_input(self, state) -> np.ndarray:
+        if self.concat:
+            return self._concat_dec_views(state)
+
+        # actor-centric centralized input (agent_id not needed)
+        return self._actor_view(state)
+
+    def _concat_dec_views(self, state) -> np.ndarray:
+        agent_positions = state["agent_positions"]
+        n_agents = len(agent_positions)
+
+        parts = []
+        for i in range(n_agents):
+            parts.append(np.asarray(self.dec(state, i), dtype=np.float32))
+        return np.concatenate(parts, axis=0).astype(np.float32)
+
+    def _actor_view(self, state) -> np.ndarray:
+        if not hasattr(self, "k") or self.k is None:
+            raise ValueError("For entity encoding, set self.k (top-K apples).")
+
+        actor_id = int(state["actor_id"])
+        agent_positions = state["agent_positions"]  # index -> (r,c)
+        apples_matrix = state["apples"]
+        H, W = apples_matrix.shape
+
+        actor_r, actor_c = agent_positions[actor_id]
+
+        denom_x = max(W - 1, 1)
+        denom_y = max(H - 1, 1)
+        dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2)) or 1.0
+
+        def rel_norm(r_from, c_from, r_to, c_to):
+            dx = c_to - c_from
+            dy = r_to - r_from
+            dxn = dx / denom_x
+            dyn = dy / denom_y
+            distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
+            return float(dxn), float(dyn), float(distn)
+
+        # Scalars
+        mode = float(int(state["mode"]))
+        n_agents = len(agent_positions)
+        actor_id_norm = float(actor_id) / float(max(n_agents - 1, 1))
+        apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0
+
+        feats = []
+        feats.append(np.array([mode, actor_id_norm, apple_under_actor], dtype=np.float32))
+
+        # Agents: relative to ACTOR, deterministic order by id
+        for j, (rj, cj) in enumerate(agent_positions):
+            dxn, dyn, distn = rel_norm(actor_r, actor_c, rj, cj)
+            is_actor = 1.0 if j == actor_id else 0.0
+            feats.append(np.array([dxn, dyn, distn, is_actor], dtype=np.float32))
+
+        # Apples: top-K nearest to ACTOR, relative to actor, with mask padding
+        apple_rc = np.argwhere(apples_matrix > 0)  # rows: [r, c]
+
+        if apple_rc.size == 0:
+            topk = np.empty((0, 2), dtype=np.int64)
+        else:
+            rs = apple_rc[:, 0]
+            cs = apple_rc[:, 1]
+            dx = cs - actor_c
+            dy = rs - actor_r
+            d2 = dx * dx + dy * dy
+            # Deterministic: sort by distance^2, then dx, then dy
+            order = np.lexsort((dy, dx, d2))
+            topk = apple_rc[order[: self.k]]
+
+        for idx in range(self.k):
+            if idx < len(topk):
+                r, c = int(topk[idx, 0]), int(topk[idx, 1])
+                dxn, dyn, distn = rel_norm(actor_r, actor_c, r, c)
+                feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
+            else:
+                feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+
+        return np.concatenate(feats).astype(np.float32)
+
+    def __call__(self, state, agent_id=None):
+        return self.state_to_nn_input(state)
