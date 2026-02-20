@@ -77,6 +77,50 @@ def random_policy(agent_pos):
     return np.array([nr, nc])
 
 
+def nearest_apple_policy(agent_pos, apples_matrix):
+    """
+    Greedy 4-neighborhood step toward the nearest apple (by Manhattan distance).
+    If no apples exist, STAY (or you can fall back to random_policy).
+    Returns the new (r, c) position after one step.
+    """
+    r, c = int(agent_pos[0]), int(agent_pos[1])
+    H, W = apples_matrix.shape
+
+    apple_rc = np.argwhere(apples_matrix > 0)
+    if apple_rc.size == 0:
+        return np.array([r, c])  # or: return random_policy(agent_pos)
+
+    rs = apple_rc[:, 0]
+    cs = apple_rc[:, 1]
+    d = np.abs(rs - r) + np.abs(cs - c)
+    min_d = d.min()
+
+    # Tie-break deterministically but stably: pick the first minimum
+    idx = int(np.flatnonzero(d == min_d)[0])
+    tr, tc = int(rs[idx]), int(cs[idx])
+
+    nr, nc = r, c
+
+    # Move to reduce Manhattan distance by 1 (one axis at a time)
+    if tr < r:
+        nr = r - 1
+    elif tr > r:
+        nr = r + 1
+    elif tc < c:
+        nc = c - 1
+    elif tc > c:
+        nc = c + 1
+    else:
+        # Already on an apple
+        nr, nc = r, c  # STAY
+
+    # Boundary check (same style as your random_policy)
+    if not (0 <= nr < H and 0 <= nc < W):
+        nr, nc = r, c
+
+    return np.array([nr, nc])
+
+
 def transition(step, curr_state, env, actor_idx, new_pos):
     if step == -1:
         # init-only: do NOT mutate env
