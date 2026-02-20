@@ -254,7 +254,7 @@ class TestEnvironment:
                     # NEW: count how many *new* apples appear at spawn time
                     apples_before_spawn = self.env.apples.copy()
                     self.env.spawn_apples()
-                    new_spawns = np.logical_and(self.env.apples == 1, apples_before_spawn == 0).sum()
+                    new_spawns = np.logical_and(self.env.apples >= 1, apples_before_spawn == 0).sum()
                     total_spawned += int(new_spawns)
 
                     tracker.observe_grid(self.env.apples)

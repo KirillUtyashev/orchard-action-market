@@ -32,7 +32,9 @@ from config import (
 )
 
 from debug.code.environment import Orchard
-from debug.code.helpers import random_policy, teleport, transition
+from debug.code.helpers import eval_performance, make_env, random_policy, \
+    set_all_seeds, teleport, \
+    transition
 from debug.code.reward import Reward
 from debug.code.value import Value
 from debug.code.value_function import VNetwork
@@ -93,6 +95,7 @@ class Learning:
         self.view_controller = None
         self.agent_controller = None
         self.input_type = None
+        self.rng_state = None
         self.agents = []
         self.critic_networks = []
         self.reward_module = Reward(exp_config.train_config.picker_r, NUM_AGENTS)
@@ -110,7 +113,7 @@ class Learning:
         type_ = "supervised" if exp_config.train_config.supervised else \
             "forward" if exp_config.train_config.forward else \
                 "reward_learning" if exp_config.train_config.reward_learning else \
-                    "eligibility" if exp_config.train_config.eligibility else "td0"
+                    "eligibility" if exp_config.train_config.eligibility else "td0" if exp_config.train_config.random_policy else "q-learning"
 
         self.input_dim = 0
         if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
@@ -127,6 +130,10 @@ class Learning:
         )
 
         default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance)
+
+        self.default_hist_path = default_hist_path
+
+        self.default_hist_path.mkdir(parents=True, exist_ok=True)
 
         self.mae_history_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"mae_pct_history_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"))
         self.coverage_plot_path = Path(getattr(exp_config.train_config, "mae_history_path", default_hist_path / f"coverage_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.png"))
@@ -156,6 +163,9 @@ class Learning:
         self.careful_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / "careful"
         self.careful_plot_dir = self.careful_dir / "plots"
         self.careful_json_path = self.careful_dir / "careful_eval_history.json"
+
+        self.eval_results = []
+        self.eval_steps = []
 
     def _init_critic_networks(self):
         if self.exp_config.train_config.centralized:
@@ -284,9 +294,9 @@ class Learning:
         # p_apple = self.exp_config.train_config.q_agent / (W ** 2)
         # d_apple = 1 / (self.exp_config.train_config.apple_life * NUM_AGENTS)
 
-        if not self.exp_config.train_config.reward_learning:
+        if self.exp_config.train_config.random_policy:
             self._generate_evaluation_states(p_apple, d_apple)
-        else:
+        elif self.exp_config.train_config.reward_learning:
             self._generate_evaluation_states_reward_learning()
 
         # 3. Initialize OUR agent controller. ignore test flag.
@@ -318,10 +328,12 @@ class Learning:
         corresponding experience to the training buffer.
         """
         eval_intervals = [self.trajectory_length // 5 * (i + 1) for i in range(5)]
-        if self.exp_config.train_config.reward_learning is False:
+        if self.exp_config.train_config.random_policy:
             self.evaluate_networks(step=0, plot=True, store_last=True)
-        else:
+        elif self.exp_config.train_config.reward_learning:
             self.evaluate_networks_reward(step=0, plot=True, store_last=True)
+        else:
+            self.eval_performance(0)
         curr_state = None
         actor_idx = None
         new_pos = None
@@ -391,15 +403,79 @@ class Learning:
             if (sec + 1) in eval_intervals:
                 print(f"Running evaluation at step {sec + 1}/{self.trajectory_length}")
                 if self.exp_config.train_config.reward_learning is False:
-                    if sec == self.trajectory_length - 1:
-                        self.evaluate_networks(step=(sec + 1), plot=True, store_last=True)
+                    if self.exp_config.train_config.random_policy:
+                        if sec == self.trajectory_length - 1:
+                            self.evaluate_networks(step=(sec + 1), plot=True, store_last=True)
+                        else:
+                            self.evaluate_networks(step=(sec + 1), plot=False, store_last=True)
                     else:
-                        self.evaluate_networks(step=(sec + 1), plot=False, store_last=True)
+                        self.eval_performance(sec + 1)
                 else:
                     if sec == self.trajectory_length - 1:
                         self.evaluate_networks_reward(step=(sec + 1), plot=True, store_last=True)
                     else:
                         self.evaluate_networks_reward(step=(sec + 1), plot=False, store_last=True)
+
+    def eval_performance(self, step):
+        env = make_env(
+            self.env.reward_module,
+            self.env.p_apple,
+            self.env.d_apple
+        )
+
+        self.save_rng_state()
+        agents = []
+        for i in range(NUM_AGENTS):
+            ag = SimpleAgent(policy=None, id_=i, value_network=self.critic_networks[i])
+            agents.append(ag)
+
+        set_all_seeds(42069)
+
+        with torch.no_grad():
+            results = eval_performance(
+                agent_controller=self.agent_controller,
+                env=env,
+                agents_list=agents,
+                timesteps=100
+            )
+
+        self.restore_rng_state()
+
+        # store results and the step at which they were collected
+        self.eval_results.append(results)
+        self.eval_steps.append(step)
+
+    def restore_rng_state(self):
+        """Restore all random states"""
+        if self.rng_state is not None:
+            random.setstate(self.rng_state["python"])
+            np.random.set_state(self.rng_state["numpy"])
+            torch.set_rng_state(self.rng_state["torch"])
+
+    def save_rng_state(self):
+        """Save all random states"""
+        self.rng_state = {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+        }
+
+    def plot_eval_curve(self):
+        if not self.eval_results:
+            return
+
+        # Example: suppose `results` is a dict with key "mean_return"
+        mean_returns = np.array([res for res in self.eval_results], dtype=float)
+        steps = np.array(self.eval_steps, dtype=int)
+
+        plt.figure()
+        plt.plot(steps, mean_returns, marker="o")
+        plt.xlabel("Training step")
+        plt.ylabel("Total apples picked")
+        plt.title("Evaluation performance over training")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(self.default_hist_path / f"eval_res_{self.exp_config.train_config.hidden_dimensions}_{self.exp_config.train_config.alpha}.png")
 
     def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
         errors_by_agent = {i: [] for i in range(NUM_AGENTS)}
@@ -428,7 +504,7 @@ class Learning:
                 input_ = self.view_controller(eval_state, i)
                 # if self.exp_config.train_config.eligibility or self.exp_config.train_config.forward:
                 #     obs = ten(input_, DEVICE).view(-1)
-                #     pred = float(self.critic_networks[i].get_value_function(obs).cpu().item())
+                #     pred = float(self.critic_networks[i].get_value_functon(obs).cpu().item())
                 # else:
                 if not self.exp_config.train_config.centralized:
                     pred = float(self.critic_networks[eval_state["actor_id"]].get_value_function(input_))
@@ -780,6 +856,8 @@ class Learning:
         # self.save_final_evaluation_errors()
 
         self.save_networks(self.data_dir / "weights")
+        self.plot_eval_curve()
+
 
         # Save MAE% history to JSON (optional but useful)
         self.mae_history_path.parent.mkdir(parents=True, exist_ok=True)

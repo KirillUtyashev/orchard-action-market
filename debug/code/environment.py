@@ -91,6 +91,12 @@ class Orchard:
         self.p_apple = p_apple
         self.d_apple = d_apple
 
+        # Statistics
+        self.total_apples = 0
+        self.total_despawned = 0
+        self.apples_spawned = 0
+        self.total_picked = 0
+
         # Initialize agent positions (n x 2 array)
         if start_agent_positions is not None:
             self.agent_positions = start_agent_positions.copy()
@@ -109,11 +115,6 @@ class Orchard:
             self.apples = np.zeros((width, length), dtype=int)
             self.spawn_apples()
 
-        # Statistics
-        self.total_apples = 0
-        self.total_despawned = 0
-        self.apples_spawned = 0
-        self.total_picked = 0
 
     def set_positions(self, agent_pos: Optional[np.ndarray] = None) -> None:
         """Place agents on the grid at specified or random positions."""
@@ -185,7 +186,7 @@ class Orchard:
         spawn_mask = np.random.rand(*self.apples.shape) < self.p_apple
         spawned = int(spawn_mask.sum())
         self.apples[spawn_mask] += 1
-        # self.apples_spawned += spawned
+        self.apples_spawned += spawned
         return spawned
 
     def despawn_apples(self) -> int:
