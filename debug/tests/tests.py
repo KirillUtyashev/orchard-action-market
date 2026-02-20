@@ -177,7 +177,7 @@ class TestEnvironment:
 
     def test_how_much_time_to_apple(self):
         q_agent = 0.5
-        apple_mean = 5
+        apple_mean = 8
         reward_module = Reward(REWARD, NUM_AGENTS)
         p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
         d_apple = 1 / apple_mean

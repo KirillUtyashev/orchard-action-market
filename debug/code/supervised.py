@@ -114,7 +114,7 @@ class Learning:
 
         self.input_dim = 0
         if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
-            self.input_dim = 3 + 3 * NUM_AGENTS + 4 * self.exp_config.train_config.top_k_num_apples
+            self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
         else:
             self.input_dim = self.exp_config.train_config.input_dim
 
@@ -182,7 +182,7 @@ class Learning:
             for i in range(NUM_AGENTS):
                 self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
 
-    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
+    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = True, processes: int = 8):
         start = time.time()
 
         # ----- existing full-state logic unchanged -----

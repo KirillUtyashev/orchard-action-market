@@ -159,8 +159,25 @@ class ViewControllerDec:
         elif self.input_dim == 3:
             actor_is_self = float(actor_id == agent_id)
             mode = float(state["mode"])
-            apple_under_actor = float(state["apples"][actor_r, actor_c] >= 1)
-            return np.array([actor_is_self, mode, apple_under_actor], dtype=np.float32)
+
+            apples = state["apples"]
+            apple_rc = np.argwhere(apples > 0)
+
+            if apple_rc.size == 0:
+                actor_apple_dist = 0.0
+            else:
+                rs, cs = apple_rc[:, 0], apple_rc[:, 1]
+                dx = cs - actor_c
+                dy = rs - actor_r
+                d2 = dx * dx + dy * dy
+                # Normalize by max possible distance on the grid
+                H, W = apples.shape
+                dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
+                if dmax <= 0:
+                    dmax = 1.0
+                actor_apple_dist = float(np.sqrt(d2.min())) / dmax
+
+            return np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32)
 
         # ---- Design A entity encoding (self-centered apples) ----
         if not hasattr(self, "k") or self.k is None:
@@ -175,7 +192,6 @@ class ViewControllerDec:
             dmax = 1.0
 
         def rel_norm(r_from, c_from, r_to, c_to):
-            """Return (dx_norm, dy_norm, dist_norm) from (from)->(to), using fixed map bounds."""
             dx = c_to - c_from
             dy = r_to - r_from
             dxn = dx / denom_x
@@ -185,42 +201,55 @@ class ViewControllerDec:
 
         actor_is_self = 1.0 if actor_id == agent_id else 0.0
         mode = float(int(state["mode"]))
-        apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0  # extra feature [file:1]
+
+        apple_rc = np.argwhere(apples_matrix > 0)
+
+        if apple_rc.size == 0:
+            actor_apple_dist = 0.0
+            topk_self = np.empty((0, 2), dtype=np.int64)
+            topk_actor = np.empty((0, 2), dtype=np.int64)
+        else:
+            rs, cs = apple_rc[:, 0], apple_rc[:, 1]
+
+            dx_a, dy_a = cs - actor_c, rs - actor_r
+            d2_a = dx_a**2 + dy_a**2
+            actor_apple_dist = float(np.sqrt(d2_a.min())) / dmax
+
+            order_self = np.lexsort((rs - self_r, cs - self_c, (cs - self_c)**2 + (rs - self_r)**2))
+            topk_self = apple_rc[order_self[:self.k]]
+
+            order_actor = np.lexsort((dy_a, dx_a, d2_a))
+            topk_actor = apple_rc[order_actor[:self.k]]
 
         feats = []
-        # Scalars: add apple_under_actor
-        feats.append(np.array([actor_is_self, mode, apple_under_actor], dtype=np.float32))
+        # Scalars: actor_is_self, mode, actor_apple_dist
+        feats.append(np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32))
 
         # Actor block: actor position relative to self
         dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
         feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
 
-        # Other agents: relative to self (includes actor too; redundancy is OK)
+        # Other agents: relative to self
         for j, (rj, cj) in enumerate(agent_positions):
             if j == agent_id:
                 continue
             dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
             feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
 
-        # Apples: top-K nearest to SELF, encoded relative to self with mask padding
-        apple_rc = np.argwhere(apples_matrix > 0)  # rows are [r, c]
-
-        if apple_rc.size == 0:
-            topk = np.empty((0, 2), dtype=np.int64)
-        else:
-            rs = apple_rc[:, 0]
-            cs = apple_rc[:, 1]
-            dx = cs - self_c
-            dy = rs - self_r
-            d2 = dx * dx + dy * dy
-            # Deterministic: sort by distance^2, then dx, then dy
-            order = np.lexsort((dy, dx, d2))
-            topk = apple_rc[order[: self.k]]
-
+        # Apples relative to SELF
         for idx in range(self.k):
-            if idx < len(topk):
-                r, c = int(topk[idx, 0]), int(topk[idx, 1])
-                dxn, dyn, distn = rel_norm(self_r, self_c, r, c)  # relative to SELF
+            if idx < len(topk_self):
+                r, c = int(topk_self[idx, 0]), int(topk_self[idx, 1])
+                dxn, dyn, distn = rel_norm(self_r, self_c, r, c)
+                feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
+            else:
+                feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+
+        # Apples relative to ACTOR
+        for idx in range(self.k):
+            if idx < len(topk_actor):
+                r, c = int(topk_actor[idx, 0]), int(topk_actor[idx, 1])
+                dxn, dyn, distn = rel_norm(actor_r, actor_c, r, c)
                 feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
             else:
                 feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
@@ -228,9 +257,10 @@ class ViewControllerDec:
         out = np.concatenate(feats).astype(np.float32)
         return out
 
+
     def __call__(self, state, agent_id):
-            """Make the controller callable for compatibility with existing code."""
-            return self.state_to_nn_input(state, agent_id)
+        """Make the controller callable for compatibility with existing code."""
+        return self.state_to_nn_input(state, agent_id)
 
 
 class ViewControllerCen:
