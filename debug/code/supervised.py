@@ -435,8 +435,7 @@ class Learning:
             results = eval_performance(
                 agent_controller=self.agent_controller,
                 env=env,
-                agents_list=agents,
-                timesteps=100
+                agents_list=agents
             )
 
         self.restore_rng_state()
