@@ -1,0 +1,54 @@
+config:
+  env:
+    height: 2
+    width: 2
+    n_agents: 2
+    n_apples: 1
+    gamma: 0.9
+    r_picker: -1.0
+    force_pick: true
+    max_apples: 1
+    env_type: deterministic
+    stochastic: null
+  model:
+    input_type: relative
+    model_type: mlp
+    mlp_dims:
+    - 64
+    - 64
+    conv_specs: null
+    k_nearest: null
+  train:
+    mode: policy_learning
+    td_target: pre_action
+    total_steps: 10000
+    seed: 42
+    lr:
+      start: 0.001
+      end: 1.0e-05
+      schedule: none
+      step_size: 0
+      step_factor: 1.0
+    value_learning: null
+    policy_learning:
+      epsilon:
+        start: 0.1
+        end: 0.01
+        schedule: linear
+        step_size: 0
+        step_factor: 1.0
+  eval:
+    freq: 1000
+    rollout_len: 2000
+    eval_steps: 1000
+    n_test_states: 50
+  logging:
+    output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/runs/2x2/policy
+    main_csv_freq: 100
+    detail_csv_freq: 100
+run:
+  start_time: '2026-02-22T11:09:23.054143'
+  end_time: '2026-02-22T11:14:08.964383'
+  total_wall_seconds: 287.46
+  hostname: apps0
+  git_hash: 417a0f2

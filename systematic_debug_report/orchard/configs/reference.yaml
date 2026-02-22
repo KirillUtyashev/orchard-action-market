@@ -1,0 +1,104 @@
+# =============================================================================
+# Orchard RL — Reference Config
+# =============================================================================
+# Every parameter with its type, default, and meaning.
+# Copy this file and delete what you don't need.
+# Only fields relevant to your active mode are required.
+# =============================================================================
+
+env:
+  height: 2                   # int — grid rows
+  width: 2                    # int — grid columns
+  n_agents: 2                 # int — number of agents (each takes turns acting)
+  n_apples: 1                 # int — starting apple count (deterministic: maintained exactly)
+  gamma: 0.9                  # float — discount factor per turn (0 < gamma ≤ 1)
+  r_picker: -1.0              # float — reward to the agent who picks an apple
+                              #         other agents each get 2/(n_agents-1)
+                              #         total team reward per pick = r_picker + 2 = 1.0 when r_picker=-1
+  force_pick: true            # bool — if true, agent auto-picks when stepping on apple
+                              #         if false, agent passes over (future: explicit PICK action)
+  max_apples: 1               # int — hard cap on total apples on the grid at any time
+                              #         deterministic: set equal to n_apples
+                              #         stochastic: can be > n_apples to allow growth
+
+  type: deterministic         # EnvType: "deterministic" | "stochastic"
+                              #   deterministic — fixed init (row-major), first-empty-cell spawn
+                              #   stochastic    — random init, per-cell probabilistic spawn
+
+  # --- stochastic-only (entire block ignored if type=deterministic) ---
+  stochastic:
+    spawn_prob: 0.02          # float — probability each empty cell spawns an apple per turn
+                              #         expected new apples/turn ≈ spawn_prob × empty_cells
+    despawn_mode: none        # DespawnMode: "none" | "probability" | "lifetime"
+                              #   none        — apples never despawn on their own
+                              #   probability — each apple despawns with prob despawn_prob per turn
+                              #   lifetime    — apple removed after apple_lifetime turns
+    despawn_prob: 0.01        # float — per-apple per-turn despawn probability
+                              #         only used when despawn_mode=probability
+    apple_lifetime: 20        # int — turns until apple despawns
+                              #         only used when despawn_mode=lifetime
+
+model:
+  input_type: relative        # EncoderType: "relative" | "relative_k" | "cnn_grid"
+                              #   relative        — sorted relative dists + abs pos + actor flag
+                              #                     dim = n_apples*2 + (n_agents-1)*3 + 4
+                              #   relative_k      — sorted relative dists + abs pos + actor flag, only k nearest apples
+                              #                     dim = k*2 + (n_agents-1)*3 + 4
+                              #   cnn_grid        — (4, H, W) tensor: self/others/apples/actor channels
+  model_type: mlp             # ModelType: "mlp" | "cnn"
+                              #   mlp — fully connected, uses scalar encoder output
+                              #   cnn — conv layers + MLP head, uses grid encoder output
+
+  mlp_dims: [64, 64]         # list[int] — hidden layer sizes for MLP (or MLP head after conv)
+                              #   e.g. [64, 64] = two hidden layers of 64 units each
+                              #   default: [64, 64]
+
+  conv_specs: [[32, 3], [64, 3]]
+                              # list[[int, int]] — [out_channels, kernel_size] per conv layer
+                              #   only used when model_type=cnn
+                              #   padding = kernel_size // 2 (same-padding)
+                              #   default: [[32, 3], [64, 3]]
+
+train:
+  mode: value_learning        # TrainMode: "value_learning" | "policy_learning". value_learning not supported for stochastic envs.
+                              #   value_learning  — fixed nearest-apple policy, learn V
+                              #   policy_learning — epsilon-greedy over learned V, improve policy
+  td_target: pre_action       # TDTarget: "pre_action" | "after_state". pre_action only for value_learning mode.
+  total_steps: 10000          # int — total environment steps (one agent acts per step)
+  seed: 42                    # int — RNG seed for reproducibility
+
+  lr:
+    start: 0.001              # float — initial learning rate
+    end: 0.0001               # float — final learning rate (ignored if schedule=none)
+    schedule: none            # Schedule: "none" | "linear" | "step"
+                              #   none   — constant at start
+                              #   linear — interpolate start→end over total_steps
+                              #   step   — multiply by step_factor every step_size steps
+    step_size: 5000           # int — decay interval (only for schedule=step)
+    step_factor: 0.5          # float — multiply lr by this at each decay (only for schedule=step)
+
+  # --- value_learning only (ignored if mode=policy_learning) ---
+  value_learning:
+    reset_freq: 20            # int — reset env to init_state every N steps
+                              #         ensures coverage of diverse states for value learning
+
+  # --- policy_learning only (ignored if mode=value_learning) ---
+  policy_learning:
+    epsilon:                  # exploration schedule (same structure as lr)
+      start: 0.1              # float — initial exploration rate
+      end: 0.01               # float — final exploration rate
+      schedule: linear        # Schedule: "none" | "linear" | "step"
+      step_size: 5000         # int — only for schedule=step
+      step_factor: 0.5        # float — only for schedule=step
+
+eval:
+  freq: 1000                  # int — run evaluation every N steps
+  rollout_len: 2000           # int — steps per rollout for ground-truth V computation
+  eval_steps: 1000            # int — steps for picks-per-step measurement
+  n_test_states: 50           # int — number of test states for value learning evaluation
+
+logging:
+  output_dir: runs/           # str — base directory; each run creates timestamped subfolder
+                              #         e.g. runs/2025-01-15_143022/
+  main_csv_freq: 100          # int — write metrics.csv every N steps
+  detail_csv_freq: 100        # int — write details.csv every N steps

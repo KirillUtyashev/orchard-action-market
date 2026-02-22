@@ -1,0 +1,155 @@
+"""Core types: Grid, State, Transition, EncoderOutput, and config dataclasses."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import NamedTuple
+
+import torch
+
+from orchard.enums import (
+    DespawnMode,
+    EncoderType,
+    EnvType,
+    ModelType,
+    Schedule,
+    TDTarget,
+    TrainMode,
+)
+
+
+# ---------------------------------------------------------------------------
+# Grid coordinate
+# ---------------------------------------------------------------------------
+class Grid(NamedTuple):
+    row: int
+    col: int
+
+
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class State:
+    agent_positions: tuple[Grid, ...]       # length = n_agents
+    apple_positions: tuple[Grid, ...]       # sorted, length = current apple count
+    actor: int                              # index of agent whose turn it is
+    apple_ages: tuple[int, ...] | None = None  # parallel to apple_positions; None if not tracking
+
+    def is_agent_on_apple(self, agent_idx: int) -> bool:
+        """Check if agent is on an apple cell."""
+        return self.agent_positions[agent_idx] in self.apple_positions
+
+    @property
+    def n_agents(self) -> int:
+        return len(self.agent_positions)
+
+
+# ---------------------------------------------------------------------------
+# Encoder output
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class EncoderOutput:
+    """Output of an encoder. Exactly one of scalar/grid is non-None."""
+    scalar: torch.Tensor | None = None     # shape: (D,)
+    grid: torch.Tensor | None = None       # shape: (C, H, W)
+
+
+# ---------------------------------------------------------------------------
+# Transition
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Transition:
+    s_t: State                          # state before action
+    action: "Action"                    # action taken (for logging/debugging)  # noqa: F821
+    s_t_after: State                    # after-state: deterministic result of action only
+    s_t_next: State                     # next state: spawn/despawn resolved, actor advanced
+    rewards: tuple[float, ...]          # one per agent (all zeros if no pick)
+
+
+# ---------------------------------------------------------------------------
+# Config dataclasses
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class StochasticConfig:
+    spawn_prob: float           # per empty cell per turn
+    despawn_mode: DespawnMode
+    despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
+    apple_lifetime: int         # only meaningful if despawn_mode == LIFETIME
+
+
+@dataclass(frozen=True)
+class EnvConfig:
+    height: int
+    width: int
+    n_agents: int
+    n_apples: int
+    gamma: float
+    r_picker: float
+    force_pick: bool
+    max_apples: int
+    env_type: EnvType
+    stochastic: StochasticConfig | None = None  # None if deterministic
+
+
+@dataclass(frozen=True)
+class ScheduleConfig:
+    start: float
+    end: float
+    schedule: Schedule
+    step_size: int = 0              # only for Schedule.STEP
+    step_factor: float = 1.0        # only for Schedule.STEP
+
+
+@dataclass(frozen=True)
+class ValueLearningConfig:
+    reset_freq: int
+
+
+@dataclass(frozen=True)
+class PolicyLearningConfig:
+    epsilon: ScheduleConfig
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    mode: TrainMode
+    td_target: TDTarget
+    total_steps: int
+    seed: int
+    lr: ScheduleConfig
+    value_learning: ValueLearningConfig | None = None   # only if mode == VALUE_LEARNING
+    policy_learning: PolicyLearningConfig | None = None  # only if mode == POLICY_LEARNING
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    input_type: EncoderType
+    model_type: ModelType
+    mlp_dims: tuple[int, ...]
+    conv_specs: tuple[tuple[int, int], ...] | None = None
+    k_nearest: int | None = None  # only for relative_k encoder; ignored otherwise. If None, defaults to n_agents - 1.
+
+
+@dataclass(frozen=True)
+class EvalConfig:
+    freq: int
+    rollout_len: int
+    eval_steps: int
+    n_test_states: int
+
+
+@dataclass(frozen=True)
+class LoggingConfig:
+    output_dir: str             # the one allowed string — it's a path
+    main_csv_freq: int
+    detail_csv_freq: int
+
+
+@dataclass(frozen=True)
+class ExperimentConfig:
+    env: EnvConfig
+    model: ModelConfig
+    train: TrainConfig
+    eval: EvalConfig
+    logging: LoggingConfig
