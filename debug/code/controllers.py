@@ -183,7 +183,85 @@ class ViewControllerDec:
         if not hasattr(self, "k") or self.k is None:
             raise ValueError("For entity encoding, set self.k (top-K apples).")
 
-        # apples_matrix = state["apples"]
+
+
+        apples_matrix = state["apples"]
+        H, W = apples_matrix.shape
+        denom_x = max(W - 1, 1)
+        denom_y = max(H - 1, 1)
+        dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
+        if dmax <= 0:
+            dmax = 1.0
+
+        def rel_norm(r_from, c_from, r_to, c_to):
+            dx = c_to - c_from
+            dy = r_to - r_from
+            dxn = dx / denom_x
+            dyn = dy / denom_y
+            distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
+            return float(dxn), float(dyn), float(distn)
+
+        actor_is_self = 1.0 if actor_id == agent_id else 0.0
+        mode = float(int(state["mode"]))
+
+        apple_rc = np.argwhere(apples_matrix > 0)
+
+        if apple_rc.size == 0:
+            topk_actor = np.empty((0, 2), dtype=np.int64)
+        else:
+            rs, cs = apple_rc[:, 0], apple_rc[:, 1]
+            dx_a, dy_a = cs - actor_c, rs - actor_r
+            d2_a = dx_a**2 + dy_a**2
+            order_actor = np.lexsort((dy_a, dx_a, d2_a))
+            topk_actor = apple_rc[order_actor[:self.k]]
+
+        # All agents except self (includes actor — handled explicitly)
+        non_self_others = [
+            (j, rj, cj) for j, (rj, cj) in enumerate(agent_positions)
+            if j != agent_id
+        ]
+
+        slot_size = 7 + len(non_self_others)  # self(3) + actor(3) + others(N-1) + is_valid
+
+        feats = []
+
+        # Scalars: actor_is_self, mode
+        feats.append(np.array([actor_is_self, mode], dtype=np.float32))
+
+        # Actor block: actor position relative to self
+        dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
+        feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
+
+        # Other agents: relative to self
+        for j, rj, cj in non_self_others:
+            dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
+            feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
+
+        # Apples relative to ACTOR (nearest to actor), with self + other agent distances per slot
+        for idx in range(self.k):
+            if idx < len(topk_actor):
+                r, c = int(topk_actor[idx, 0]), int(topk_actor[idx, 1])
+                # Apple relative to self
+                dxn_s, dyn_s, distn_s = rel_norm(self_r, self_c, r, c)
+                # Apple relative to actor
+                dxn_act, dyn_act, distn_act = rel_norm(actor_r, actor_c, r, c)
+                slot = [dxn_s, dyn_s, distn_s, dxn_act, dyn_act, distn_act]
+                # Distance from each non-self agent to this apple
+                for j, rj, cj in non_self_others:
+                    _, _, distn_j = rel_norm(rj, cj, r, c)
+                    slot.append(distn_j)
+                slot.append(1.0)  # is_valid
+                feats.append(np.array(slot, dtype=np.float32))
+            else:
+                feats.append(np.zeros(slot_size, dtype=np.float32))
+
+        out = np.concatenate(feats).astype(np.float32)
+        return out
+
+
+
+
+    # apples_matrix = state["apples"]
         # H, W = apples_matrix.shape
         # denom_x = max(W - 1, 1)
         # denom_y = max(H - 1, 1)
@@ -207,119 +285,124 @@ class ViewControllerDec:
         # if apple_rc.size == 0:
         #     actor_apple_dist = 0.0
         #     topk_self = np.empty((0, 2), dtype=np.int64)
-        #     topk_actor = np.empty((0, 2), dtype=np.int64)
         # else:
         #     rs, cs = apple_rc[:, 0], apple_rc[:, 1]
+        #     order_self = np.argsort((cs - self_c)**2 + (rs - self_r)**2)
+        #     topk_self = apple_rc[order_self[:self.k]]
         #
         #     dx_a, dy_a = cs - actor_c, rs - actor_r
         #     d2_a = dx_a**2 + dy_a**2
         #     actor_apple_dist = float(np.sqrt(d2_a.min())) / dmax
         #
-        #     order_self = np.lexsort((rs - self_r, cs - self_c, (cs - self_c)**2 + (rs - self_r)**2))
-        #     topk_self = apple_rc[order_self[:self.k]]
-        #
-        #     order_actor = np.lexsort((dy_a, dx_a, d2_a))
-        #     topk_actor = apple_rc[order_actor[:self.k]]
+        # non_self_others = [
+        #     (j, rj, cj) for j, (rj, cj) in enumerate(agent_positions)
+        #     if j != agent_id
+        # ]
         #
         # feats = []
-        # # Scalars: actor_is_self, mode, actor_apple_dist
+        #
+        # # Scalars
         # feats.append(np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32))
         #
         # # Actor block: actor position relative to self
         # dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
         # feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
         #
-        # # Other agents: relative to self
-        # for j, (rj, cj) in enumerate(agent_positions):
-        #     if j == agent_id:
-        #         continue
+        # # All non-self agents relative to self (actor included — duplicate when actor_is_self==0, that's fine)
+        # for j, rj, cj in non_self_others:
         #     dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
         #     feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
         #
-        # # Apples relative to SELF
+        # # Apple slots: K nearest to self
         # for idx in range(self.k):
         #     if idx < len(topk_self):
         #         r, c = int(topk_self[idx, 0]), int(topk_self[idx, 1])
-        #         dxn, dyn, distn = rel_norm(self_r, self_c, r, c)
-        #         feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
+        #         # Apple relative to self
+        #         dxn_s, dyn_s, distn_s = rel_norm(self_r, self_c, r, c)
+        #         # Apple relative to actor
+        #         dxn_act, dyn_act, distn_act = rel_norm(actor_r, actor_c, r, c)
+        #         slot = [dxn_s, dyn_s, distn_s, dxn_act, dyn_act, distn_act]
+        #         # All non-self agents' distance to this apple (actor included)
+        #         for j, rj, cj in non_self_others:
+        #             _, _, distn_j = rel_norm(rj, cj, r, c)
+        #             slot.append(distn_j)
+        #         slot.append(1.0)  # is_valid
+        #         feats.append(np.array(slot, dtype=np.float32))
         #     else:
-        #         feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
-        #
-        # # Apples relative to ACTOR
-        # for idx in range(self.k):
-        #     if idx < len(topk_actor):
-        #         r, c = int(topk_actor[idx, 0]), int(topk_actor[idx, 1])
-        #         dxn, dyn, distn = rel_norm(actor_r, actor_c, r, c)
-        #         feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
-        #     else:
-        #         feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+        #         slot_size = 6 + len(non_self_others) + 1
+        #         feats.append(np.zeros(slot_size, dtype=np.float32))
         #
         # out = np.concatenate(feats).astype(np.float32)
         # return out
-        apples_matrix = state["apples"]
-        H, W = apples_matrix.shape
-        denom_x = max(W - 1, 1)
-        denom_y = max(H - 1, 1)
-        dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
-        if dmax <= 0:
-            dmax = 1.0
 
-        def rel_norm(r_from, c_from, r_to, c_to):
-            """Return (dx_norm, dy_norm, dist_norm) from (from)->(to), using fixed map bounds."""
-            dx = c_to - c_from
-            dy = r_to - r_from
-            dxn = dx / denom_x
-            dyn = dy / denom_y
-            distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
-            return float(dxn), float(dyn), float(distn)
 
-        actor_is_self = 1.0 if actor_id == agent_id else 0.0
-        mode = float(int(state["mode"]))
-        apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0  # extra feature [file:1]
+#     apples_matrix = state["apples"]
+    #     H, W = apples_matrix.shape
+    #     denom_x = max(W - 1, 1)
+    #     denom_y = max(H - 1, 1)
+    #     dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
+    #     if dmax <= 0:
+    #         dmax = 1.0
+    #
+    #     def rel_norm(r_from, c_from, r_to, c_to):
+    #         """Return (dx_norm, dy_norm, dist_norm) from (from)->(to), using fixed map bounds."""
+    #         dx = c_to - c_from
+    #         dy = r_to - r_from
+    #         dxn = dx / denom_x
+    #         dyn = dy / denom_y
+    #         distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
+    #         return float(dxn), float(dyn), float(distn)
+    #
+    #     actor_is_self = 1.0 if actor_id == agent_id else 0.0
+    #     mode = float(int(state["mode"]))
+    #     apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0  # extra feature [file:1]
+    #
+    #     feats = []
+    #     # Scalars: add apple_under_actor
+    #     feats.append(np.array([actor_is_self, mode, apple_under_actor], dtype=np.float32))
+    #
+    #     # Actor block: actor position relative to self
+    #     dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
+    #     feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
+    #
+    #     # Other agents: relative to self (includes actor too; redundancy is OK)
+    #     for j, (rj, cj) in enumerate(agent_positions):
+    #         if j == agent_id:
+    #             continue
+    #         dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
+    #         feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
+    #
+    #     # Apples: top-K nearest to SELF, encoded relative to self with mask padding
+    #     apple_rc = np.argwhere(apples_matrix > 0)  # rows are [r, c]
+    #
+    #     if apple_rc.size == 0:
+    #         topk = np.empty((0, 2), dtype=np.int64)
+    #     else:
+    #         rs = apple_rc[:, 0]
+    #         cs = apple_rc[:, 1]
+    #         dx = cs - self_c
+    #         dy = rs - self_r
+    #         d2 = dx * dx + dy * dy
+    #         # Deterministic: sort by distance^2, then dx, then dy
+    #         order = np.lexsort((dy, dx, d2))
+    #         topk = apple_rc[order[: self.k]]
+    #
+    #     for idx in range(self.k):
+    #         if idx < len(topk):
+    #             r, c = int(topk[idx, 0]), int(topk[idx, 1])
+    #             dxn, dyn, distn = rel_norm(self_r, self_c, r, c)  # relative to SELF
+    #             feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
+    #         else:
+    #             feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+    #
+    #     out = np.concatenate(feats).astype(np.float32)
+    #     return out
+    #
+    # def __call__(self, state, agent_id):
+    #     """Make the controller callable for compatibility with existing code."""
+    #     return self.state_to_nn_input(state, agent_id)
 
-        feats = []
-        # Scalars: add apple_under_actor
-        feats.append(np.array([actor_is_self, mode, apple_under_actor], dtype=np.float32))
-
-        # Actor block: actor position relative to self
-        dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
-        feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
-
-        # Other agents: relative to self (includes actor too; redundancy is OK)
-        for j, (rj, cj) in enumerate(agent_positions):
-            if j == agent_id:
-                continue
-            dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
-            feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
-
-        # Apples: top-K nearest to SELF, encoded relative to self with mask padding
-        apple_rc = np.argwhere(apples_matrix > 0)  # rows are [r, c]
-
-        if apple_rc.size == 0:
-            topk = np.empty((0, 2), dtype=np.int64)
-        else:
-            rs = apple_rc[:, 0]
-            cs = apple_rc[:, 1]
-            dx = cs - self_c
-            dy = rs - self_r
-            d2 = dx * dx + dy * dy
-            # Deterministic: sort by distance^2, then dx, then dy
-            order = np.lexsort((dy, dx, d2))
-            topk = apple_rc[order[: self.k]]
-
-        for idx in range(self.k):
-            if idx < len(topk):
-                r, c = int(topk[idx, 0]), int(topk[idx, 1])
-                dxn, dyn, distn = rel_norm(self_r, self_c, r, c)  # relative to SELF
-                feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
-            else:
-                feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
-
-        out = np.concatenate(feats).astype(np.float32)
-        return out
-
-    def __call__(self, state, agent_id):
-        """Make the controller callable for compatibility with existing code."""
+    def __call__(self, state, agent_id=None):
         return self.state_to_nn_input(state, agent_id)
 
 

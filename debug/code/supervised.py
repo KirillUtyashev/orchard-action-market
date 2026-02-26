@@ -118,7 +118,8 @@ class Learning:
         self.input_dim = 0
         if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
             # self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
-            self.input_dim = 3 + 3 * NUM_AGENTS + 4 * self.exp_config.train_config.top_k_num_apples
+            # self.input_dim = 3 + 3 + 3 * (NUM_AGENTS - 1) + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
+            self.input_dim = 2 + 3 * NUM_AGENTS + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
         else:
             self.input_dim = self.exp_config.train_config.input_dim
 
@@ -161,7 +162,7 @@ class Learning:
             for _ in range(NUM_AGENTS)
         ]
 
-        self.careful_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / "careful"
+        self.careful_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / f"careful_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}"
         self.careful_plot_dir = self.careful_dir / "plots"
         self.careful_json_path = self.careful_dir / "careful_eval_history.json"
 
