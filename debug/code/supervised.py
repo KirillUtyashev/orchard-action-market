@@ -117,9 +117,9 @@ class Learning:
 
         self.input_dim = 0
         if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
-            # self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
+            self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
             # self.input_dim = 3 + 3 + 3 * (NUM_AGENTS - 1) + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
-            self.input_dim = 2 + 3 * NUM_AGENTS + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
+            # self.input_dim = 2 + 3 * NUM_AGENTS + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
         else:
             self.input_dim = self.exp_config.train_config.input_dim
 
