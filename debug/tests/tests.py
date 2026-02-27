@@ -180,10 +180,8 @@ class TestEnvironment:
         q_agent = 0.5
         apple_mean = 8
         reward_module = Reward(REWARD, NUM_AGENTS)
-        # p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
-        # d_apple = 1 / apple_mean
-        p_apple = 0.04
-        d_apple = 0.01
+        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
+        d_apple = 1 / apple_mean
         set_all_seeds(42069)
         self.env = Orchard(
             W,

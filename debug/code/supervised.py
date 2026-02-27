@@ -126,15 +126,17 @@ class Learning:
         else:
             self.input_dim = self.exp_config.train_config.cnn_dim
 
-        self.data_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / "mlp" if not self.exp_config.train_config.CNN else "cnn" / str(self.input_dim)
+        self.data_dir = data_dir / type_ / str(NUM_AGENTS) / str(exp_config.train_config.picker_r) / (
+            "mlp" if not self.exp_config.train_config.CNN else "cnn"
+        ) / str(self.input_dim)
 
-        default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"
+        default_final_path = self.data_dir / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"
 
         self.final_eval_errors_path = Path(
             getattr(exp_config.train_config, "final_eval_errors_path", default_final_path)
         )
 
-        default_hist_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance)
+        default_hist_path = self.data_dir
 
         self.default_hist_path = default_hist_path
 
