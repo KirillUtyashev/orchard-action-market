@@ -157,27 +157,49 @@ class ViewControllerDec:
             return np.concatenate(features)
 
         elif self.input_dim == 3:
-            actor_is_self = float(actor_id == agent_id)
-            mode = float(state["mode"])
+            # actor_is_self = float(actor_id == agent_id)
+            # mode = float(state["mode"])
+            #
+            # apples = state["apples"]
+            # apple_rc = np.argwhere(apples > 0)
+            #
+            # if apple_rc.size == 0:
+            #     actor_apple_dist = 0.0
+            # else:
+            #     rs, cs = apple_rc[:, 0], apple_rc[:, 1]
+            #     dx = cs - actor_c
+            #     dy = rs - actor_r
+            #     d2 = dx * dx + dy * dy
+            #     # Normalize by max possible distance on the grid
+            #     H, W = apples.shape
+            #     dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
+            #     if dmax <= 0:
+            #         dmax = 1.0
+            #     actor_apple_dist = float(np.sqrt(d2.min())) / dmax
+            #
+            # return np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32)
+            apples_matrix = state["apples"]
+            H, W = apples_matrix.shape
+            dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
+            if dmax <= 0:
+                dmax = 1.0
 
-            apples = state["apples"]
-            apple_rc = np.argwhere(apples > 0)
+            actor_r, actor_c = agent_positions[actor_id]
 
-            if apple_rc.size == 0:
-                actor_apple_dist = 0.0
-            else:
+            actor_is_self = 1.0 if actor_id == agent_id else 0.0
+            mode = float(int(state["mode"]))
+
+            apple_rc = np.argwhere(apples_matrix > 0)
+
+            if apple_rc.size > 0:
                 rs, cs = apple_rc[:, 0], apple_rc[:, 1]
-                dx = cs - actor_c
-                dy = rs - actor_r
-                d2 = dx * dx + dy * dy
-                # Normalize by max possible distance on the grid
-                H, W = apples.shape
-                dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
-                if dmax <= 0:
-                    dmax = 1.0
-                actor_apple_dist = float(np.sqrt(d2.min())) / dmax
+                d2 = (rs - actor_r) ** 2 + (cs - actor_c) ** 2
+                nearest_idx = np.argmin(d2)
+                actor_to_nearest_apple = float(np.sqrt(d2[nearest_idx])) / dmax
+            else:
+                actor_to_nearest_apple = 1.0  # max distance if no apples
 
-            return np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32)
+            return np.array([actor_is_self, mode, actor_to_nearest_apple], dtype=np.float32)
 
         # ---- Design A entity encoding (self-centered apples) ----
         if not hasattr(self, "k") or self.k is None:
@@ -245,7 +267,7 @@ class ViewControllerDec:
         return out
 
 
-# apples_matrix = state["apples"]
+        # apples_matrix = state["apples"]
         # H, W = apples_matrix.shape
         # denom_x = max(W - 1, 1)
         # denom_y = max(H - 1, 1)
