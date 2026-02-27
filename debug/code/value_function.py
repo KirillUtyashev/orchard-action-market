@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from utils import ten
+from helpers import ten
 from config import DEVICE
 from debug.code.network import NetworkWrapper
 
@@ -9,16 +9,16 @@ torch.set_default_dtype(torch.float64)
 
 class VNetwork(NetworkWrapper):
     def __init__(
-            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False
+            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False, is_cnn=False, conv_size=None,
     ):
-        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps)
+        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps, is_cnn=is_cnn, conv_size=conv_size)
         self.batch_rewards = []
         self.batch_discounts = []
         self.theoretical_vals = []
 
     def get_value_function(self, x):
         res = ten(x, DEVICE)
-        res = res.view(1, -1)
+        res = res.unsqueeze(0).float()
         with torch.no_grad():
             val = self.model(res).cpu().numpy().item()
         return val
@@ -97,16 +97,12 @@ class VNetwork(NetworkWrapper):
         return loss.item()
 
     def train_reward_supervised(self):
-        # states: [B, obs_dim]
-        states = ten(np.stack(self.batch_states, 0).squeeze(), DEVICE)
-        states = states.view(states.size(0), -1)
-
-        # y: [B] (or [B,1] depending on your net output)
+        states = ten(np.stack(self.batch_states, 0), DEVICE)  # (B, 5, H, W)
         y = ten(np.array(self.batch_rewards), DEVICE).view(-1)
 
-        pred = self.model(states).squeeze(-1)  # make it [B]
+        pred = self.model(states).squeeze(-1)  # (B,)
 
-        loss = torch.nn.functional.mse_loss(pred, y)  # standard regression loss
+        loss = torch.nn.functional.mse_loss(pred, y)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -114,3 +110,4 @@ class VNetwork(NetworkWrapper):
         self.batch_states = []
         self.batch_rewards = []
         return loss.item()
+

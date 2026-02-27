@@ -357,12 +357,12 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 750,
+        trajectory_length: int = 1,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 20,
-        num_rollouts: int = 200,
+        num_trajectories: int = 1,
+        num_rollouts: int = 1,
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
@@ -544,19 +544,27 @@ def generate_careful_distance_series(
         distances=(4, 3, 2, 1, 0),
         self_id: int = 0,
 ):
-    # For a pure proximity test, strongly consider freezing apple dynamics:
-    # p_apple=0, d_apple=0 so the only apple is your fixed one. (No citation)
-
     width, length = W, L
     center = (width // 2, length // 2)
 
-    # Fixed apples map: single apple in center
+    # Fixed diamond apples around center
     start_apples = np.zeros((width, length), dtype=int)
-    start_apples[center[0], center[1]] = 1
-    start_apples[center[0], center[1]] = 1
-    start_apples[center[0] - 2, center[1]] = 1
-    start_apples[center[0] - 1, center[1] + 1] = 1
-    start_apples[center[0] - 1, center[1] - 1] = 1
+    start_apples[center[0],     center[1]    ] = 1  # center
+    start_apples[center[0] - 2, center[1]    ] = 1  # top
+    start_apples[center[0] - 1, center[1] + 1] = 1  # top-right
+    start_apples[center[0] - 1, center[1] - 1] = 1  # top-left
+
+    # 6 hardcoded outskirt apples (fixed across all states)
+    outskirt_apples = [
+        (1,          1          ),  # top-left corner area
+        (1,          length - 2 ),  # top-right corner area
+        (width - 2,  1          ),  # bottom-left corner area
+        (width - 2,  length - 2 ),  # bottom-right corner area
+        (width // 2, 1          ),  # left edge midpoint
+        (width // 2, length - 2 ),  # right edge midpoint
+    ]
+    for (r, c) in outskirt_apples:
+        start_apples[r, c] = 1
 
     # Choose self positions at different Manhattan distances
     self_positions = _make_distance_positions(center, distances, width, length)

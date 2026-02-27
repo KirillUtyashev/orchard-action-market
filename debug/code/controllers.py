@@ -12,10 +12,11 @@ from debug.code.helpers import random_policy
 
 
 class AgentController:
-    def __init__(self, agents, critic_view_controller, discount):
+    def __init__(self, agents, critic_view_controller, discount, epsilon):
         self.agents_list = agents
         self.critic_view_controller = critic_view_controller
         self.discount = discount
+        self.epsilon = epsilon
 
     @abstractmethod
     def get_best_action(self, env, agent_id):
@@ -40,8 +41,8 @@ class AgentController:
 
 
 class AgentControllerValue(AgentController):
-    def __init__(self, agents, critic_view_controller, discount):
-        super().__init__(agents, critic_view_controller, discount)
+    def __init__(self, agents, critic_view_controller, discount, epsilon):
+        super().__init__(agents, critic_view_controller, discount, epsilon)
 
     @abstractmethod
     def get_collective_value(self, processed_states, agent_id) -> float:
@@ -79,9 +80,9 @@ class AgentControllerValue(AgentController):
                 best_val = val
         return action
 
-    def agent_get_action(self, env, agent_id, epsilon=0.1):
+    def agent_get_action(self, env, agent_id):
         action = None
-        if random.random() < epsilon:
+        if random.random() < self.epsilon:
             action = random_policy(env.agent_positions[agent_id])
         else:
             with torch.no_grad():
@@ -93,15 +94,16 @@ class AgentControllerDecentralized(AgentControllerValue):
     def get_collective_value(self, states, agent_id):
         sum_ = 0
         for num, agent in enumerate(self.agents_list):
-            value = agent.get_value_function(states[num])
+            value = agent.policy_value.get_value_function(states[num])
             sum_ += value
         return sum_
 
 
 class ViewControllerDec:
-    def __init__(self, input_dim, k):
+    def __init__(self, input_dim, k, cnn=False):
         self.input_dim = input_dim
         self.k = k
+        self.cnn=cnn
 
     def state_to_nn_input(self, state, agent_id=None) -> np.ndarray:
         """
@@ -222,124 +224,63 @@ class ViewControllerDec:
             distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
             return float(dxn), float(dyn), float(distn)
 
-        # --- 3 scalars ---
         actor_is_self = 1.0 if actor_id == agent_id else 0.0
         mode = float(int(state["mode"]))
-        _, _, distn_self_to_actor = rel_norm(actor_r, actor_c, self_r, self_c)
 
-        feats = []
-
-        # Block 1: 3 scalars
-        feats.append(np.array([actor_is_self, mode, distn_self_to_actor], dtype=np.float32))
-
-        # Block 2: K apples relative to actor (identical across all agents)
         apple_rc = np.argwhere(apples_matrix > 0)
 
-        if apple_rc.size > 0:
+        if apple_rc.size == 0:
+            actor_apple_dist = 0.0
+            topk_self = np.empty((0, 2), dtype=np.int64)
+            topk_actor = np.empty((0, 2), dtype=np.int64)
+        else:
             rs, cs = apple_rc[:, 0], apple_rc[:, 1]
-            dx_a = cs - actor_c
-            dy_a = rs - actor_r
+
+            dx_a, dy_a = cs - actor_c, rs - actor_r
             d2_a = dx_a**2 + dy_a**2
+            actor_apple_dist = float(np.sqrt(d2_a.min())) / dmax
+
+            order_self = np.lexsort((rs - self_r, cs - self_c, (cs - self_c)**2 + (rs - self_r)**2))
+            topk_self = apple_rc[order_self[:self.k]]
+
             order_actor = np.lexsort((dy_a, dx_a, d2_a))
             topk_actor = apple_rc[order_actor[:self.k]]
-        else:
-            topk_actor = np.empty((0, 2), dtype=np.int64)
 
+        feats = []
+        # Scalars: actor_is_self, mode, actor_apple_dist
+        feats.append(np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32))
+
+        # Actor block: actor position relative to self
+        dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
+        feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
+
+        # Other agents: relative to self
+        for j, (rj, cj) in enumerate(agent_positions):
+            if j == agent_id:
+                continue
+            dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
+            feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
+
+        # Apples relative to SELF
+        for idx in range(self.k):
+            if idx < len(topk_self):
+                r, c = int(topk_self[idx, 0]), int(topk_self[idx, 1])
+                dxn, dyn, distn = rel_norm(self_r, self_c, r, c)
+                feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
+            else:
+                feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
+
+        # Apples relative to ACTOR
         for idx in range(self.k):
             if idx < len(topk_actor):
                 r, c = int(topk_actor[idx, 0]), int(topk_actor[idx, 1])
                 dxn, dyn, distn = rel_norm(actor_r, actor_c, r, c)
                 feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
             else:
-                feats.append(np.zeros(4, dtype=np.float32))
-
-        # Block 3: All other agents (excluding self) relative to actor
-        non_self_others = [
-            (j, rj, cj) for j, (rj, cj) in enumerate(agent_positions)
-            if j != agent_id
-        ]
-
-        for j, rj, cj in non_self_others:
-            dxn, dyn, distn = rel_norm(actor_r, actor_c, rj, cj)
-            feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
+                feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
 
         out = np.concatenate(feats).astype(np.float32)
         return out
-
-
-        # apples_matrix = state["apples"]
-        # H, W = apples_matrix.shape
-        # denom_x = max(W - 1, 1)
-        # denom_y = max(H - 1, 1)
-        # dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
-        # if dmax <= 0:
-        #     dmax = 1.0
-        #
-        # def rel_norm(r_from, c_from, r_to, c_to):
-        #     dx = c_to - c_from
-        #     dy = r_to - r_from
-        #     dxn = dx / denom_x
-        #     dyn = dy / denom_y
-        #     distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
-        #     return float(dxn), float(dyn), float(distn)
-        #
-        # actor_is_self = 1.0 if actor_id == agent_id else 0.0
-        # mode = float(int(state["mode"]))
-        #
-        # apple_rc = np.argwhere(apples_matrix > 0)
-        #
-        # if apple_rc.size == 0:
-        #     actor_apple_dist = 0.0
-        #     topk_self = np.empty((0, 2), dtype=np.int64)
-        #     topk_actor = np.empty((0, 2), dtype=np.int64)
-        # else:
-        #     rs, cs = apple_rc[:, 0], apple_rc[:, 1]
-        #
-        #     dx_a, dy_a = cs - actor_c, rs - actor_r
-        #     d2_a = dx_a**2 + dy_a**2
-        #     actor_apple_dist = float(np.sqrt(d2_a.min())) / dmax
-        #
-        #     order_self = np.lexsort((rs - self_r, cs - self_c, (cs - self_c)**2 + (rs - self_r)**2))
-        #     topk_self = apple_rc[order_self[:self.k]]
-        #
-        #     order_actor = np.lexsort((dy_a, dx_a, d2_a))
-        #     topk_actor = apple_rc[order_actor[:self.k]]
-        #
-        # feats = []
-        # # Scalars: actor_is_self, mode, actor_apple_dist
-        # feats.append(np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32))
-        #
-        # # Actor block: actor position relative to self
-        # dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
-        # feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
-        #
-        # # Other agents: relative to self
-        # for j, (rj, cj) in enumerate(agent_positions):
-        #     if j == agent_id:
-        #         continue
-        #     dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
-        #     feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
-        #
-        # # Apples relative to SELF
-        # for idx in range(self.k):
-        #     if idx < len(topk_self):
-        #         r, c = int(topk_self[idx, 0]), int(topk_self[idx, 1])
-        #         dxn, dyn, distn = rel_norm(self_r, self_c, r, c)
-        #         feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
-        #     else:
-        #         feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
-        #
-        # # Apples relative to ACTOR
-        # for idx in range(self.k):
-        #     if idx < len(topk_actor):
-        #         r, c = int(topk_actor[idx, 0]), int(topk_actor[idx, 1])
-        #         dxn, dyn, distn = rel_norm(actor_r, actor_c, r, c)
-        #         feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
-        #     else:
-        #         feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
-        #
-        # out = np.concatenate(feats).astype(np.float32)
-        # return out
 
 
 #     apples_matrix = state["apples"]
@@ -407,9 +348,60 @@ class ViewControllerDec:
     # def __call__(self, state, agent_id):
     #     """Make the controller callable for compatibility with existing code."""
     #     return self.state_to_nn_input(state, agent_id)
+    def state_to_grid_input(self, state, agent_id=None) -> np.ndarray:
+        """
+        Returns:
+            grid:    (4, H, W) float32 array with 4 binary channels
+            scalars: (1,)      float32 array with actor_is_self scalar
+
+        Channels:
+            0: apples
+            1: self position
+            2: other agents (excludes self and actor)
+            3: actor position
+        """
+        if agent_id is None:
+            raise ValueError("agent_id must be provided")
+
+        actor_id = state["actor_id"]
+        agent_positions = state["agent_positions"]
+        self_r, self_c = agent_positions[agent_id]
+        actor_r, actor_c = agent_positions[actor_id]
+
+        H, W = state["apples"].shape
+
+        # Channel 0: apples
+        ch_apples = (state["apples"] >= 1).astype(np.float32)
+
+        # Channel 1: self
+        ch_self = np.zeros((H, W), dtype=np.float32)
+        ch_self[self_r, self_c] = 1.0
+
+        # Channel 2: other agents (exclude self and actor)
+        ch_others = np.zeros((H, W), dtype=np.float32)
+        for j, (rj, cj) in enumerate(agent_positions):
+            if j != agent_id and j != actor_id:
+                ch_others[rj, cj] = 1.0
+
+        # Channel 3: actor
+        ch_actor = np.zeros((H, W), dtype=np.float32)
+        ch_actor[actor_r, actor_c] = 1.0
+
+        # In state_to_grid_input: return single (5, H, W) array
+        grid = np.stack([ch_apples, ch_self, ch_others, ch_actor], axis=0)  # (4, H, W)
+
+        # Channel 4: scalars broadcast into a (2, H, W) plane — just use row 0
+        ch_scalars = np.zeros((1, H, W), dtype=np.float32)
+        ch_scalars[0, 0, 0] = 1.0 if actor_id == agent_id else 0.0  # actor_is_self
+        ch_scalars[0, 0, 1] = float(int(state["mode"]))              # mode
+
+        return np.concatenate([grid, ch_scalars], axis=0)  # (5, H, W)
 
     def __call__(self, state, agent_id=None):
-        return self.state_to_nn_input(state, agent_id)
+        if not self.cnn:
+            return self.state_to_nn_input(state, agent_id)
+        else:
+            return self.state_to_grid_input(state, agent_id)
 
 
 class ViewControllerCen:

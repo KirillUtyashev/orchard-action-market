@@ -11,6 +11,19 @@ count = 0
 UP, DOWN, LEFT, RIGHT, STAY = 0, 1, 2, 3, 4
 
 
+def ten(c: np.ndarray, device: torch.device) -> torch.Tensor:
+    """Convert numpy array to torch tensor on specified device.
+
+    Args:
+        c: Input numpy array.
+        device: Target device for the tensor.
+
+    Returns:
+        A torch tensor on the specified device.
+    """
+    return torch.from_numpy(c).to(device).float()
+
+
 def set_all_seeds(seed: int = 42, deterministic: bool = False) -> None:
     """
     Seed Python, NumPy, and PyTorch (CPU & CUDA) for reproducibility.

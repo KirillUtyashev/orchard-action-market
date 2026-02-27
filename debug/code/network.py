@@ -4,8 +4,8 @@ import torch
 from torch import optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from debug.code.config import DEVICE
-from debug.code.main_net import MainNet
+from debug.code.config import DEVICE, W
+from debug.code.main_net import CNNMainNet, MainNet
 
 
 def linear_decay_then_hold_factor(step: int, decay_steps: int, min_factor: float) -> float:
@@ -45,9 +45,15 @@ class NetworkWrapper(ABC):
             schedule=False,
             decay_steps=1_000_000,     # linear decay duration
             min_lr=1e-6,               # final LR after decay (then held)
+            is_cnn=bool,
+            conv_size=None
     ):
-        self.model = MainNet(input_dim, output_dim, hidden_dim, num_layers).to(DEVICE)
+        if not is_cnn:
+            self.model = MainNet(input_dim, output_dim, hidden_dim, num_layers).to(DEVICE)
+        else:
+            self.model = CNNMainNet((4, W, W), 2, 1, conv_size, 3, hidden_dim, num_layers - 2)
         # self.optimizer = optim.AdamW(self.model.parameters(), lr=alpha, amsgrad=True)
+        self.model = self.model.float()
         self.optimizer = optim.SGD(self.model.parameters(), lr=alpha)
         self.alpha = alpha
         self.discount = discount

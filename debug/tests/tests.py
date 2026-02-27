@@ -4,7 +4,8 @@ from matplotlib import pyplot as plt
 
 from debug.code.environment import Orchard
 from debug.code.reward import Reward
-from debug.code.helpers import random_policy, set_all_seeds, teleport
+from debug.code.helpers import nearest_apple_policy, random_policy, \
+    set_all_seeds, teleport
 import numpy as np
 from pathlib import Path
 data_dir = Path(__file__).parent.parent / "data"
@@ -179,8 +180,11 @@ class TestEnvironment:
         q_agent = 0.5
         apple_mean = 8
         reward_module = Reward(REWARD, NUM_AGENTS)
-        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
-        d_apple = 1 / apple_mean
+        # p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
+        # d_apple = 1 / apple_mean
+        p_apple = 0.04
+        d_apple = 0.01
+        set_all_seeds(42069)
         self.env = Orchard(
             W,
             L,
@@ -218,7 +222,8 @@ class TestEnvironment:
                 # Mode 0: move
                 self.env.process_action(
                     actor_idx,
-                    random_policy(curr_state["agent_positions"][actor_idx]),
+                    # random_policy(curr_state["agent_positions"][actor_idx]),
+                    nearest_apple_policy(curr_state["agent_positions"][actor_idx], curr_state["apples"]),
                     mode=0,
                 )
 
@@ -254,8 +259,9 @@ class TestEnvironment:
                     # NEW: count how many *new* apples appear at spawn time
                     apples_before_spawn = self.env.apples.copy()
                     self.env.spawn_apples()
-                    new_spawns = np.logical_and(self.env.apples >= 1, apples_before_spawn == 0).sum()
+                    new_spawns = (self.env.apples - apples_before_spawn).sum()
                     total_spawned += int(new_spawns)
+
 
                     tracker.observe_grid(self.env.apples)
 
@@ -270,7 +276,7 @@ class TestEnvironment:
 
         # NEW: print pickup fraction
         if total_spawned > 0:
-            print(f"Picked apples: {total_picked} / {total_spawned} ({total_picked / total_spawned:.4%})")
+            print(f"Picked apples: {total_picked} / {total_spawned} ({total_picked / self.env.apples_spawned:.4%})")
         else:
             print("No apples ever spawned? total_spawned=0")
 

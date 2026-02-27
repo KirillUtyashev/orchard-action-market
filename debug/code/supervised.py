@@ -116,15 +116,17 @@ class Learning:
                     "eligibility" if exp_config.train_config.eligibility else "td0" if exp_config.train_config.random_policy else "q-learning"
 
         self.input_dim = 0
-        if self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
-            # self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
+        if not self.exp_config.train_config.CNN and self.exp_config.train_config.input_dim != 3 and self.exp_config.train_config.input_dim != 326:
+            self.input_dim = 3 + 3 * NUM_AGENTS + 8 * self.exp_config.train_config.top_k_num_apples
             # self.input_dim = 3 + 3 + 3 * (NUM_AGENTS - 1) + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
             # self.input_dim = 2 + 3 * NUM_AGENTS + self.exp_config.train_config.top_k_num_apples * (7 + (NUM_AGENTS - 1))
-            self.input_dim = 3 + 3 * (NUM_AGENTS - 1) + 4 * self.exp_config.train_config.top_k_num_apples
-        else:
+            # self.input_dim = 3 + 3 * (NUM_AGENTS - 1) + 4 * self.exp_config.train_config.top_k_num_apples
+        elif not self.exp_config.train_config.CNN:
             self.input_dim = self.exp_config.train_config.input_dim
+        else:
+            self.input_dim = self.exp_config.train_config.cnn_dim
 
-        self.data_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim)
+        self.data_dir = data_dir / type_ / str(exp_config.train_config.picker_r) / "mlp" if not self.exp_config.train_config.CNN else "cnn" / str(self.input_dim)
 
         default_final_path = data_dir / type_ / str(exp_config.train_config.picker_r) / str(self.input_dim) / str(exp_config.train_config.variance) / f"final_eval_errors_{exp_config.train_config.hidden_dimensions}_{exp_config.train_config.num_seeds}_{exp_config.train_config.alpha}_{exp_config.train_config.schedule_lr}_{exp_config.train_config.lmda}_{exp_config.train_config.random_policy}.json"
 
@@ -185,7 +187,8 @@ class Learning:
                                                          self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr, self.exp_config.train_config.lmda))
                 else:
                     self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
-                                                         self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
+                                                         self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr,
+                                                         self.exp_config.train_config.CNN, [self.exp_config.train_config.cnn_dim, self.exp_config.train_config.cnn_dim]))
 
     def _init_agents_for_training(self):
         if self.exp_config.train_config.centralized:
@@ -304,11 +307,11 @@ class Learning:
 
         # 3. Initialize OUR agent controller. ignore test flag.
         if not self.exp_config.train_config.centralized:
-            self.view_controller = ViewControllerDec(self.input_dim, self.exp_config.train_config.top_k_num_apples)
+            self.view_controller = ViewControllerDec(self.input_dim, self.exp_config.train_config.top_k_num_apples, self.exp_config.train_config.CNN)
         else:
             self.view_controller = ViewControllerCen(self.exp_config.train_config.top_k_num_apples, self.exp_config.train_config.concat, ViewControllerDec(self.input_dim, self.exp_config.train_config.top_k_num_apples))
 
-        self.agent_controller = AgentControllerDecentralized(self.agents, self.view_controller, self.discount_factor)
+        self.agent_controller = AgentControllerDecentralized(self.agents, self.view_controller, self.discount_factor, self.exp_config.train_config.epsilon)
 
         # 4. Create the environment.
         self.env = Orchard(
@@ -343,7 +346,7 @@ class Learning:
         for sec in range(self.trajectory_length):
             for step in range(-1, NUM_AGENTS):
                 if step != -1:
-                    if self.exp_config.train_config.random_policy:
+                    if self.exp_config.train_config.random_policy or self.exp_config.train_config.reward_learning:
                         new_pos = random_policy(curr_state["agent_positions"][actor_idx])
                     else:
                         new_pos = self.agent_controller.agent_get_action(self.env, actor_idx)
@@ -434,12 +437,16 @@ class Learning:
 
         set_all_seeds(42069)
 
+        self.agent_controller.epsilon = 0
+
         with torch.no_grad():
             results = eval_performance(
                 agent_controller=self.agent_controller,
                 env=env,
                 agents_list=agents
             )
+
+        self.agent_controller.epsilon = self.exp_config.train_config.epsilon
 
         self.restore_rng_state()
 
@@ -489,6 +496,7 @@ class Learning:
         eps = 1e-8  # avoids blowups when true value is 0
 
         for eval_state in self.evaluation_states:
+            mc_values = eval_state["mc"]
             mc_values = eval_state["mc"]
 
             # NEW: only if present (lets you roll this out incrementally)

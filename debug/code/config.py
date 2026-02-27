@@ -40,11 +40,14 @@ class TrainingConfig:
     lmda: float = 0.5
     random_policy: bool = False
     q_agent: float = 0.5
-    apple_life: float = 10
+    apple_life: float = 8
     debug: bool = True
     top_k_num_apples: int = 1
     centralized: bool = False
     concat: bool = False
+    epsilon: float = 0.1
+    CNN: bool = False
+    cnn_dim: int = 4
 
 
 @dataclass

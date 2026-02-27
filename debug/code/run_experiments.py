@@ -101,6 +101,17 @@ def parse_args(args):
         action=argparse.BooleanOptionalAction,
         default=False
     )
+    parser.add_argument(
+        "--CNN",
+        action=argparse.BooleanOptionalAction,
+        default=False
+    )
+    parser.add_argument(
+        "--epsilon", type=float, default=0.1
+    )
+    parser.add_argument(
+        "--cnn_dim", type=int, default=4
+    )
     return parser.parse_args(args)
 
 
@@ -126,7 +137,10 @@ def set_config(args, i):
         random_policy=args.random_policy,
         top_k_num_apples=args.top_k_num_apples,
         centralized=args.centralized,
-        concat=args.concat
+        concat=args.concat,
+        epsilon=args.epsilon,
+        CNN=args.CNN,
+        cnn_dim=args.cnn_dim
     )
 
 
@@ -155,7 +169,10 @@ def run_one(alpha, base_args, run_idx):
         random_policy=base_args["random_policy"],
         top_k_num_apples=base_args["top_k_num_apples"],
         centralized=base_args["centralized"],
-        concat=base_args["concat"]
+        concat=base_args["concat"],
+        epsilon=base_args["epsilon"],
+        CNN=base_args["CNN"],
+        cnn_dim=base_args["cnn_dim"]
     )
 
     exp_config = ExperimentConfig(env_config=EnvironmentConfig(), train_config=train_config)
