@@ -200,7 +200,7 @@ class Learning:
             for i in range(NUM_AGENTS):
                 self.agents.append(SimpleAgent(teleport(W) if not self.exp_config.train_config.random_policy else random_policy, i, self.critic_networks[i]))
 
-    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = True, processes: int = 8):
+    def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
         start = time.time()
 
         # ----- existing full-state logic unchanged -----
@@ -873,8 +873,12 @@ class Learning:
 
         # Save MAE% history to JSON (optional but useful)
         self.mae_history_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.mae_history_path, "w") as f:
-            json.dump({"eval_history": self.eval_history}, f)
+        if self.exp_config.train_config.reward_learning or self.exp_config.train_config.random_policy:
+            with open(self.mae_history_path, "w") as f:
+                json.dump({"eval_history": self.eval_history}, f)
+        else:
+            with open(self.mae_history_path, "w") as f:
+                json.dump({"eval_history": self.eval_results}, f)
         print(f"MAE% history saved to: {self.mae_history_path}")
         print(f"MAE% plot saved to: {self.mae_plot_path}")
 

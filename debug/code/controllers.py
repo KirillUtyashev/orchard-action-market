@@ -23,7 +23,7 @@ class AgentController:
         raise NotImplementedError
 
     def get_agent_obs(self, state, agent_id=None):
-        return self.critic_view_controller.state_to_nn_input(state, agent_id)
+        return self.critic_view_controller(state, agent_id)
 
     def get_all_agent_obs(self, state):
         obs = []

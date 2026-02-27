@@ -27,17 +27,13 @@ class VNetwork(NetworkWrapper):
         return self._input_dim
 
     def train(self):
-        states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
-        states = states.view(states.size(0), -1)
-        approx = self.model(states)
-        approx = approx.squeeze(1)
+        states = ten(np.stack(self.batch_states, axis=0), DEVICE)  # (B, 5, H, W)
+        approx = self.model(states).squeeze(1)  # (B,)
 
         with torch.no_grad():
-            next_states = ten(np.stack(self.batch_new_states, axis=0).squeeze(), DEVICE)
-            next_states = next_states.view(next_states.size(0), -1)
+            next_states = ten(np.stack(self.batch_new_states, axis=0), DEVICE)  # (B, 5, H, W)
             target = self.model(next_states)
 
-            # Use per-transition discount factors
             discounts = ten(np.array(self.batch_discounts), DEVICE)
             y = ten(np.array(self.batch_rewards), DEVICE) + discounts * target.squeeze(1)
 
@@ -51,8 +47,9 @@ class VNetwork(NetworkWrapper):
         self.batch_states = []
         self.batch_new_states = []
         self.batch_rewards = []
-        self.batch_discounts = []  # Clear discount buffer
+        self.batch_discounts = []
         return loss.item()
+
 
     def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)
@@ -110,4 +107,3 @@ class VNetwork(NetworkWrapper):
         self.batch_states = []
         self.batch_rewards = []
         return loss.item()
-
