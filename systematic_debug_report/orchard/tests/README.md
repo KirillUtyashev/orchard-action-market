@@ -1,0 +1,1 @@
+python -m pytest orchard/tests/test_stable_id.py -v

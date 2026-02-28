@@ -19,7 +19,10 @@ class DespawnMode(Enum):
 
 class EncoderType(Enum):
     RELATIVE = auto() # only for deterministic spawn and pre_action td target.
-    RELATIVE_K = auto()
+    RELATIVE_K = auto() # nearest K
+    POSITIONAL_K = auto()  # fixed-slot: apples by grid position, agents by index
+    GRID_MLP = auto()      # flattened CNN grid as MLP input (baseline)
+    STABLE_ID = auto()     # SMAC-style: persistent apple IDs as slot indices
     CNN_GRID = auto()
 
 
@@ -45,6 +48,7 @@ class Action(Enum):
     LEFT = 2
     RIGHT = 3
     STAY = 4
+    PICK = 5
 
     @property
     def delta(self) -> tuple[int, int]:
@@ -57,6 +61,7 @@ _ACTION_DELTAS: dict["Action", tuple[int, int]] = {
     Action.LEFT: (0, -1),
     Action.RIGHT: (0, 1),
     Action.STAY: (0, 0),
+    Action.PICK: (0, 0),
 }
 
 # Tie-break priority for greedy action selection
@@ -64,4 +69,4 @@ ACTION_PRIORITY: list[Action] = [
     Action.LEFT, Action.DOWN, Action.RIGHT, Action.UP, Action.STAY,
 ]
 
-NUM_ACTIONS: int = len(Action)
+NUM_ACTIONS: int = 5 # Exclude PICK action from the count of actions for the agent to choose from.

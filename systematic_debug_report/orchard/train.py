@@ -1,6 +1,7 @@
 """Training loop and CLI entry point."""
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 sys.path.append("../")
 
@@ -30,6 +31,7 @@ from orchard.logging_ import (
 )
 from orchard.model import create_networks
 from orchard.policy import (
+    ValueNetwork,
     argmax_a_Q_team,
     epsilon_greedy,
     nearest_apple_action,
@@ -38,6 +40,19 @@ from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
 from orchard.datatypes import EncoderOutput, ExperimentConfig
 
+def _save_checkpoint(
+    networks: list[ValueNetwork],
+    step: int,
+    path: Path,
+) -> None:
+    """Save network and optimizer state dicts."""
+    ckpt = {
+        "step": step,
+        "networks": [net.state_dict() for net in networks],
+        "optimizers": [net.optimizer.state_dict() for net in networks],
+    }
+    torch.save(ckpt, path)
+    
 
 def train(cfg: ExperimentConfig) -> None:
     """Main training loop."""
@@ -47,7 +62,7 @@ def train(cfg: ExperimentConfig) -> None:
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
     encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest)
-    networks = create_networks(cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps)
+    networks = create_networks(cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps, nstep=cfg.train.nstep)
     run_dir = setup_logging(cfg)
 
     n_agents = cfg.env.n_agents
@@ -109,6 +124,7 @@ def train(cfg: ExperimentConfig) -> None:
                     loss = networks[i].train_step(
                         s_enc=pre_enc[i], reward=0.0,
                         discount=cfg.env.gamma, s_next_enc=move_enc[i],
+                        env_step=t,
                     )
                     td_loss_accum += loss
                     td_loss_count += 1
@@ -121,6 +137,7 @@ def train(cfg: ExperimentConfig) -> None:
                     loss = networks[i].train_step(
                         s_enc=move_enc[i], reward=pick_rewards[i],
                         discount=1.0, s_next_enc=next_enc[i],
+                        env_step=t,
                     )
                     td_loss_accum += loss
                     td_loss_count += 1
@@ -133,6 +150,7 @@ def train(cfg: ExperimentConfig) -> None:
                     loss = networks[i].train_step(
                         s_enc=pre_enc[i], reward=0.0,
                         discount=cfg.env.gamma, s_next_enc=next_enc[i],
+                        env_step=t,
                     )
                     td_loss_accum += loss
                     td_loss_count += 1
@@ -152,6 +170,7 @@ def train(cfg: ExperimentConfig) -> None:
                         loss = networks[i].train_step(
                             s_enc=prev_after_enc[i], reward=prev_reward[i],
                             discount=prev_discount, s_next_enc=move_after_enc[i],
+                            env_step=t,
                         )
                         td_loss_accum += loss
                         td_loss_count += 1
@@ -165,6 +184,7 @@ def train(cfg: ExperimentConfig) -> None:
                     loss = networks[i].train_step(
                         s_enc=move_after_enc[i], reward=pick_rewards[i],
                         discount=1.0, s_next_enc=pick_after_enc[i],
+                        env_step=t,
                     )
                     td_loss_accum += loss
                     td_loss_count += 1
@@ -187,6 +207,7 @@ def train(cfg: ExperimentConfig) -> None:
                         loss = networks[i].train_step(
                             s_enc=prev_after_enc[i], reward=prev_reward[i],
                             discount=prev_discount, s_next_enc=move_after_enc[i],
+                            env_step=t,
                         )
                         td_loss_accum += loss
                         td_loss_count += 1
@@ -205,6 +226,8 @@ def train(cfg: ExperimentConfig) -> None:
         if cfg.train.mode == TrainMode.VALUE_LEARNING:
             assert cfg.train.value_learning is not None
             if (t + 1) % cfg.train.value_learning.reset_freq == 0:
+                for net in networks:
+                    net.flush_nstep()
                 s_t = env.init_state()
                 if cfg.train.td_target == TDTarget.AFTER_STATE:
                     prev_after_enc = None
@@ -309,7 +332,13 @@ def train(cfg: ExperimentConfig) -> None:
                 pol_metrics = evaluate_policy_learning(networks, env, cfg.eval.eval_steps)
                 print(f"  Greedy PPS: {pol_metrics['greedy_pps']:.4f}  "
                       f"Nearest PPS: {pol_metrics['nearest_pps']:.4f}")
-
+                
+            if cfg.eval.checkpoint_freq > 0 and (t + 1) % cfg.eval.checkpoint_freq == 0:
+                _save_checkpoint(networks, t + 1, run_dir / "checkpoints" / f"step_{t + 1}.pt")
+    
+    # --- Final checkpoint (always saved) ---
+    _save_checkpoint(networks, cfg.train.total_steps, run_dir / "checkpoints" / "final.pt")
+    
     # --- Cleanup ---
     main_logger.close()
     detail_logger.close()

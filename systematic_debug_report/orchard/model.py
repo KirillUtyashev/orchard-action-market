@@ -8,7 +8,7 @@ import torch.nn as nn
 import orchard.encoding as encoding
 from orchard.enums import ModelType
 from orchard.schedule import compute_schedule_value
-from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, ScheduleConfig
+from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, NStepTransition, ScheduleConfig
 
 
 class ValueNetwork(nn.Module):
@@ -24,26 +24,33 @@ class ValueNetwork(nn.Module):
         env_cfg: EnvConfig,
         lr_schedule: ScheduleConfig,
         total_steps: int,
+        nstep: int = 1,
     ) -> None:
         super().__init__()
         self._lr_schedule = lr_schedule
         self._total_steps = total_steps
         self._step_count: int = 0
+        self._env_step: int = 0
 
         if model_cfg.model_type == ModelType.MLP:
-            input_dim = encoding.get_input_dim()
+            input_dim = encoding.get_scalar_dim()
             self.net = self._build_mlp(input_dim, model_cfg.mlp_dims)
         elif model_cfg.model_type == ModelType.CNN:
-            channels = encoding.get_input_dim()
-            conv, flat_dim = self._build_conv(
+            channels = encoding.get_grid_channels()
+            scalar_extra = encoding.get_scalar_dim()
+            self.conv, conv_flat_dim = self._build_conv(
                 channels, model_cfg.conv_specs, env_cfg.height, env_cfg.width
             )
-            mlp_head = self._build_mlp(flat_dim, model_cfg.mlp_dims)
-            self.net = nn.Sequential(conv, nn.Flatten(), mlp_head)
+            self.flatten = nn.Flatten()
+            self.net = self._build_mlp(conv_flat_dim + scalar_extra, model_cfg.mlp_dims)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
 
         self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule.start)
+        
+        self._nstep = nstep
+        self._nstep_buffer: list[NStepTransition] = []
+        self._nstep_latest_next: EncoderOutput | None = None
 
     @staticmethod
     def _build_mlp(input_dim: int, hidden_dims: tuple[int, ...]) -> nn.Sequential:
@@ -70,40 +77,62 @@ class ValueNetwork(nn.Module):
 
         layers: list[nn.Module] = []
         c = in_channels
+        h, w = height, width
         for out_c, ks in conv_specs:
             padding = ks // 2
             layers.append(nn.Conv2d(c, out_c, kernel_size=ks, padding=padding))
             layers.append(nn.ReLU())
+            h = (h + 2 * padding - ks) // 1 + 1
+            w = (w + 2 * padding - ks) // 1 + 1
             c = out_c
 
-        flat_dim = c * height * width
+        flat_dim = c * h * w
         return nn.Sequential(*layers), flat_dim
 
     def forward(self, encoder_output: EncoderOutput) -> torch.Tensor:
         """Returns scalar value estimate."""
-        if encoder_output.scalar is not None:
-            return self.net(encoder_output.scalar).squeeze(-1)
-        elif encoder_output.grid is not None:
+        if encoder_output.grid is not None:
             x = encoder_output.grid
             if x.dim() == 3:
                 x = x.unsqueeze(0)
+            x = self.flatten(self.conv(x))
+            if encoder_output.scalar is not None:
+                s = encoder_output.scalar
+                if s.dim() == 1:
+                    s = s.unsqueeze(0)
+                x = torch.cat([x, s], dim=-1)
             out = self.net(x).squeeze(-1)
             if out.dim() == 1 and out.size(0) == 1:
                 return out.squeeze(0)
             return out
+        elif encoder_output.scalar is not None:
+            return self.net(encoder_output.scalar).squeeze(-1)
         else:
             raise ValueError("EncoderOutput has neither scalar nor grid")
 
-    def train_step(
-        self,
-        s_enc: EncoderOutput,
-        reward: float,
-        discount: float,
-        s_next_enc: EncoderOutput,
-    ) -> float:
-        """One semi-gradient TD(0) step. Returns loss (float)."""
+    def train_step(self, s_enc, reward, discount, s_next_enc, env_step: int = 0) -> float:
+        self._env_step = env_step
+        self._nstep_buffer.append(NStepTransition(s_enc, reward, discount))
+        self._nstep_latest_next = s_next_enc
+        if len(self._nstep_buffer) >= self._nstep:
+            return self._do_nstep_update()
+        return 0.0
+
+    def _do_nstep_update(self) -> float:
+        """Compute n-step return for buffer[0], update, pop."""
+        assert self._nstep_latest_next is not None
+
         with torch.no_grad():
-            target = reward + discount * self.forward(s_next_enc)
+            G = self.forward(self._nstep_latest_next).item()
+        for i in range(len(self._nstep_buffer) - 1, -1, -1):
+            t = self._nstep_buffer[i]
+            G = t.reward + t.discount * G
+
+        s_enc = self._nstep_buffer[0].s_enc
+        self._nstep_buffer.pop(0)
+
+        with torch.no_grad():
+            target = torch.tensor(G)
         pred = self.forward(s_enc)
         loss = (pred - target) ** 2
         self.optimizer.zero_grad()
@@ -113,10 +142,17 @@ class ValueNetwork(nn.Module):
         self._update_lr()
         return loss.item()
 
+    def flush_nstep(self) -> float:
+        """Flush buffer with truncated returns. Call at reset/end. Returns total loss."""
+        total_loss = 0.0
+        while self._nstep_buffer:
+            total_loss += self._do_nstep_update()
+        self._nstep_latest_next = None
+        return total_loss
+    
     def _update_lr(self) -> None:
-        """Update LR based on schedule config and internal step count."""
         new_lr = compute_schedule_value(
-            self._lr_schedule, self._step_count, self._total_steps
+            self._lr_schedule, self._env_step, self._total_steps
         )
         for param_group in self.optimizer.param_groups:
             param_group["lr"] = new_lr
@@ -143,9 +179,9 @@ def create_networks(
     env_cfg: EnvConfig,
     lr_schedule: ScheduleConfig,
     total_steps: int,
+    nstep: int = 1,
 ) -> list[ValueNetwork]:
-    """Create N value networks (one per agent), each with its own optimizer."""
     return [
-        ValueNetwork(model_cfg, env_cfg, lr_schedule, total_steps)
+        ValueNetwork(model_cfg, env_cfg, lr_schedule, total_steps, nstep)
         for _ in range(env_cfg.n_agents)
     ]

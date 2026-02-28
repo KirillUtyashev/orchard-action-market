@@ -1,6 +1,8 @@
 """Logging: CSVLogger, run directory setup, metadata writing."""
 
 from __future__ import annotations
+import sys
+sys.path.append("../")
 
 import csv
 import socket
@@ -14,7 +16,7 @@ from typing import Any
 import yaml
 
 from orchard.datatypes import ExperimentConfig
-from systematic_debug_report.orchard.enums import TrainMode
+from orchard.enums import TrainMode
 
 
 class CSVLogger:

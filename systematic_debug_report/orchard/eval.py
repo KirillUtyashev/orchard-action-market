@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Iterator
 
 import torch
 
@@ -12,8 +12,65 @@ from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.policy import argmax_a_Q_team, nearest_apple_action
 from orchard.seed import rng
-from orchard.datatypes import EnvConfig, EvalConfig, State
+from orchard.datatypes import EnvConfig, EvalConfig, State, Transition
 
+
+def rollout_trajectory(
+    start_state: State,
+    policy_fn: Callable[[State], Action],
+    env: BaseEnv,
+    n_steps: int,
+) -> Iterator[Transition]:
+    """Yield Transitions for n_steps agent decisions.
+
+    A pick step yields two transitions:
+      1. Move transition (γ=gamma, r=0, action=chosen action)
+      2. Pick transition (γ=1.0, r=pick_rewards, action=PICK)
+    A non-pick step yields one transition (γ=gamma, r=0).
+    """
+    s = start_state
+    gamma = env.cfg.gamma
+    zero_rewards = tuple(0.0 for _ in range(env.cfg.n_agents))
+
+    for _ in range(n_steps):
+        action = policy_fn(s)
+        s_moved = env.apply_action(s, action)
+
+        if env.cfg.force_pick and s_moved.is_agent_on_apple(s_moved.actor):
+            # Transition 1: move (agent lands on apple)
+            yield Transition(
+                s_t=s,
+                action=action,
+                s_t_after=s_moved,
+                s_t_next=s_moved,
+                rewards=zero_rewards,
+                discount=gamma,
+            )
+
+            # Transition 2: forced pick
+            s_picked, pick_rewards = env.resolve_pick(s_moved)
+            s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
+            yield Transition(
+                s_t=s_moved,
+                action=Action.PICK,
+                s_t_after=s_picked,
+                s_t_next=s_next,
+                rewards=pick_rewards,
+                discount=1.0,
+            )
+            s = s_next
+        else:
+            # Single transition: move (no pick)
+            s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
+            yield Transition(
+                s_t=s,
+                action=action,
+                s_t_after=s_moved,
+                s_t_next=s_next,
+                rewards=zero_rewards,
+                discount=gamma,
+            )
+            s = s_next
 
 # ---------------------------------------------------------------------------
 # Rollout returns (ground truth)
@@ -24,28 +81,17 @@ def rollout_returns(
     env: BaseEnv,
     rollout_len: int,
 ) -> list[float]:
-    """Roll out a policy, return discounted return per agent.
-
-    Each step: one agent acts. Reward recorded from pick transitions.
-    Backward: G_t = gamma * (r_t + G_{t+1}).
-    """
-    rewards_history: list[tuple[float, ...]] = []
-    s = start_state
-    gamma = env.cfg.gamma
-
-    for _ in range(rollout_len):
-        action = policy_fn(s)
-        transition = env.step(s, action)
-        rewards_history.append(transition.rewards)
-        s = transition.s_t_next
+    """Roll out a policy, return discounted return per agent."""
+    transitions: list[Transition] = []
+    for t in rollout_trajectory(start_state, policy_fn, env, rollout_len):
+        transitions.append(t)
 
     n_agents = env.cfg.n_agents
     G = [0.0] * n_agents
-    for rewards in reversed(rewards_history):
+    for t in reversed(transitions):
         for i in range(n_agents):
-            G[i] = gamma * (rewards[i] + G[i])
+            G[i] = t.discount * (t.rewards[i] + G[i])
     return G
-
 
 def precompute_ground_truth(
     test_states: list[State],
@@ -161,13 +207,9 @@ def picks_per_step(
 ) -> float:
     """Fraction of steps that result in an apple pick."""
     picks = 0
-    s = start_state
-    for _ in range(n_steps):
-        action = policy_fn(s)
-        transition = env.step(s, action)
-        if any(r != 0.0 for r in transition.rewards):
+    for t in rollout_trajectory(start_state, policy_fn, env, n_steps):
+        if any(r != 0.0 for r in t.rewards):
             picks += 1
-        s = transition.s_t_next
     return picks / n_steps if n_steps > 0 else 0.0
 
 

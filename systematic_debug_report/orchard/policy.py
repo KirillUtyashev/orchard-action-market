@@ -9,11 +9,11 @@ from orchard.enums import NUM_ACTIONS, Action, ACTION_PRIORITY
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.seed import rng
-from orchard.datatypes import EnvConfig
+from orchard.datatypes import EnvConfig, State
 
 
 def Q_team(
-    state: "State",  # noqa: F821 — forward ref
+    state: State,
     action: Action,
     networks: list[ValueNetwork],
     env: BaseEnv,
@@ -31,7 +31,7 @@ def Q_team(
 
 
 def argmax_a_Q_team(
-    state: "State",  # noqa: F821
+    state: State,
     networks: list[ValueNetwork],
     env: BaseEnv,
 ) -> Action:
@@ -48,11 +48,14 @@ def argmax_a_Q_team(
     return best_action
 
 
-def nearest_apple_action(state: "State", env_cfg: EnvConfig) -> Action:  # noqa: F821
+def nearest_apple_action(state: State, env_cfg: EnvConfig) -> Action:
     """Move actor toward nearest apple (Manhattan distance).
 
     Deterministic tie-break via ACTION_PRIORITY order.
     """
+    if not state.apple_positions:
+        return Action.STAY
+    
     actor = state.actor
     ar, ac = state.agent_positions[actor]
     best_dist = float("inf")
@@ -74,7 +77,7 @@ def nearest_apple_action(state: "State", env_cfg: EnvConfig) -> Action:  # noqa:
 
 
 def epsilon_greedy(
-    state: "State",  # noqa: F821
+    state: State,
     networks: list[ValueNetwork],
     env: BaseEnv,
     epsilon: float,

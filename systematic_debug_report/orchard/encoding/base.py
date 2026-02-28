@@ -1,4 +1,4 @@
-"""Base encoder classes: BaseEncoder, GridEncoder."""
+"""Encoder base classes."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from orchard.datatypes import EncoderOutput, EnvConfig, State
 
 
 class BaseEncoder(ABC):
-    """Encoder producing a flat feature vector."""
+    """Base encoder. Every encoder produces scalar features."""
 
     def __init__(self, env_cfg: EnvConfig) -> None:
         self.env_cfg = env_cfg
@@ -18,18 +18,22 @@ class BaseEncoder(ABC):
         ...
 
     @abstractmethod
-    def input_dim(self) -> int:
-        """Scalar feature dimension."""
+    def scalar_dim(self) -> int:
+        """Scalar feature dimension.
+
+        MLP encoders: full input vector length.
+        Grid encoders: extra scalars concatenated after conv flatten.
+        """
         ...
+
+    def grid_channels(self) -> int:
+        """Grid channel count. 0 means no grid output (MLP encoder)."""
+        return 0
 
 
 class GridEncoder(BaseEncoder):
-    """Encoder producing a (C, H, W) grid tensor."""
+    """Base for encoders that produce grid + scalar output."""
 
     @abstractmethod
     def grid_channels(self) -> int:
         ...
-
-    def input_dim(self) -> int:
-        """For grid encoders, input_dim returns channel count."""
-        return self.grid_channels()

@@ -1,0 +1,40 @@
+env:
+  height: 2
+  width: 2
+  n_agents: 2
+  n_apples: 2
+  gamma: 0.9
+  r_picker: -1.0
+  force_pick: true
+  max_apples: 2
+  type: deterministic
+
+model:
+  input_type: relative_k
+  k_nearest: 2
+  model_type: mlp
+  mlp_dims: [64, 64]
+
+train:
+  mode: value_learning
+  td_target: after_state
+  total_steps: 10000
+  nstep: 3
+  seed: 42
+  lr:
+    start: 0.001
+    end: 1e-6
+    schedule: linear
+  value_learning:
+    reset_freq: 20
+
+eval:
+  freq: 1000
+  rollout_len: 2000
+  eval_steps: 1000
+  n_test_states: 50
+
+logging:
+  output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/runs/2x2/value
+  main_csv_freq: 1000
+  detail_csv_freq: 1000

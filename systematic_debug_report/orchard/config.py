@@ -47,6 +47,9 @@ _DESPAWN_MODE_MAP: dict[str, DespawnMode] = {
 _ENCODER_TYPE_MAP: dict[str, EncoderType] = {
     "relative": EncoderType.RELATIVE,
     "relative_k": EncoderType.RELATIVE_K,
+    "positional_k": EncoderType.POSITIONAL_K,
+    "stable_id": EncoderType.STABLE_ID,
+    "grid_mlp": EncoderType.GRID_MLP,
     "cnn_grid": EncoderType.CNN_GRID,
 }
 
@@ -132,9 +135,9 @@ def _parse_model(d: dict[str, Any]) -> ModelConfig:
     """Parse model config section."""
     input_type = _enum_lookup(d["input_type"], _ENCODER_TYPE_MAP, "model.input_type")
     model_type = _enum_lookup(d["model_type"], _MODEL_TYPE_MAP, "model.model_type")
-    k_nearest = d.get("k_nearest", None) # number of apples to consider fo k-nearest input.
-    if k_nearest is not None:
-        k_nearest = int(k_nearest)
+    k = d.get("k", None) # number of apples to consider fo k-nearest input.
+    if k is not None:
+        k = int(k)
 
     mlp_dims = tuple(int(x) for x in d.get("mlp_dims", [64, 64]))
 
@@ -149,7 +152,7 @@ def _parse_model(d: dict[str, Any]) -> ModelConfig:
         model_type=model_type,
         mlp_dims=mlp_dims,
         conv_specs=conv_specs,
-        k_nearest=k_nearest,
+        k_nearest=k,
     )
 
 
@@ -175,6 +178,7 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         td_target=td_target,
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
+        nstep=int(d.get("nstep", 1)),
         lr=lr_cfg,
         value_learning=vl_cfg,
         policy_learning=pl_cfg,
@@ -188,6 +192,7 @@ def _parse_eval(d: dict[str, Any]) -> EvalConfig:
         rollout_len=int(d.get("rollout_len", 2000)),
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
+        checkpoint_freq=int(d.get("checkpoint_freq", 0)),
     )
 
 
@@ -230,11 +235,28 @@ def _apply_overrides(raw: dict[str, Any], overrides: list[str]) -> dict[str, Any
 def _parse_override_value(s: str) -> Any:
     """Parse an override value string into a Python object."""
     # List notation: [64,64]
+    # config.py, inside _parse_override_value, replace lines 238-242
     if s.startswith("[") and s.endswith("]"):
         inner = s[1:-1].strip()
         if not inner:
             return []
-        return [_parse_override_value(x.strip()) for x in inner.split(",")]
+        # Bracket-aware split
+        parts, depth, current = [], 0, []
+        for ch in inner:
+            if ch == "[":
+                depth += 1
+                current.append(ch)
+            elif ch == "]":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            parts.append("".join(current).strip())
+        return [_parse_override_value(p) for p in parts]
 
     # Bool
     if s.lower() == "true":

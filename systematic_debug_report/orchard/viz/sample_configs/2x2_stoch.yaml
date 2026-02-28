@@ -6,25 +6,34 @@ env:
   gamma: 0.9
   r_picker: -1.0
   force_pick: true
-  max_apples: 1
-  type: deterministic
+  max_apples: 2
+  type: stochastic
+  stochastic:
+    spawn_prob: 0.3
+    despawn_mode: probability
+    despawn_prob: 0.1
 
 model:
-  input_type: relative
+  input_type: relative_k
   model_type: mlp
   mlp_dims: [64, 64]
+  k_nearest: 2
 
 train:
-  mode: value_learning
-  td_target: pre_action
+  mode: policy_learning
+  td_target: after_state
   total_steps: 10000
   seed: 42
+  nstep: 1
   lr:
     start: 0.001
     end: 1e-5
     schedule: linear
-  value_learning:
-    reset_freq: 20
+  policy_learning:
+    epsilon:
+      start: 0.3
+      end: 0.01
+      schedule: linear
 
 eval:
   freq: 1000
@@ -33,6 +42,6 @@ eval:
   n_test_states: 50
 
 logging:
-  output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/runs/2x2_value
+  output_dir: runs/2x2_stoch_policy
   main_csv_freq: 100
   detail_csv_freq: 100

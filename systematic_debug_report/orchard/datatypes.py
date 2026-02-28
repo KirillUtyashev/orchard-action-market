@@ -8,6 +8,7 @@ from typing import NamedTuple
 import torch
 
 from orchard.enums import (
+    Action,
     DespawnMode,
     EncoderType,
     EnvType,
@@ -35,6 +36,7 @@ class State:
     apple_positions: tuple[Grid, ...]       # sorted, length = current apple count
     actor: int                              # index of agent whose turn it is
     apple_ages: tuple[int, ...] | None = None  # parallel to apple_positions; None if not tracking
+    apple_ids: tuple[int, ...] | None = None   # parallel to apple_positions; persistent slot ID per apple. needed for input.
 
     def is_agent_on_apple(self, agent_idx: int) -> bool:
         """Check if agent is on an apple cell."""
@@ -60,13 +62,18 @@ class EncoderOutput:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Transition:
-    s_t: State                          # state before action
-    action: "Action"                    # action taken (for logging/debugging)  # noqa: F821
-    s_t_after: State                    # after-state: deterministic result of action only
-    s_t_next: State                     # next state: spawn/despawn resolved, actor advanced
-    rewards: tuple[float, ...]          # one per agent (all zeros if no pick)
-
-
+    s_t: State
+    action: Action
+    s_t_after: State
+    s_t_next: State
+    rewards: tuple[float, ...] # r_{t+1} for each agent; length = n_agents
+    discount: float                  # γ_{t+1} for this transition
+    
+@dataclass(frozen=True)
+class NStepTransition:
+    s_enc: EncoderOutput
+    reward: float
+    discount: float
 # ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
@@ -118,6 +125,7 @@ class TrainConfig:
     total_steps: int
     seed: int
     lr: ScheduleConfig
+    nstep: int = 1
     value_learning: ValueLearningConfig | None = None   # only if mode == VALUE_LEARNING
     policy_learning: PolicyLearningConfig | None = None  # only if mode == POLICY_LEARNING
 
@@ -137,6 +145,7 @@ class EvalConfig:
     rollout_len: int
     eval_steps: int
     n_test_states: int
+    checkpoint_freq: int = 0  # 0 means no periodic checkpoints (final always saved)
 
 
 @dataclass(frozen=True)

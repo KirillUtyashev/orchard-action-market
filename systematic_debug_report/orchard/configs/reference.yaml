@@ -39,12 +39,18 @@ env:
                               #         only used when despawn_mode=lifetime
 
 model:
-  input_type: relative        # EncoderType: "relative" | "relative_k" | "cnn_grid"
+  input_type: relative        # EncoderType: "relative" | "relative_k" | "cnn_grid" | "positional_k" | "grid_mlp"
+                              #             | "stable_id""
                               #   relative        — sorted relative dists + abs pos + actor flag
                               #                     dim = n_apples*2 + (n_agents-1)*3 + 4
                               #   relative_k      — sorted relative dists + abs pos + actor flag, only k nearest apples
                               #                     dim = k*2 + (n_agents-1)*3 + 4
                               #   cnn_grid        — (4, H, W) tensor: self/others/apples/actor channels
+                              #   positional_k     — fixed order of apples by row and col, and agents ordered by index. MLP only.
+                              #   grid_mlp        — like cnn_grid but flattened to 4*H*W and fed to MLP. MLP only.
+                              #  stable_id        — no need for k. apples sorted by id. MLP only.
+
+  k: 5             # int — only for relative_k, and positional_k. Number of nearest apples to encode (relative_k) or max apples in fixed order (positional_k).
   model_type: mlp             # ModelType: "mlp" | "cnn"
                               #   mlp — fully connected, uses scalar encoder output
                               #   cnn — conv layers + MLP head, uses grid encoder output
@@ -63,8 +69,9 @@ train:
   mode: value_learning        # TrainMode: "value_learning" | "policy_learning". value_learning not supported for stochastic envs.
                               #   value_learning  — fixed nearest-apple policy, learn V
                               #   policy_learning — epsilon-greedy over learned V, improve policy
-  td_target: pre_action       # TDTarget: "pre_action" | "after_state". pre_action only for value_learning mode.
+  td_target: pre_action       # TDTarget: "pre_action" | "after_state". full env with spawn and despawn (stochastic) must use after_state.
   total_steps: 10000          # int — total environment steps (one agent acts per step)
+  nstep: 1                     # int — N for N-step TD targets (default: 1, i.e. standard 1-step TD)
   seed: 42                    # int — RNG seed for reproducibility
 
   lr:
@@ -96,7 +103,8 @@ eval:
   rollout_len: 2000           # int — steps per rollout for ground-truth V computation
   eval_steps: 1000            # int — steps for picks-per-step measurement
   n_test_states: 50           # int — number of test states for value learning evaluation
-
+  checkpoint_freq: 5000   # save every 5000 steps; 0 or omit = no periodic saves
+  
 logging:
   output_dir: runs/           # str — base directory; each run creates timestamped subfolder
                               #         e.g. runs/2025-01-15_143022/

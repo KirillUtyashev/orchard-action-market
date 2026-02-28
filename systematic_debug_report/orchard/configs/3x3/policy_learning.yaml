@@ -1,0 +1,48 @@
+env:
+  height: 3
+  width: 3
+  n_agents: 2
+  n_apples: 3          # starting apples
+  gamma: 0.99
+  r_picker: -1.0
+  force_pick: true
+  max_apples: 4
+  type: stochastic
+  stochastic:
+    spawn_prob: 0.1
+    despawn_mode: probability
+    despawn_prob: 0.01
+    apple_lifetime: 20
+
+model:
+  input_type: stable_id
+  k: 4
+  model_type: mlp
+  conv_specs: [[32, 3], [64, 3]]
+  mlp_dims: [128, 64]
+
+train:
+  mode: policy_learning
+  td_target: after_state
+  total_steps: 30000
+  seed: 42
+  lr:
+    start: 0.001
+    end: 1e-6
+    schedule: linear
+  policy_learning:
+    epsilon:
+      start: 1
+      end: 0.01
+      schedule: linear
+
+eval:
+  freq: 2000
+  rollout_len: 2000
+  eval_steps: 1000
+  n_test_states: 50
+
+logging:
+  main_csv_freq: 1000
+  detail_csv_freq: 1000
+  output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/runs/3x3/tests
