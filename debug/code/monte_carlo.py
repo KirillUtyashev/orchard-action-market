@@ -541,11 +541,11 @@ def generate_careful_distance_series(
         discount_factor: float,
         p_apple: float,
         d_apple: float,
-        distances=(4, 3, 2, 1, 0),
+        distances=(3, 2, 1, 0),
         self_id: int = 0,
 ):
     width, length = W, L
-    center = (width // 2, length // 2)
+    center = (width // 2 - 1, length // 2 - 1)
 
     # Fixed diamond apples around center
     start_apples = np.zeros((width, length), dtype=int)

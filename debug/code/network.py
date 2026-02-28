@@ -63,8 +63,8 @@ class NetworkWrapper(ABC):
 
         self._input_dim = input_dim
 
-        self.decay_steps = int(decay_steps * 0.8)
-        self.hold_steps = int(decay_steps * 0.2)
+        self.decay_steps = int(decay_steps * 1)
+        self.hold_steps = int(decay_steps * 0)
         self.min_lr = float(min_lr)
 
         self._lr_step = 0

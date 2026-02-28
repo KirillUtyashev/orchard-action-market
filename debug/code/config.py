@@ -48,6 +48,7 @@ class TrainingConfig:
     epsilon: float = 0.1
     CNN: bool = False
     cnn_dim: int = 4
+    load_weights: bool = False
 
 
 @dataclass

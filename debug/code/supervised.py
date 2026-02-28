@@ -8,18 +8,14 @@ import numpy as np
 import multiprocessing as mp
 
 import torch
-
-from debug.code.forward_view import TorchRLCritic, VNet
-from debug.code.main_net import MainNet
 from debug.code.td_lambda import TDLambda
 from utils import ten
 from debug.code.controllers import AgentControllerDecentralized, \
     ViewControllerCen, ViewControllerDec
-from debug.code.library_value_function import EligibilityCritic
 from debug.code.monte_carlo import generate_careful_distance_series, \
     generate_initial_state_full, \
-    generate_initial_state_supervised, \
-    iid_supervised, monte_carlo_supervised, run
+    generate_initial_state_supervised
+
 from debug.code.simple_agent import SimpleAgent
 from config import (
     NUM_AGENTS,
@@ -155,7 +151,7 @@ class Learning:
         self.careful_evals = []
 
         self.focus_actor_id = 0
-        self.careful_distances = (4, 1)
+        self.careful_distances = (2, 1)
 
         # actor-0 careful states by distance (same states used to evaluate every agent)
         self.careful_actor_states = [None for _ in range(len(self.careful_distances))]
@@ -174,6 +170,11 @@ class Learning:
         self.eval_results = []
         self.eval_steps = []
 
+        if self.exp_config.train_config.load_weights:
+            path = self.data_dir / "weights" / f"weights_{self.exp_config.train_config.hidden_dimensions}_{self.exp_config.train_config.alpha}_{self.exp_config.train_config.lmda}.pt"
+            ckpt = torch.load(path, map_location="cpu")
+            self.crit_blobs = ckpt.get("critics", [])
+
     def _init_critic_networks(self):
         if self.exp_config.train_config.centralized:
             if self.exp_config.train_config.forward:
@@ -183,14 +184,17 @@ class Learning:
                 self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
                                                      self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr))
         else:
-            for _ in range(NUM_AGENTS):
+            for i in range(NUM_AGENTS):
                 if self.exp_config.train_config.forward:
                     self.critic_networks.append(TDLambda(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor, self.exp_config.train_config.hidden_dimensions,
                                                          self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr, self.exp_config.train_config.lmda))
                 else:
-                    self.critic_networks.append(VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
+                    nn = VNetwork(self.input_dim, 1, self.exp_config.train_config.alpha, self.discount_factor,
                                                          self.exp_config.train_config.hidden_dimensions, self.exp_config.train_config.num_layers, self.trajectory_length, self.exp_config.train_config.schedule_lr,
-                                                         self.exp_config.train_config.CNN, [self.exp_config.train_config.cnn_dim, self.exp_config.train_config.cnn_dim]))
+                                                         self.exp_config.train_config.CNN, [self.exp_config.train_config.cnn_dim, self.exp_config.train_config.cnn_dim])
+                    if self.exp_config.train_config.load_weights:
+                        nn.import_net_state(self.crit_blobs[i]["blob"])
+                    self.critic_networks.append(nn)
 
     def _init_agents_for_training(self):
         if self.exp_config.train_config.centralized:
@@ -438,6 +442,7 @@ class Learning:
             agents.append(ag)
 
         set_all_seeds(42069)
+        env.set_positions()
 
         self.agent_controller.epsilon = 0
 

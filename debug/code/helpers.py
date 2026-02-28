@@ -140,7 +140,8 @@ def transition(step, curr_state, env, actor_idx, new_pos):
         if curr_state is None:
             curr_state = dict(env.get_state())
         if actor_idx is None:
-            actor_idx = random.randint(0, NUM_AGENTS - 1)
+            # actor_idx = random.randint(0, NUM_AGENTS - 1)
+            actor_idx = 0
         curr_state["actor_id"] = actor_idx
         curr_state["mode"] = 0
         return curr_state, None, None, actor_idx
@@ -162,7 +163,8 @@ def transition(step, curr_state, env, actor_idx, new_pos):
         env.spawn_apples()
 
     final_state = dict(env.get_state())
-    actor_idx = random.randint(0, NUM_AGENTS - 1)
+    # actor_idx = random.randint(0, NUM_AGENTS - 1)
+    actor_idx = step % 2
     final_state["actor_id"] = actor_idx
     final_state["mode"] = 0
 
@@ -216,11 +218,8 @@ def eval_performance(
         # IGNORE END
         if sec % 1000 == 0:
             print(sec)
-    print("Average number of apples per second: ", np.mean(num_of_apples_per_second))
-    print("Average distance:", np.mean(nearest_neighbour_mean_distance))
     print("Results")
     print("Reward: ", reward)
-    print("Total Apples: ", env.total_apples)
     print("Apples per agent:", reward / NUM_AGENTS)
     print("Average Reward: ", reward / env.apples_spawned)
     print("Total apples: ", env.apples_spawned)

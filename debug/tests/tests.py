@@ -1,7 +1,7 @@
 import random
 
 from matplotlib import pyplot as plt
-
+from debug.code.config import NUM_AGENTS, W, L
 from debug.code.environment import Orchard
 from debug.code.reward import Reward
 from debug.code.helpers import nearest_apple_policy, random_policy, \
@@ -9,8 +9,6 @@ from debug.code.helpers import nearest_apple_policy, random_policy, \
 import numpy as np
 from pathlib import Path
 data_dir = Path(__file__).parent.parent / "data"
-NUM_AGENTS = 4
-W, L = 9, 9
 
 REWARD = -1
 
@@ -274,7 +272,7 @@ class TestEnvironment:
 
         # NEW: print pickup fraction
         if total_spawned > 0:
-            print(f"Picked apples: {total_picked} / {total_spawned} ({total_picked / self.env.apples_spawned:.4%})")
+            print(f"Picked apples: {total_picked} / {self.env.apples_spawned} ({total_picked / self.env.apples_spawned:.4%})")
         else:
             print("No apples ever spawned? total_spawned=0")
 

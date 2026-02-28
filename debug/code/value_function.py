@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from helpers import ten
+from debug.code.helpers import ten
 from config import DEVICE
 from debug.code.network import NetworkWrapper
 
