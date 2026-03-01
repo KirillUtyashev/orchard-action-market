@@ -113,13 +113,15 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(n_agents: int, mode: TrainMode) -> list[str]:
+def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | None = None) -> list[str]:
     """Build column names for metrics.csv."""
     from orchard.enums import TrainMode
+    if n_networks is None:
+        n_networks = n_agents
     fields = ["step", "wall_time"]
     if mode == TrainMode.VALUE_LEARNING:
         for metric in ("mae", "pct_error", "mape", "bias"):
-            for i in range(n_agents):
+            for i in range(n_networks):
                 fields.append(f"{metric}_agent_{i}")
             fields.append(f"{metric}_avg")
     elif mode == TrainMode.POLICY_LEARNING:
@@ -128,12 +130,14 @@ def build_main_csv_fieldnames(n_agents: int, mode: TrainMode) -> list[str]:
     return fields
 
 
-def build_detail_csv_fieldnames(n_agents: int, networks: list[Any]) -> list[str]:
+def build_detail_csv_fieldnames(n_agents: int, networks: list[Any], n_networks: int | None = None) -> list[str]:
     """Build column names for details.csv."""
     fields = ["step", "wall_time", "ram_mb", "current_lr", "current_epsilon"]
-
+    if n_networks is None:
+        n_networks = n_agents
+        
     # Weight and grad norm columns per agent per layer
-    for agent_idx in range(n_agents):
+    for agent_idx in range(n_networks):
         for name, _ in networks[agent_idx].named_parameters():
             if "weight" in name:
                 fields.append(f"weight_norm_agent_{agent_idx}_{name}")

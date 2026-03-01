@@ -22,6 +22,7 @@ from orchard.datatypes import (
     EnvConfig,
     EvalConfig,
     ExperimentConfig,
+    LearningType,
     LoggingConfig,
     ModelConfig,
     PolicyLearningConfig,
@@ -52,7 +53,13 @@ _ENCODER_TYPE_MAP: dict[str, EncoderType] = {
     "positional_k": EncoderType.POSITIONAL_K,
     "stable_id": EncoderType.STABLE_ID,
     "grid_mlp": EncoderType.GRID_MLP,
+    "centralized_cnn_grid": EncoderType.CENTRALIZED_CNN_GRID,
     "cnn_grid": EncoderType.CNN_GRID,
+}
+
+_LEARNING_TYPE_MAP: dict[str, LearningType] = {
+    "decentralized": LearningType.DECENTRALIZED,
+    "centralized": LearningType.CENTRALIZED,
 }
 
 _MODEL_TYPE_MAP: dict[str, ModelType] = {
@@ -195,6 +202,7 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         value_learning=vl_cfg,
         policy_learning=pl_cfg,
         train_method=_enum_lookup(d.get("train_method", "nstep"), _TRAIN_METHOD_MAP, "train.train_method"),
+        learning_type=_enum_lookup(d.get("learning_type", "decentralized"), _LEARNING_TYPE_MAP, "train.learning_type"),
         stopping_condition=_enum_lookup(d.get("stopping_condition", "none"), _STOPPING_CONDITION_MAP, "train.stopping_condition"),
         patience_steps=int(d.get("patience_steps", 10000)),
         improvement_threshold=float(d.get("improvement_threshold", 0.01)),

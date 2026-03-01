@@ -15,13 +15,14 @@ env:
     apple_lifetime: 20
 
 model:
-  input_type: cnn_grid
+  input_type: cnn_grid # cnn_grid
   k: 4
   model_type: cnn
   conv_specs: [[4, 3], [4, 3]]
   mlp_dims: [128, 64]
 
 train:
+  learning_type: decentralized #centralized  
   mode: policy_learning
   td_target: after_state
   total_steps: 30000

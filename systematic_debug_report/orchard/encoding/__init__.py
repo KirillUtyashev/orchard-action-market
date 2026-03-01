@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import BasicGridEncoder, GridMLPEncoder
+from orchard.encoding.grid import BasicGridEncoder, CentralizedGridEncoder, GridMLPEncoder
 from orchard.encoding.relative import PositionalKEncoder, RelativeEncoder, RelativeKEncoder, StableIdEncoder
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, EnvConfig, State
@@ -28,6 +28,8 @@ def _create_encoder(encoder_type, env_cfg, k=None):
         return StableIdEncoder(env_cfg)
     elif encoder_type == EncoderType.GRID_MLP:
         return GridMLPEncoder(env_cfg)
+    elif encoder_type == EncoderType.CENTRALIZED_CNN_GRID:
+        return CentralizedGridEncoder(env_cfg)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 

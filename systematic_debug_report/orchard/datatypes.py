@@ -12,6 +12,7 @@ from orchard.enums import (
     DespawnMode,
     EncoderType,
     EnvType,
+    LearningType,
     ModelType,
     Schedule,
     StoppingCondition,
@@ -130,6 +131,7 @@ class TrainConfig:
     nstep: int = 1
     td_lambda: float = 0.0  # only for TD(λ) backward view; ignored otherwise
     train_method: TrainMethod = TrainMethod.NSTEP 
+    learning_type: LearningType = LearningType.DECENTRALIZED
     value_learning: ValueLearningConfig | None = None   # only if mode == VALUE_LEARNING
     policy_learning: PolicyLearningConfig | None = None  # only if mode == POLICY_LEARNING
     stopping_condition: StoppingCondition = StoppingCondition.NONE

@@ -256,8 +256,11 @@ def create_networks(
     nstep: int = 1,
     td_lambda: float = 0.0,
     train_method: TrainMethod = TrainMethod.NSTEP,
+    n_networks: int | None = None, # None means decentralized. Centralized uses 1 network.
 ) -> list[ValueNetwork]:
+    if n_networks is None:
+        n_networks = env_cfg.n_agents
     return [
         ValueNetwork(model_cfg, env_cfg, lr_schedule, total_steps, nstep, td_lambda=td_lambda, train_method=train_method)
-        for _ in range(env_cfg.n_agents)
+        for _ in range(n_networks)
     ]

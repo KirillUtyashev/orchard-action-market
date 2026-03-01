@@ -240,7 +240,7 @@ def evaluate_value_learning(
 
     with torch.no_grad():
         for k, s in enumerate(test_states):
-            for i in range(n_agents):
+            for i in range(len(networks)):
                 pred = networks[i](encoding.encode(s, i)).item()
                 true_v = ground_truth[k][i]
                 err = pred - true_v
@@ -256,7 +256,7 @@ def evaluate_value_learning(
         net.train()
 
     result: dict[str, float] = {}
-    for i in range(n_agents):
+    for i in range(len(networks)):
         mae = sum_ae[i] / max(count, 1)
         bias = sum_se[i] / max(count, 1)
         mean_abs_true = sum_abs_true[i] / max(count, 1)
@@ -269,10 +269,10 @@ def evaluate_value_learning(
         result[f"bias_agent_{i}"] = bias
 
     # Averages
-    result["mae_avg"] = sum(result[f"mae_agent_{i}"] for i in range(n_agents)) / n_agents
-    result["pct_error_avg"] = sum(result[f"pct_error_agent_{i}"] for i in range(n_agents)) / n_agents
-    result["mape_avg"] = sum(result[f"mape_agent_{i}"] for i in range(n_agents)) / n_agents
-    result["bias_avg"] = sum(result[f"bias_agent_{i}"] for i in range(n_agents)) / n_agents
+    result["mae_avg"] = sum(result[f"mae_agent_{i}"] for i in range(len(networks))) / len(networks)
+    result["pct_error_avg"] = sum(result[f"pct_error_agent_{i}"] for i in range(len(networks))) / len(networks)
+    result["mape_avg"] = sum(result[f"mape_agent_{i}"] for i in range(len(networks))) / len(networks)
+    result["bias_avg"] = sum(result[f"bias_agent_{i}"] for i in range(len(networks))) / len(networks)
 
     return result
 

@@ -13,7 +13,7 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.config import load_config
-from orchard.enums import StoppingCondition, TDTarget, TrainMode
+from orchard.enums import LearningType, StoppingCondition, TDTarget, TrainMode
 from orchard.env import create_env
 from orchard.eval import (
     collect_after_state_test_states,
@@ -38,7 +38,7 @@ from orchard.policy import (
 )
 from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
-from orchard.datatypes import EncoderOutput, ExperimentConfig
+from orchard.datatypes import EncoderOutput, ExperimentConfig, State
 
 def _train_all_agents(
     networks: list[ValueNetwork],
@@ -57,6 +57,24 @@ def _train_all_agents(
             env_step=env_step,
         )
     return total_loss, len(networks)
+
+def _encode_all(state: State, n_networks: int, n_agents: int, centralized: bool) -> list[EncoderOutput]:
+    """Encode state for each network."""
+    if centralized:
+        return [encoding.encode(state, 0)]  # single encoding, agent_idx ignored
+    return [encoding.encode(state, i) for i in range(n_agents)]
+
+
+def _team_rewards(rewards: tuple[float, ...], centralized: bool) -> tuple[float, ...]:
+    """Convert per-agent rewards to per-network rewards."""
+    if centralized:
+        return (sum(rewards),)
+    return rewards
+
+
+def _zero_rewards(n_networks: int) -> tuple[float, ...]:
+    """Zero rewards tuple of correct length."""
+    return tuple(0.0 for _ in range(n_networks))
 
 def _save_checkpoint(
     networks: list[ValueNetwork],
@@ -80,16 +98,23 @@ def train(cfg: ExperimentConfig) -> None:
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
     encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest)
-    networks = create_networks(cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps, nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda, train_method=cfg.train.train_method)
-    run_dir = setup_logging(cfg)
 
     n_agents = cfg.env.n_agents
-
+    centralized = cfg.train.learning_type == LearningType.CENTRALIZED
+    n_networks = 1 if centralized else n_agents
+    
+    networks = create_networks(
+            cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps,
+            nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda,
+            train_method=cfg.train.train_method, n_networks=n_networks,
+        )
+    
+    run_dir = setup_logging(cfg)
     # --- CSV loggers ---
-    main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode)
+    main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode, n_networks=n_networks)
     main_logger = CSVLogger(run_dir / "metrics.csv", main_fields)
 
-    detail_fields = build_detail_csv_fieldnames(n_agents, networks)
+    detail_fields = build_detail_csv_fieldnames(n_agents, networks, n_networks=n_networks)
     detail_logger = CSVLogger(run_dir / "details.csv", detail_fields)
 
     # --- Test states + ground truth (value_learning) ---
@@ -138,25 +163,26 @@ def train(cfg: ExperimentConfig) -> None:
             # ============================================================
             if on_apple:
                 # Transition 1: pre-action → movement after-state (discount=gamma, reward=0)
-                pre_enc = [encoding.encode(s_t, i) for i in range(n_agents)]
-                move_enc = [encoding.encode(s_moved, i) for i in range(n_agents)]
-                loss, count = _train_all_agents(networks, pre_enc, (0.0,) * n_agents, cfg.env.gamma, move_enc, t)
+                pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
+                move_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
+                
+                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks), cfg.env.gamma, move_enc, t)                
                 td_loss_accum += loss
                 td_loss_count += count
 
                 # Transition 2: movement after-state → next pre-action state (discount=1, reward=pick)
                 s_picked, pick_rewards = env.resolve_pick(s_moved)
                 s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
-                next_enc = [encoding.encode(s_next, i) for i in range(n_agents)]
-                loss, count = _train_all_agents(networks, move_enc, pick_rewards, 1.0, next_enc, t)
+                next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
+                loss, count = _train_all_agents(networks, move_enc, _team_rewards(pick_rewards, centralized), 1.0, next_enc, t)                
                 td_loss_accum += loss
                 td_loss_count += count
             else:
                 # Single transition: pre-action → next pre-action (discount=gamma, reward=0)
-                pre_enc = [encoding.encode(s_t, i) for i in range(n_agents)]
+                pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
                 s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
-                next_enc = [encoding.encode(s_next, i) for i in range(n_agents)]
-                loss, count = _train_all_agents(networks, pre_enc, (0.0,) * n_agents, cfg.env.gamma, next_enc, t)
+                next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
+                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks), cfg.env.gamma, next_enc, t)
                 td_loss_accum += loss
                 td_loss_count += count
 
@@ -166,8 +192,7 @@ def train(cfg: ExperimentConfig) -> None:
             # with delayed updates. Pick after-state is PRE-SPAWN.
             # ============================================================
             if on_apple:
-                move_after_enc = [encoding.encode(s_moved, i) for i in range(n_agents)]
-
+                move_after_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
                 # Delayed update: prev after-state → movement after-state
                 if prev_after_enc is not None:
                     assert prev_reward is not None and prev_discount is not None
@@ -177,24 +202,23 @@ def train(cfg: ExperimentConfig) -> None:
 
                 # Pick after-state: apple removed, PRE-SPAWN
                 s_picked, pick_rewards = env.resolve_pick(s_moved)
-                pick_after_enc = [encoding.encode(s_picked, i) for i in range(n_agents)]
+                pick_after_enc = _encode_all(s_picked, n_networks, n_agents, centralized)
 
                 # Immediate update: movement after-state → pick after-state (discount=1.0)
-                loss, count = _train_all_agents(networks, move_after_enc, pick_rewards, 1.0, pick_after_enc, t)
+                loss, count = _train_all_agents(networks, move_after_enc, _team_rewards(pick_rewards, centralized), 1.0, pick_after_enc, t)
                 td_loss_accum += loss
                 td_loss_count += count
 
                 # Store pick after-state for next delayed update
                 prev_after_enc = pick_after_enc
-                prev_reward = tuple(0.0 for _ in range(n_agents))
+                prev_reward = _zero_rewards(n_networks)
                 prev_discount = cfg.env.gamma
 
                 # Env response: spawn/despawn + advance actor
                 s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
 
             else:
-                move_after_enc = [encoding.encode(s_moved, i) for i in range(n_agents)]
-
+                move_after_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
                 # Delayed update: prev after-state → movement after-state
                 if prev_after_enc is not None:
                     assert prev_reward is not None and prev_discount is not None
@@ -204,7 +228,7 @@ def train(cfg: ExperimentConfig) -> None:
 
                 # Store movement after-state for next delayed update
                 prev_after_enc = move_after_enc
-                prev_reward = tuple(0.0 for _ in range(n_agents))
+                prev_reward = _zero_rewards(n_networks)
                 prev_discount = cfg.env.gamma
 
                 # Env response: spawn/despawn + advance actor
@@ -305,7 +329,7 @@ def train(cfg: ExperimentConfig) -> None:
                 detail_row["current_epsilon"] = 0.0
 
             # Weight and grad norms
-            for agent_idx in range(n_agents):
+            for agent_idx in range(n_networks):
                 w_norms = networks[agent_idx].get_weight_norms()
                 g_norms = networks[agent_idx].get_grad_norms()
                 for name in w_norms:
@@ -321,7 +345,7 @@ def train(cfg: ExperimentConfig) -> None:
                 preds: list[float] = []
                 with torch.no_grad():
                     for s in test_states[:10]:  # sample for speed
-                        for i in range(n_agents):
+                        for i in range(n_networks):
                             preds.append(networks[i](encoding.encode(s, i)).item())
                 if preds:
                     detail_row["value_pred_mean"] = round(sum(preds) / len(preds), 6)

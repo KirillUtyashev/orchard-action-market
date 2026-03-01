@@ -40,7 +40,7 @@ env:
 
 model:
   input_type: relative        # EncoderType: "relative" | "relative_k" | "cnn_grid" | "positional_k" | "grid_mlp"
-                              #             | "stable_id""
+                              #             | "stable_id" | "centralized_cnn_grid"
                               #   relative        — sorted relative dists + abs pos + actor flag
                               #                     dim = n_apples*2 + (n_agents-1)*3 + 4
                               #   relative_k      — sorted relative dists + abs pos + actor flag, only k nearest apples
@@ -49,6 +49,9 @@ model:
                               #   positional_k     — fixed order of apples by row and col, and agents ordered by index. MLP only.
                               #   grid_mlp        — like cnn_grid but flattened to 4*H*W and fed to MLP. MLP only.
                               #  stable_id        — no need for k. apples sorted by id. MLP only.
+
+                              ##### Centralized inputs below. Above are for decentralized. ###
+                              #  centralized_cnn_grid — like cnn_grid but with all agents in the same channels and a separate agent indicator channel. Only for centralized training.
 
   k: 5             # int — only for relative_k, and positional_k. Number of nearest apples to encode (relative_k) or max apples in fixed order (positional_k).
   model_type: mlp             # ModelType: "mlp" | "cnn"
@@ -66,6 +69,8 @@ model:
                               #   default: [[32, 3], [64, 3]]
 
 train:
+  learning_type: centralized    # "centralized" — team reward, single shared network, centralized training
+      # "decentralized" — individual reward, separate network per agent, decentralized training
   stopping_condition: running_max_pps # running_max_pps | none. If running_max_pps, stop if greedy policy's picks-per-step doesn't improve by at least improvement_threshold for patience_steps steps.
   patience_steps: 100000
   improvement_threshold: 1e-4

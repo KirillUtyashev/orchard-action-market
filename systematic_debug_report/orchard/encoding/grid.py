@@ -92,3 +92,37 @@ class GridMLPEncoder(BaseEncoder):
     def scalar_dim(self) -> int:
         h, w = self.env_cfg.height, self.env_cfg.width
         return 4 * h * w + 1
+    
+class CentralizedGridEncoder(GridEncoder):
+    """Centralized 3-channel grid encoding.
+
+    Channels (count-valued, not binary):
+      0 — apples (count at each cell)
+      1 — all agents (count at each cell)
+      2 — actor position (1 at actor's cell)
+    No scalar features. agent_idx parameter is ignored.
+    """
+
+    def grid_channels(self) -> int:
+        return 3
+
+    def scalar_dim(self) -> int:
+        return 0
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grid = torch.zeros(3, h, w, dtype=torch.float32)
+
+        # Apples (count)
+        for ap in state.apple_positions:
+            grid[0, ap.row, ap.col] += 1.0
+
+        # All agents (count)
+        for pos in state.agent_positions:
+            grid[1, pos.row, pos.col] += 1.0
+
+        # Actor
+        actor_pos = state.agent_positions[state.actor]
+        grid[2, actor_pos.row, actor_pos.col] = 1.0
+
+        return EncoderOutput(grid=grid, scalar=None)
