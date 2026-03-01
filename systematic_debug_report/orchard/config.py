@@ -13,7 +13,9 @@ from orchard.enums import (
     EnvType,
     ModelType,
     Schedule,
+    StoppingCondition,
     TDTarget,
+    TrainMethod,
     TrainMode,
 )
 from orchard.datatypes import (
@@ -73,6 +75,15 @@ _SCHEDULE_MAP: dict[str, Schedule] = {
     "step": Schedule.STEP,
 }
 
+_STOPPING_CONDITION_MAP: dict[str, StoppingCondition] = {
+    "none": StoppingCondition.NONE,
+    "running_max_pps": StoppingCondition.RUNNING_MAX_PPS,
+}
+
+_TRAIN_METHOD_MAP: dict[str, TrainMethod] = {
+    "nstep": TrainMethod.NSTEP,
+    "backward_view": TrainMethod.BACKWARD_VIEW,
+}
 
 def _enum_lookup(value: str, mapping: dict[str, Any], field_name: str) -> Any:
     """Convert string to enum, raising ValueError with context on failure."""
@@ -161,7 +172,7 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
     mode = _enum_lookup(d["mode"], _TRAIN_MODE_MAP, "train.mode")
     td_target = _enum_lookup(d.get("td_target", "pre_action"), _TD_TARGET_MAP, "train.td_target")
     lr_cfg = _parse_schedule(d["lr"], "train.lr")
-
+    
     vl_cfg: ValueLearningConfig | None = None
     pl_cfg: PolicyLearningConfig | None = None
 
@@ -180,15 +191,20 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         seed=int(d.get("seed", 42)),
         nstep=int(d.get("nstep", 1)),
         lr=lr_cfg,
+        td_lambda=float(d.get("td_lambda", 0.0)),
         value_learning=vl_cfg,
         policy_learning=pl_cfg,
+        train_method=_enum_lookup(d.get("train_method", "nstep"), _TRAIN_METHOD_MAP, "train.train_method"),
+        stopping_condition=_enum_lookup(d.get("stopping_condition", "none"), _STOPPING_CONDITION_MAP, "train.stopping_condition"),
+        patience_steps=int(d.get("patience_steps", 10000)),
+        improvement_threshold=float(d.get("improvement_threshold", 0.01)),
+        min_steps_before_stop=int(d.get("min_steps_before_stop", 0)),
     )
 
 
 def _parse_eval(d: dict[str, Any]) -> EvalConfig:
     """Parse eval config section."""
     return EvalConfig(
-        freq=int(d.get("freq", 1000)),
         rollout_len=int(d.get("rollout_len", 2000)),
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),

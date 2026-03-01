@@ -31,7 +31,7 @@ class BasicGridEncoder(GridEncoder):
 
         # Apples
         for ap in state.apple_positions:
-            grid[0, ap.row, ap.col] = 1.0
+            grid[0, ap.row, ap.col] += 1.0
 
         # Self
         r, c = state.agent_positions[agent_idx]
@@ -71,7 +71,7 @@ class GridMLPEncoder(BaseEncoder):
         grid = torch.zeros(4, h, w, dtype=torch.float32)
 
         for ap in state.apple_positions:
-            grid[0, ap.row, ap.col] = 1.0
+            grid[0, ap.row, ap.col] += 1.0
 
         r, c = state.agent_positions[agent_idx]
         grid[1, r, c] = 1.0

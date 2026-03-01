@@ -45,7 +45,7 @@ model:
                               #                     dim = n_apples*2 + (n_agents-1)*3 + 4
                               #   relative_k      — sorted relative dists + abs pos + actor flag, only k nearest apples
                               #                     dim = k*2 + (n_agents-1)*3 + 4
-                              #   cnn_grid        — (4, H, W) tensor: self/others/apples/actor channels
+                              #   cnn_grid        — (4, H, W) tensor: self/others/apples/actor channels. This is the only option for CNN right now.
                               #   positional_k     — fixed order of apples by row and col, and agents ordered by index. MLP only.
                               #   grid_mlp        — like cnn_grid but flattened to 4*H*W and fed to MLP. MLP only.
                               #  stable_id        — no need for k. apples sorted by id. MLP only.
@@ -66,12 +66,18 @@ model:
                               #   default: [[32, 3], [64, 3]]
 
 train:
+  stopping_condition: running_max_pps # running_max_pps | none. If running_max_pps, stop if greedy policy's picks-per-step doesn't improve by at least improvement_threshold for patience_steps steps.
+  patience_steps: 100000
+  improvement_threshold: 1e-4
+  min_steps_before_stop: 200000   # minimum number of steps to train before allowing stopping based on stopping_condition. This ensures we don't stop too early due to noise in the initial random policy.
   mode: value_learning        # TrainMode: "value_learning" | "policy_learning". value_learning not supported for stochastic envs.
                               #   value_learning  — fixed nearest-apple policy, learn V
                               #   policy_learning — epsilon-greedy over learned V, improve policy
   td_target: pre_action       # TDTarget: "pre_action" | "after_state". full env with spawn and despawn (stochastic) must use after_state.
   total_steps: 10000          # int — total environment steps (one agent acts per step)
-  nstep: 1                     # int — N for N-step TD targets (default: 1, i.e. standard 1-step TD)
+  train_method: backward_view   # or "nstep"
+  nstep: 1                    # int — N for N-step TD targets (default: 1, i.e. standard 1-step TD)
+  td_lambda: 0.0              # float — Only used for backward_view
   seed: 42                    # int — RNG seed for reproducibility
 
   lr:
@@ -99,7 +105,6 @@ train:
       step_factor: 0.5        # float — only for schedule=step
 
 eval:
-  freq: 1000                  # int — run evaluation every N steps
   rollout_len: 2000           # int — steps per rollout for ground-truth V computation
   eval_steps: 1000            # int — steps for picks-per-step measurement
   n_test_states: 50           # int — number of test states for value learning evaluation
@@ -108,5 +113,5 @@ eval:
 logging:
   output_dir: runs/           # str — base directory; each run creates timestamped subfolder
                               #         e.g. runs/2025-01-15_143022/
-  main_csv_freq: 100          # int — write metrics.csv every N steps
+  main_csv_freq: 100          # int — write metrics.csv. This one is expensive for policy learning because we need to rollout.
   detail_csv_freq: 100        # int — write details.csv every N steps

@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 import orchard.encoding as encoding
-from orchard.enums import ModelType
+from orchard.enums import ModelType, TrainMethod
 from orchard.schedule import compute_schedule_value
 from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, NStepTransition, ScheduleConfig
 
@@ -25,6 +25,8 @@ class ValueNetwork(nn.Module):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         nstep: int = 1,
+        td_lambda: float = 0.0,
+        train_method: TrainMethod = TrainMethod.NSTEP,
     ) -> None:
         super().__init__()
         self._lr_schedule = lr_schedule
@@ -45,12 +47,26 @@ class ValueNetwork(nn.Module):
             self.net = self._build_mlp(conv_flat_dim + scalar_extra, model_cfg.mlp_dims)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
-
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule.start)
+        
+        # NOTE: for n-step adam converges a lot faster, so be careful here.
+        self.optimizer = torch.optim.SGD(self.parameters(), lr=lr_schedule.start) #self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule.start)
         
         self._nstep = nstep
         self._nstep_buffer: list[NStepTransition] = []
         self._nstep_latest_next: EncoderOutput | None = None
+        self._nstep = nstep
+        self._nstep_buffer: list[NStepTransition] = []
+        self._nstep_latest_next: EncoderOutput | None = None
+
+        # --- TD(λ) state ---
+        self._td_lambda = td_lambda
+        self._train_method = train_method
+        self._gamma_prev: float = 0.0
+        self._traces: dict[str, torch.Tensor] = {}
+        if train_method == TrainMethod.BACKWARD_VIEW:
+            for name, param in self.named_parameters():
+                self._traces[name] = torch.zeros_like(param.data)
+        
 
     @staticmethod
     def _build_mlp(input_dim: int, hidden_dims: tuple[int, ...]) -> nn.Sequential:
@@ -111,6 +127,11 @@ class ValueNetwork(nn.Module):
             raise ValueError("EncoderOutput has neither scalar nor grid")
 
     def train_step(self, s_enc, reward, discount, s_next_enc, env_step: int = 0) -> float:
+        if self._train_method == TrainMethod.BACKWARD_VIEW:
+            return self.td_lambda_step(s_enc, reward, discount, s_next_enc, env_step)
+        return self._nstep_train_step(s_enc, reward, discount, s_next_enc, env_step)
+    
+    def _nstep_train_step(self, s_enc, reward, discount, s_next_enc, env_step: int = 0) -> float:
         self._env_step = env_step
         self._nstep_buffer.append(NStepTransition(s_enc, reward, discount))
         self._nstep_latest_next = s_next_enc
@@ -149,7 +170,60 @@ class ValueNetwork(nn.Module):
             total_loss += self._do_nstep_update()
         self._nstep_latest_next = None
         return total_loss
-    
+
+    def td_lambda_step(self, s_enc, reward, discount, s_next_enc, env_step: int = 0) -> float:
+        """One step of backward-view semi-gradient TD(λ) with variable discount.
+        
+        Arguments:
+            s_enc: EncoderOutput for state s_t^a (actor's perspective)
+            reward: r_{t+2} observed after taking action at s_t^a
+            discount: γ_{t+2} observed after taking action at s_t^a (can be variable per step)
+            s_next_enc: EncoderOutput for next state s_{t+1}^a (actor's perspective)
+            env_step: current environment step count (for learning rate scheduling)
+        """
+        self._env_step = env_step
+
+        # 1. Forward pass on s_t^a (with gradient tracking)
+        v_s = self.forward(s_enc)
+
+        # 2. Backward pass: get ∇_θ V̂(s_t^a) into param.grad
+        self.optimizer.zero_grad()
+        v_s.backward()
+
+        # 3. Update eligibility traces: z = γ_prev * λ * z + grad
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                assert isinstance(param.grad, torch.Tensor)
+                self._traces[name].mul_(self._gamma_prev * self._td_lambda).add_(param.grad)
+
+        # 4. Forward pass on s_{t+1}^a (no gradient)
+        with torch.no_grad():
+            v_s_next = self.forward(s_next_enc).item()
+
+        # 5. TD error: δ = r + γ_{t+2} * V̂(s_{t+1}^a) - V̂(s_t^a)
+        v_s_val = v_s.item()
+        delta = reward + discount * v_s_next - v_s_val
+
+        # 6. Get learning rate from schedule
+        alpha = compute_schedule_value(self._lr_schedule, env_step, self._total_steps)
+
+        # 7. Manual SGD: θ += α * δ * z
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                param.data.add_(self._traces[name], alpha=alpha * delta)
+
+        # 8. Store current discount as γ_prev for next step's trace decay
+        self._gamma_prev = discount
+
+        self._step_count += 1
+        return delta ** 2
+
+    def reset_traces(self) -> None:
+        """Zero all eligibility traces and γ_prev. Call at episode/reset boundaries."""
+        for name in self._traces:
+            self._traces[name].zero_()
+        self._gamma_prev = 0.0
+        
     def _update_lr(self) -> None:
         new_lr = compute_schedule_value(
             self._lr_schedule, self._env_step, self._total_steps
@@ -180,8 +254,10 @@ def create_networks(
     lr_schedule: ScheduleConfig,
     total_steps: int,
     nstep: int = 1,
+    td_lambda: float = 0.0,
+    train_method: TrainMethod = TrainMethod.NSTEP,
 ) -> list[ValueNetwork]:
     return [
-        ValueNetwork(model_cfg, env_cfg, lr_schedule, total_steps, nstep)
+        ValueNetwork(model_cfg, env_cfg, lr_schedule, total_steps, nstep, td_lambda=td_lambda, train_method=train_method)
         for _ in range(env_cfg.n_agents)
     ]

@@ -14,8 +14,10 @@ from orchard.enums import (
     EnvType,
     ModelType,
     Schedule,
+    StoppingCondition,
     TDTarget,
     TrainMode,
+    TrainMethod,
 )
 
 
@@ -126,8 +128,14 @@ class TrainConfig:
     seed: int
     lr: ScheduleConfig
     nstep: int = 1
+    td_lambda: float = 0.0  # only for TD(λ) backward view; ignored otherwise
+    train_method: TrainMethod = TrainMethod.NSTEP 
     value_learning: ValueLearningConfig | None = None   # only if mode == VALUE_LEARNING
     policy_learning: PolicyLearningConfig | None = None  # only if mode == POLICY_LEARNING
+    stopping_condition: StoppingCondition = StoppingCondition.NONE
+    patience_steps: int = 10000
+    improvement_threshold: float = 0.01
+    min_steps_before_stop: int = 0
 
 
 @dataclass(frozen=True)
@@ -141,7 +149,6 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class EvalConfig:
-    freq: int
     rollout_len: int
     eval_steps: int
     n_test_states: int

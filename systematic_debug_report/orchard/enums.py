@@ -24,6 +24,7 @@ class EncoderType(Enum):
     GRID_MLP = auto()      # flattened CNN grid as MLP input (baseline)
     STABLE_ID = auto()     # SMAC-style: persistent apple IDs as slot indices
     CNN_GRID = auto()
+    CENTRALIZED_CNN_GRID = auto()
 
 
 class ModelType(Enum):
@@ -41,6 +42,17 @@ class Schedule(Enum):
     LINEAR = auto()
     STEP = auto()
 
+class TrainMethod(Enum):
+    NSTEP = auto()
+    BACKWARD_VIEW = auto()
+    
+class LearningType(Enum):
+    DECENTRALIZED = auto()
+    CENTRALIZED = auto()
+
+class StoppingCondition(Enum):
+    NONE = auto()
+    RUNNING_MAX_PPS = auto()
 
 class Action(Enum):
     UP = 0

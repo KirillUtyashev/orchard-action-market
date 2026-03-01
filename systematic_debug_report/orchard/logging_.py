@@ -1,6 +1,7 @@
 """Logging: CSVLogger, run directory setup, metadata writing."""
 
 from __future__ import annotations
+import os
 import sys
 sys.path.append("../")
 
@@ -88,6 +89,9 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
             "total_wall_seconds": None,
             "hostname": socket.gethostname(),
             "git_hash": _get_git_hash(),
+            "slurm_job_id": os.environ.get("SLURM_JOB_ID", None),
+            "slurm_array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID", None),
+            "slurm_array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID", None),
         },
     }
     with open(run_dir / "metadata.yaml", "w") as f:
