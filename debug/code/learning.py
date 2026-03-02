@@ -154,7 +154,7 @@ class Learning:
                     self.exp_config.train.alpha,
                     self.discount_factor,
                     mlp_dims=tuple(self.exp_config.network.mlp_dims),
-                    num_training_steps=self.trajectory_length,
+                    num_training_steps=self.trajectory_length * NUM_AGENTS,
                     schedule=self.exp_config.train.schedule_lr,
                     is_cnn=self.exp_config.network.CNN,
                     conv_channels=self.exp_config.network.conv_channels,
@@ -288,12 +288,12 @@ class Learning:
         self._networks_for_eval = self.critic_networks
 
     def step_and_collect_observation(self) -> None:
-        # if self.exp_config.algorithm.random_policy:
-        #     self.evaluate_networks(step=0, plot=True, store_last=True)
-        # elif self.exp_config.reward.reward_learning:
-        #     self.evaluate_networks_reward(step=0, plot=True, store_last=True)
-        # else:
-        #     self.eval_performance(0)
+        if self.exp_config.algorithm.random_policy:
+            self.evaluate_networks(step=0, plot=True, store_last=True)
+        elif self.exp_config.reward.reward_learning:
+            self.evaluate_networks_reward(step=0, plot=True, store_last=True)
+        else:
+            self.eval_performance(0)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0

@@ -67,7 +67,7 @@ class VNetwork(NetworkWrapper):
 
             loss.backward()
             self.optimizer.step()
-            self._after_update()
+        self._after_update()
 
         self.batch_states = []
         self.batch_new_states = []
