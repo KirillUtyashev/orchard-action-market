@@ -46,28 +46,35 @@ class VNetwork(NetworkWrapper):
         return self._input_dim
 
     def train(self):
-        states = ten(np.stack(self.batch_states, axis=0), DEVICE)  # (B, 5, H, W)
-        approx = self.model(states).squeeze(1)  # (B,)
+        if len(self.batch_states) == 0:
+            return 0.0
 
-        with torch.no_grad():
-            next_states = ten(np.stack(self.batch_new_states, axis=0), DEVICE)  # (B, 5, H, W)
-            target = self.model(next_states)
+        total_loss = 0.0
+        batch = list(zip(self.batch_states, self.batch_new_states, self.batch_rewards, self.batch_discounts))
 
-            discounts = ten(np.array(self.batch_discounts), DEVICE)
-            y = ten(np.array(self.batch_rewards), DEVICE) + discounts * target.squeeze(1)
+        for state, next_state, reward, discount in batch:
+            self.optimizer.zero_grad()
 
-        criterion = torch.nn.MSELoss(reduction="mean")
-        self.optimizer.zero_grad()
-        loss = criterion(approx, y)
-        loss.backward()
-        self.optimizer.step()
-        self._after_update()
+            s = ten(state[np.newaxis], DEVICE)       # (1, 5, H, W)
+            s_next = ten(next_state[np.newaxis], DEVICE)
+
+            with torch.no_grad():
+                target = reward + discount * self.model(s_next).squeeze()
+
+            pred = self.model(s).squeeze()
+            loss = (pred - target) ** 2
+            total_loss += float(loss.item())
+
+            loss.backward()
+            self.optimizer.step()
+            self._after_update()
 
         self.batch_states = []
         self.batch_new_states = []
         self.batch_rewards = []
         self.batch_discounts = []
-        return loss.item()
+
+        return total_loss / len(batch)
 
     def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)

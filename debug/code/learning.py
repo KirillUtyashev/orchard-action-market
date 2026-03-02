@@ -288,12 +288,12 @@ class Learning:
         self._networks_for_eval = self.critic_networks
 
     def step_and_collect_observation(self) -> None:
-        # if self.exp_config.algorithm.random_policy:
-        #     self.evaluate_networks(step=0, plot=True, store_last=True)
-        # elif self.exp_config.reward.reward_learning:
-        #     self.evaluate_networks_reward(step=0, plot=True, store_last=True)
-        # else:
-        #     self.eval_performance(0)
+        if self.exp_config.algorithm.random_policy:
+            self.evaluate_networks(step=0, plot=True, store_last=True)
+        elif self.exp_config.reward.reward_learning:
+            self.evaluate_networks_reward(step=0, plot=True, store_last=True)
+        else:
+            self.eval_performance(0)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0
@@ -331,17 +331,10 @@ class Learning:
                             processed_s_moved, processed_s_next,
                             pick_rewards[i], discount_factor=self.discount_factor
                         )
+                    self.critic_networks[i].train()
 
                 curr_state = s_next
                 actor_idx = next_actor_idx
-
-            for i in range(NUM_AGENTS):
-                if self.exp_config.reward.supervised:
-                    self.critic_networks[i].train_supervised()
-                elif self.exp_config.reward.reward_learning:
-                    self.critic_networks[i].train_reward_supervised()
-                else:
-                    self.critic_networks[i].train()
 
             if (sec + 1) % self.exp_config.logging.main_csv_freq == 0:
                 print(f"Running evaluation at step {sec + 1}/{self.trajectory_length}")
