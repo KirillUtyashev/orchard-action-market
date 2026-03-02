@@ -288,19 +288,19 @@ class Learning:
         self._networks_for_eval = self.critic_networks
 
     def step_and_collect_observation(self) -> None:
-        if self.exp_config.algorithm.random_policy:
-            self.evaluate_networks(step=0, plot=True, store_last=True)
-        elif self.exp_config.reward.reward_learning:
-            self.evaluate_networks_reward(step=0, plot=True, store_last=True)
-        else:
-            self.eval_performance(0)
+        # if self.exp_config.algorithm.random_policy:
+        #     self.evaluate_networks(step=0, plot=True, store_last=True)
+        # elif self.exp_config.reward.reward_learning:
+        #     self.evaluate_networks_reward(step=0, plot=True, store_last=True)
+        # else:
+        #     self.eval_performance(0)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0
         actor_idx = 0
 
         for sec in range(self.trajectory_length):
-            for step in range(-1, NUM_AGENTS):
+            for step in range(NUM_AGENTS):
                 if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
                     new_pos = random_policy(curr_state["agent_positions"][actor_idx])
                 else:
@@ -328,7 +328,7 @@ class Learning:
                         )
                     else:
                         self.critic_networks[i].add_experience(
-                            processed_s_moved, processed_s_next,
+                            processed_s_t, processed_s_next,
                             pick_rewards[i], discount_factor=self.discount_factor
                         )
                     self.critic_networks[i].train()

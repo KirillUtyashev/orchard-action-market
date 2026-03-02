@@ -167,19 +167,20 @@ def eval_performance(
     actor_idx = 0
 
     for sec in range(timesteps):
-        new_pos = agent_controller.agent_get_action(env, actor_idx)
-        s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
-            env, actor_idx, new_pos, num_agents
-        )
+        for _ in range(NUM_AGENTS):
+            new_pos = agent_controller.agent_get_action(env, actor_idx)
+            s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
+                env, actor_idx, new_pos, num_agents
+            )
 
-        if on_apple:
-            reward += 1
+            if on_apple:
+                reward += 1
 
-        curr_state = s_next
-        actor_idx = next_actor_idx
+            actor_idx = next_actor_idx
 
         if sec % 1000 == 0:
             print(sec)
+    assert env.total_picked == reward
     print("Results")
     print("Reward: ", reward)
     print("Apples per agent:", reward / NUM_AGENTS)
