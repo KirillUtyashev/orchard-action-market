@@ -158,27 +158,6 @@ class ViewControllerDec:
             return np.concatenate(features)
 
         elif self.input_dim == 3:
-            # actor_is_self = float(actor_id == agent_id)
-            # mode = float(state["mode"])
-            #
-            # apples = state["apples"]
-            # apple_rc = np.argwhere(apples > 0)
-            #
-            # if apple_rc.size == 0:
-            #     actor_apple_dist = 0.0
-            # else:
-            #     rs, cs = apple_rc[:, 0], apple_rc[:, 1]
-            #     dx = cs - actor_c
-            #     dy = rs - actor_r
-            #     d2 = dx * dx + dy * dy
-            #     # Normalize by max possible distance on the grid
-            #     H, W = apples.shape
-            #     dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
-            #     if dmax <= 0:
-            #         dmax = 1.0
-            #     actor_apple_dist = float(np.sqrt(d2.min())) / dmax
-            #
-            # return np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32)
             apples_matrix = state["apples"]
             H, W = apples_matrix.shape
             dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
@@ -279,72 +258,6 @@ class ViewControllerDec:
         out = np.concatenate(feats).astype(np.float32)
         return out
 
-
-#     apples_matrix = state["apples"]
-    #     H, W = apples_matrix.shape
-    #     denom_x = max(W - 1, 1)
-    #     denom_y = max(H - 1, 1)
-    #     dmax = float(np.sqrt((W - 1) ** 2 + (H - 1) ** 2))
-    #     if dmax <= 0:
-    #         dmax = 1.0
-    #
-    #     def rel_norm(r_from, c_from, r_to, c_to):
-    #         """Return (dx_norm, dy_norm, dist_norm) from (from)->(to), using fixed map bounds."""
-    #         dx = c_to - c_from
-    #         dy = r_to - r_from
-    #         dxn = dx / denom_x
-    #         dyn = dy / denom_y
-    #         distn = float(np.sqrt(dx * dx + dy * dy)) / dmax
-    #         return float(dxn), float(dyn), float(distn)
-    #
-    #     actor_is_self = 1.0 if actor_id == agent_id else 0.0
-    #     mode = float(int(state["mode"]))
-    #     apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0  # extra feature [file:1]
-    #
-    #     feats = []
-    #     # Scalars: add apple_under_actor
-    #     feats.append(np.array([actor_is_self, mode, apple_under_actor], dtype=np.float32))
-    #
-    #     # Actor block: actor position relative to self
-    #     dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
-    #     feats.append(np.array([dxn_a, dyn_a, distn_a], dtype=np.float32))
-    #
-    #     # Other agents: relative to self (includes actor too; redundancy is OK)
-    #     for j, (rj, cj) in enumerate(agent_positions):
-    #         if j == agent_id:
-    #             continue
-    #         dxn, dyn, distn = rel_norm(self_r, self_c, rj, cj)
-    #         feats.append(np.array([dxn, dyn, distn], dtype=np.float32))
-    #
-    #     # Apples: top-K nearest to SELF, encoded relative to self with mask padding
-    #     apple_rc = np.argwhere(apples_matrix > 0)  # rows are [r, c]
-    #
-    #     if apple_rc.size == 0:
-    #         topk = np.empty((0, 2), dtype=np.int64)
-    #     else:
-    #         rs = apple_rc[:, 0]
-    #         cs = apple_rc[:, 1]
-    #         dx = cs - self_c
-    #         dy = rs - self_r
-    #         d2 = dx * dx + dy * dy
-    #         # Deterministic: sort by distance^2, then dx, then dy
-    #         order = np.lexsort((dy, dx, d2))
-    #         topk = apple_rc[order[: self.k]]
-    #
-    #     for idx in range(self.k):
-    #         if idx < len(topk):
-    #             r, c = int(topk[idx, 0]), int(topk[idx, 1])
-    #             dxn, dyn, distn = rel_norm(self_r, self_c, r, c)  # relative to SELF
-    #             feats.append(np.array([dxn, dyn, distn, 1.0], dtype=np.float32))
-    #         else:
-    #             feats.append(np.array([0.0, 0.0, 0.0, 0.0], dtype=np.float32))
-    #
-    #     out = np.concatenate(feats).astype(np.float32)
-    #     return out
-    #
-    # def __call__(self, state, agent_id):
-    #     """Make the controller callable for compatibility with existing code."""
-    #     return self.state_to_nn_input(state, agent_id)
     def state_to_grid_input(self, state, agent_id=None) -> np.ndarray:
         """
         Returns:
