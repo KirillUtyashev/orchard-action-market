@@ -550,7 +550,7 @@ def plot_reward_learning_mae_vs_nn_size_by_input_dim(
 
 
 if __name__ == "__main__":
-    from config import data_dir
+    from enums import data_dir
     lambdas = ["0.5"]
 
     # plot_mae_vs_lambda_by_method(Path(data_dir), lambdas)

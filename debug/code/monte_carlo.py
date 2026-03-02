@@ -1,7 +1,8 @@
 import argparse
 import itertools
-import time
 import logging
+import time
+import log
 import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from typing import Optional, Union
 import copy
-from config import (
+from debug.code.enums import (
     DISCOUNT_FACTOR, NUM_AGENTS,
     W,
     L,
@@ -23,7 +24,7 @@ import numpy as np
 
 from debug.code.environment import Orchard
 from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport, \
-    transition
+    env_step
 from debug.code.reward import Reward
 
 

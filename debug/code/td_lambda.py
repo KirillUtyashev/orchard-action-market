@@ -3,7 +3,7 @@ import torch
 from collections import deque
 
 from utils import ten
-from config import DEVICE
+from debug.code.enums import DEVICE
 from debug.code.network import NetworkWrapper
 
 torch.set_default_dtype(torch.float64)

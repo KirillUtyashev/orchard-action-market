@@ -4,7 +4,7 @@ import torch
 from torch import optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from debug.code.config import DEVICE, W
+from debug.code.enums import DEVICE, W
 from debug.code.main_net import CNNMainNet, MainNet
 
 
@@ -39,19 +39,25 @@ class NetworkWrapper(ABC):
             output_dim,
             alpha,
             discount,
-            hidden_dim=128,
-            num_layers=4,
-            # scheduler params
+            mlp_dims: tuple[int, ...] = (128, 128),
             schedule=False,
-            decay_steps=1_000_000,     # linear decay duration
-            min_lr=1e-6,               # final LR after decay (then held)
-            is_cnn=bool,
-            conv_size=None
+            decay_steps=1_000_000,
+            min_lr=1e-6,
+            is_cnn=False,
+            conv_channels: list[int] = None,
+            kernel_size: int = 3,
     ):
         if not is_cnn:
-            self.model = MainNet(input_dim, output_dim, hidden_dim, num_layers).to(DEVICE)
+            self.model = MainNet(input_dim, output_dim, mlp_dims).to(DEVICE)
         else:
-            self.model = CNNMainNet((4, W, W), 2, 1, conv_size, 3, hidden_dim, num_layers - 2)
+            self.model = CNNMainNet(
+                grid_shape=(4, W, W),
+                scalar_dim=2,
+                output_dim=output_dim,
+                conv_channels=conv_channels or [32, 64],
+                kernel_size=kernel_size,
+                mlp_dims=mlp_dims,
+            ).to(DEVICE)
         # self.optimizer = optim.AdamW(self.model.parameters(), lr=alpha, amsgrad=True)
         self.model = self.model.float()
         self.optimizer = optim.SGD(self.model.parameters(), lr=alpha)

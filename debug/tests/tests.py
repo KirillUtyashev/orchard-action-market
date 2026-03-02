@@ -1,7 +1,7 @@
 import random
 
 from matplotlib import pyplot as plt
-from debug.code.config import NUM_AGENTS, W, L
+from debug.code.enums import NUM_AGENTS, W, L
 from debug.code.environment import Orchard
 from debug.code.reward import Reward
 from debug.code.helpers import nearest_apple_policy, random_policy, \

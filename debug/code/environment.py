@@ -175,13 +175,6 @@ class Orchard:
         """Return the total number of apples in the orchard."""
         return int(np.sum(self.apples))
 
-    # def spawn_apples(self) -> None:
-    #     """Spawn apples randomly across the grid based on p_apple."""
-    #     self.apples = np.zeros((self.width, self.length), dtype=int)
-    #     spawn_mask = np.random.rand(self.width, self.length) < self.p_apple
-    #     self.apples[spawn_mask] = 1
-    #     self.apples_spawned = int(np.sum(self.apples))
-
     def spawn_apples(self) -> int:
         spawn_mask = np.random.rand(*self.apples.shape) < self.p_apple
         spawned = int(spawn_mask.sum())
@@ -194,3 +187,42 @@ class Orchard:
         total_removed = int(removed.sum())
         self.apples -= removed
         return total_removed
+
+    def apply_action(self, actor_id: int, new_pos: np.ndarray) -> dict:
+        """Move agent, return s_moved state (pre-pick, pre-spawn)."""
+        position = self.agent_positions[actor_id]
+        self._apply_move(position, new_pos)
+        self.agent_positions[actor_id] = new_pos
+        s_moved = self.get_state()
+        s_moved["actor_id"] = actor_id
+        return s_moved
+
+    def is_on_apple(self, state: dict, actor_id: int) -> bool:
+        """Check if actor is currently on an apple."""
+        pos = tuple(state["agent_positions"][actor_id])
+        return state["apples"][pos] >= 1
+
+    def resolve_pick(self, actor_id: int) -> tuple[dict, np.ndarray]:
+        """Process pick action, return (s_picked state, reward_vector)."""
+        pos = self.agent_positions[actor_id]
+        reward_vector = self.reward_module.get_reward(
+            self.get_state(), actor_id, pos, mode=1
+        )
+        picked = reward_vector.sum() != 0
+        if picked:
+            self.remove_apple(pos)
+            self.total_picked += 1
+        s_picked = self.get_state()
+        s_picked["actor_id"] = actor_id
+        return s_picked, reward_vector
+
+    def advance_actor(self, actor_id: int, num_agents: int) -> tuple[dict, int]:
+        """Spawn/despawn apples at end of round, advance to next actor."""
+        next_actor_idx = (actor_id + 1) % num_agents
+        if actor_id == num_agents - 1:
+            self.despawn_apples()
+            self.spawn_apples()
+        s_next = self.get_state()
+        s_next["actor_id"] = next_actor_idx
+        return s_next, next_actor_idx
+

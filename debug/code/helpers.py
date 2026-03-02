@@ -3,7 +3,7 @@ import torch
 import os
 import numpy as np
 
-from debug.code.config import NUM_AGENTS, W
+from debug.code.enums import NUM_AGENTS, W
 from debug.code.environment import Orchard
 
 same_cell_no_reward = 0
@@ -134,42 +134,18 @@ def nearest_apple_policy(agent_pos, apples_matrix):
     return np.array([nr, nc])
 
 
-def transition(step, curr_state, env, actor_idx, new_pos):
-    if step == -1:
-        # init-only: do NOT mutate env
-        if curr_state is None:
-            curr_state = dict(env.get_state())
-        if actor_idx is None:
-            # actor_idx = random.randint(0, NUM_AGENTS - 1)
-            actor_idx = 0
-        curr_state["actor_id"] = actor_idx
-        curr_state["mode"] = 0
-        return curr_state, None, None, actor_idx
+def env_step(env, actor_idx, new_pos, num_agents):
+    s_moved = env.apply_action(actor_idx, new_pos)
+    on_apple = env.is_on_apple(s_moved, actor_idx)
 
-    env.process_action(
-        actor_idx,
-        new_pos,
-        mode=0,
-    )
+    if on_apple:
+        s_picked, pick_rewards = env.resolve_pick(actor_idx)
+    else:
+        pick_rewards = [0.0] * num_agents
 
-    semi_state = dict(env.get_state())
-    semi_state["actor_id"] = actor_idx
-    semi_state["mode"] = 1
+    s_next, next_actor_idx = env.advance_actor(actor_idx, num_agents)
 
-    res = env.process_action(actor_idx, None, mode=1)
-
-    if step == NUM_AGENTS - 1:
-        env.despawn_apples()
-        env.spawn_apples()
-
-    final_state = dict(env.get_state())
-    # actor_idx = random.randint(0, NUM_AGENTS - 1)
-    actor_idx = step % 2
-    final_state["actor_id"] = actor_idx
-    final_state["mode"] = 0
-
-    # return final_state as the next curr_state
-    return final_state, semi_state, res, actor_idx
+    return s_moved, s_next, pick_rewards, on_apple, next_actor_idx
 
 
 def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_positions=None):
@@ -180,42 +156,28 @@ def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_po
 def eval_performance(
         agent_controller,
         env,
-        timesteps=10000,
-        agents_list=None,
+        timesteps=5000,
+        num_agents=NUM_AGENTS,
 ):
     reward = 0
 
-    # Calculate mean distance between agents and their nearest neighbors at each timestep
-    nearest_neighbour_mean_distance = []
+    # Init state
+    curr_state = dict(env.get_state())
+    curr_state["actor_id"] = 0
+    actor_idx = 0
 
-    num_of_apples_per_second = []
-
-    # Function to compute distance between two points
-    def distance(pos1, pos2):
-        return np.sqrt(np.sum((pos1 - pos2) ** 2))
-
-    # Function to find nearest neighbor distance for one agent
-    def get_nearest_neighbor_distance(agent_idx, agents):
-        current_pos = agents[agent_idx].position
-        distances = []
-        for i, other_agent in enumerate(agents):
-            if i != agent_idx:
-                distances.append(distance(current_pos, other_agent.position))
-        return min(distances) if distances else float("inf")
-
-    os.makedirs("positions", exist_ok=True)
-    curr_state = None
-    actor_idx = None
-    new_pos = None
     for sec in range(timesteps):
-        for step in range(-1, NUM_AGENTS):
-            if step != -1:
-                new_pos = agent_controller.agent_get_action(env, actor_idx)
-            final_state, semi_state, res, actor_idx = transition(step, curr_state, env, actor_idx, new_pos)
-            if res is not None and sum(res.reward_vector) != 0.0:
-                reward += 1
-            curr_state = final_state
-        # IGNORE END
+        new_pos = agent_controller.agent_get_action(env, actor_idx)
+        s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
+            env, actor_idx, new_pos, num_agents
+        )
+
+        if on_apple:
+            reward += 1
+
+        curr_state = s_next
+        actor_idx = next_actor_idx
+
         if sec % 1000 == 0:
             print(sec)
     print("Results")
@@ -227,6 +189,7 @@ def eval_performance(
     #     "Picked vs Spawned per agent",
     #     (reward / NUM_AGENTS) / (env.total_apples / NUM_AGENTS),
     #     )
-    return (
-        reward
-    )
+    return {
+        "greedy_pps": reward,
+        "total_apples": env.apples_spawned
+    }

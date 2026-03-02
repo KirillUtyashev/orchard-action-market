@@ -1,7 +1,7 @@
 import copy
 from abc import abstractmethod
 
-from debug.code.config import W
+from debug.code.enums import W
 from debug.code.environment import MoveAction
 import numpy as np
 import random
@@ -68,7 +68,6 @@ class AgentControllerValue(AgentController):
 
             curr_state["agent_positions"][actor_id] = new_pos
 
-            curr_state["mode"] = 0
             curr_state["actor_id"] = actor_id
 
             observations = self.get_all_agent_obs(curr_state)
@@ -189,7 +188,6 @@ class ViewControllerDec:
             actor_r, actor_c = agent_positions[actor_id]
 
             actor_is_self = 1.0 if actor_id == agent_id else 0.0
-            mode = float(int(state["mode"]))
 
             apple_rc = np.argwhere(apples_matrix > 0)
 
@@ -201,7 +199,7 @@ class ViewControllerDec:
             else:
                 actor_to_nearest_apple = 1.0  # max distance if no apples
 
-            return np.array([actor_is_self, mode, actor_to_nearest_apple], dtype=np.float32)
+            return np.array([actor_is_self, actor_to_nearest_apple], dtype=np.float32)
 
         # ---- Design A entity encoding (self-centered apples) ----
         if not hasattr(self, "k") or self.k is None:
@@ -225,7 +223,6 @@ class ViewControllerDec:
             return float(dxn), float(dyn), float(distn)
 
         actor_is_self = 1.0 if actor_id == agent_id else 0.0
-        mode = float(int(state["mode"]))
 
         apple_rc = np.argwhere(apples_matrix > 0)
 
@@ -248,7 +245,7 @@ class ViewControllerDec:
 
         feats = []
         # Scalars: actor_is_self, mode, actor_apple_dist
-        feats.append(np.array([actor_is_self, mode, actor_apple_dist], dtype=np.float32))
+        feats.append(np.array([actor_is_self, actor_apple_dist], dtype=np.float32))
 
         # Actor block: actor position relative to self
         dxn_a, dyn_a, distn_a = rel_norm(self_r, self_c, actor_r, actor_c)
@@ -393,7 +390,6 @@ class ViewControllerDec:
         # Channel 4: scalars broadcast into a (2, H, W) plane — just use row 0
         ch_scalars = np.zeros((1, H, W), dtype=np.float32)
         ch_scalars[0, 0, 0] = 1.0 if actor_id == agent_id else 0.0  # actor_is_self
-        ch_scalars[0, 0, 1] = float(int(state["mode"]))              # mode
 
         return np.concatenate([grid, ch_scalars], axis=0)  # (5, H, W)
 
@@ -471,13 +467,12 @@ class ViewControllerCen:
             return float(dxn), float(dyn), float(distn)
 
         # Scalars
-        mode = float(int(state["mode"]))
         n_agents = len(agent_positions)
         actor_id_norm = float(actor_id) / float(max(n_agents - 1, 1))
         apple_under_actor = 1.0 if apples_matrix[actor_r, actor_c] > 0 else 0.0
 
         feats = []
-        feats.append(np.array([mode, actor_id_norm, apple_under_actor], dtype=np.float32))
+        feats.append(np.array([actor_id_norm, apple_under_actor], dtype=np.float32))
 
         # Agents: relative to ACTOR, deterministic order by id
         for j, (rj, cj) in enumerate(agent_positions):

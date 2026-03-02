@@ -8,7 +8,7 @@ from scipy import stats
 from pathlib import Path
 from scipy.stats import norm
 
-from config import (
+from enums import (
     NUM_AGENTS,
     W,
     L,

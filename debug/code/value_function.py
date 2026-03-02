@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from debug.code.helpers import ten
-from config import DEVICE
+from debug.code.enums import DEVICE
 from debug.code.network import NetworkWrapper
 
 torch.set_default_dtype(torch.float64)
@@ -9,9 +9,28 @@ torch.set_default_dtype(torch.float64)
 
 class VNetwork(NetworkWrapper):
     def __init__(
-            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False, is_cnn=False, conv_size=None,
+            self,
+            input_dim,
+            output_dim,
+            alpha,
+            discount,
+            mlp_dims: tuple[int, ...] = (128, 128),
+            num_training_steps: int = 10000,
+            schedule: bool = False,
+            is_cnn: bool = False,
+            conv_channels: list[int] = None,
+            kernel_size: int = 3,
     ):
-        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps, is_cnn=is_cnn, conv_size=conv_size)
+        super().__init__(
+            input_dim, output_dim, alpha, discount,
+            mlp_dims=mlp_dims,
+            schedule=schedule,
+            decay_steps=num_training_steps,
+            is_cnn=is_cnn,
+            conv_channels=conv_channels,
+            kernel_size=kernel_size,
+        )
+
         self.batch_rewards = []
         self.batch_discounts = []
         self.theoretical_vals = []
@@ -49,7 +68,6 @@ class VNetwork(NetworkWrapper):
         self.batch_rewards = []
         self.batch_discounts = []
         return loss.item()
-
 
     def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)
