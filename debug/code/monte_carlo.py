@@ -2,11 +2,9 @@ import argparse
 import itertools
 import logging
 import time
-import log
 import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
 from typing import Literal
 from typing import Optional, Union
 import copy
@@ -15,16 +13,13 @@ from debug.code.enums import (
     W,
     L,
     PROBABILITY_APPLE,
-    NUM_WORKERS,
-    SEEDS,
     data_dir,
 )
 
 import numpy as np
 
 from debug.code.environment import Orchard
-from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport, \
-    env_step
+from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport
 from debug.code.reward import Reward
 
 
