@@ -19,7 +19,7 @@ algorithm:
   eligibility: false
   monte_carlo: false
   random_policy: false
-  q_agent: 0.5
+  q_agent: 0.4
   centralized: true
   concat: false
 
@@ -38,7 +38,7 @@ eval:
 env:
   length: 6
   width: 6
-  apple_life: 8.0
+  apple_life: 10.0
 
 logging:
   output_dir: /Users/utya.kirill/Desktop/orchard-action-market/debug/data/runs

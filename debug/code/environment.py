@@ -137,7 +137,6 @@ class Orchard:
 
     def _apply_move(self, position: np.ndarray, new_pos: np.ndarray | None) -> np.ndarray:
         """Apply movement action and update grid."""
-        # TODO: Replace with actual action mapping logic
         if new_pos is not None:
             # Update grid
             self.agents[tuple(new_pos)] += 1
@@ -219,9 +218,8 @@ class Orchard:
     def advance_actor(self, actor_id: int, num_agents: int) -> tuple[dict, int]:
         """Spawn/despawn apples at end of round, advance to next actor."""
         next_actor_idx = (actor_id + 1) % num_agents
-        if actor_id == num_agents - 1:
-            self.despawn_apples()
-            self.spawn_apples()
+        self.despawn_apples()
+        self.spawn_apples()
         s_next = self.get_state()
         s_next["actor_id"] = next_actor_idx
         return s_next, next_actor_idx

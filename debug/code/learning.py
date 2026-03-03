@@ -284,8 +284,8 @@ class Learning:
         self._init_critic_networks()
         self._init_agents_for_training()
 
-        p_apple = (self.exp_config.algorithm.q_agent * NUM_AGENTS) / (W ** 2)
-        d_apple = 1 / self.exp_config.env.apple_life
+        p_apple = self.exp_config.algorithm.q_agent / (W ** 2)
+        d_apple = 1 / (self.exp_config.env.apple_life * NUM_AGENTS)
 
         if self.exp_config.algorithm.random_policy:
             self._generate_evaluation_states(p_apple, d_apple)
@@ -322,46 +322,45 @@ class Learning:
         actor_idx = 0
 
         for sec in range(self.trajectory_length):
-            for step in range(NUM_AGENTS):
-                if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
-                    new_pos = random_policy(curr_state["agent_positions"][actor_idx])
+            if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
+                new_pos = random_policy(curr_state["agent_positions"][actor_idx])
+            else:
+                new_pos = self.agent_controller.agent_get_action(self.env, actor_idx)
+
+            s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
+                self.env, actor_idx, new_pos, NUM_AGENTS
+            )
+
+            if self.exp_config.algorithm.centralized:
+                enc_t = self.encoder.encode(curr_state, 0)   # agent_idx ignored
+                enc_moved = self.encoder.encode(s_moved, 0)
+                enc_next = self.encoder.encode(s_next, 0)
+                net = self.critic_networks[0]
+                reward = sum(pick_rewards)
+
+                if on_apple:
+                    net.add_experience(enc_t,     enc_moved, 0,      discount_factor=self.discount_factor)
+                    net.add_experience(enc_moved, enc_next,  reward, discount_factor=1.0)
                 else:
-                    new_pos = self.agent_controller.agent_get_action(self.env, actor_idx)
+                    net.add_experience(enc_t, enc_next, reward, discount_factor=self.discount_factor)
 
-                s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
-                    self.env, actor_idx, new_pos, NUM_AGENTS
-                )
-
-                if self.exp_config.algorithm.centralized:
-                    enc_t = self.encoder.encode(curr_state, 0)   # agent_idx ignored
-                    enc_moved = self.encoder.encode(s_moved, 0)
-                    enc_next = self.encoder.encode(s_next, 0)
-                    net = self.critic_networks[0]
-                    reward = sum(pick_rewards)
+                net.train()
+            else:
+                for i in range(len(self.critic_networks)):
+                    enc_t = self.encoder.encode(curr_state, i)
+                    enc_moved = self.encoder.encode(s_moved, i)
+                    enc_next = self.encoder.encode(s_next, i)
 
                     if on_apple:
-                        net.add_experience(enc_t,     enc_moved, 0,      discount_factor=self.discount_factor)
-                        net.add_experience(enc_moved, enc_next,  reward, discount_factor=1.0)
+                        self.critic_networks[i].add_experience(enc_t,     enc_moved, 0,               discount_factor=self.discount_factor)
+                        self.critic_networks[i].add_experience(enc_moved, enc_next,  pick_rewards[i], discount_factor=1.0)
                     else:
-                        net.add_experience(enc_t, enc_next, reward, discount_factor=self.discount_factor)
+                        self.critic_networks[i].add_experience(enc_t, enc_next, pick_rewards[i], discount_factor=self.discount_factor)
 
-                    net.train()
-                else:
-                    for i in range(len(self.critic_networks)):
-                        enc_t = self.encoder.encode(curr_state, i)
-                        enc_moved = self.encoder.encode(s_moved, i)
-                        enc_next = self.encoder.encode(s_next, i)
+                    self.critic_networks[i].train()
 
-                        if on_apple:
-                            self.critic_networks[i].add_experience(enc_t,     enc_moved, 0,               discount_factor=self.discount_factor)
-                            self.critic_networks[i].add_experience(enc_moved, enc_next,  pick_rewards[i], discount_factor=1.0)
-                        else:
-                            self.critic_networks[i].add_experience(enc_t, enc_next, pick_rewards[i], discount_factor=self.discount_factor)
-
-                        self.critic_networks[i].train()
-
-                curr_state = s_next
-                actor_idx = next_actor_idx
+            curr_state = s_next
+            actor_idx = next_actor_idx
 
             if (sec + 1) % self.exp_config.logging.main_csv_freq == 0:
                 print(f"Running evaluation at step {sec + 1}/{self.trajectory_length}")

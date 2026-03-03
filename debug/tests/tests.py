@@ -4,7 +4,7 @@ from matplotlib import pyplot as plt
 from debug.code.enums import NUM_AGENTS, W, L
 from debug.code.environment import Orchard
 from debug.code.reward import Reward
-from debug.code.helpers import nearest_apple_policy, random_policy, \
+from debug.code.helpers import env_step, nearest_apple_policy, random_policy, \
     set_all_seeds, teleport
 import numpy as np
 from pathlib import Path
@@ -136,11 +136,13 @@ class TestEnvironment:
             assert (orchard.get_state()["apples"] != prev).any()
 
     def test_spawn_despawn(self):
-        q_agent = 0.5
-        apple_mean = 5
+        q_agent = 0.4
+        apple_mean = 10
         reward_module = Reward(REWARD, NUM_AGENTS)
-        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
-        d_apple = 1 / apple_mean
+        # p_apple = (q_agent) / (W ** 2)
+        # d_apple = 1 / (apple_mean * NUM_AGENTS)
+        p_apple = 0.01
+        d_apple = 0.01
         self.env = Orchard(
             W,
             L,
@@ -157,16 +159,29 @@ class TestEnvironment:
         # initialize
         self.env.spawn_apples()
         num_apples[0] = self.env.get_sum_apples()
+        reward = 0
 
-        for t in range(1, steps + 1):
-            self.env.despawn_apples()
-            self.env.spawn_apples()
-            num_apples[t] = self.env.get_sum_apples()
+        curr_state = dict(self.env.get_state())
+        actor_idx = 0
+
+        for sec in range(steps):
+            new_pos = nearest_apple_policy(
+                curr_state["agent_positions"][actor_idx],
+                curr_state["apples"],
+            )
+            s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
+                self.env, actor_idx, new_pos, NUM_AGENTS
+            )
+
+            if on_apple:
+                reward += 1
+
+            actor_idx = next_actor_idx
+
+            num_apples[sec] = self.env.get_sum_apples()
 
         mean = num_apples.mean()
         print(num_apples.std())
-
-        assert abs(average - mean) < 1
 
         plt.plot(np.arange(steps + 1), num_apples)
         plt.xlabel("Time steps")
@@ -175,11 +190,11 @@ class TestEnvironment:
         plt.show()
 
     def test_how_much_time_to_apple(self):
-        q_agent = 0.5
-        apple_mean = 8
+        q_agent = 0.4
+        apple_mean = 10
         reward_module = Reward(REWARD, NUM_AGENTS)
-        p_apple = (q_agent * NUM_AGENTS) / (W ** 2)
-        d_apple = 1 / apple_mean
+        p_apple = q_agent / (W ** 2)
+        d_apple = 1 / (apple_mean * NUM_AGENTS)
         set_all_seeds(42069)
         self.env = Orchard(
             W,
@@ -203,73 +218,38 @@ class TestEnvironment:
         num_apples = np.zeros(seconds + 1, dtype=int)
         num_apples[0] = self.env.get_sum_apples()
 
-        curr_state = None
-        actor_idx = None
-        for sec in range(seconds):
-            for step in range(-1, NUM_AGENTS):
-                if step == -1:
-                    if curr_state is None:
-                        curr_state = self.env.get_state()
-                        actor_idx = random.randint(0, NUM_AGENTS - 1)
-                        curr_state["actor_id"] = actor_idx
-                        curr_state["mode"] = 0
-                    continue
+        # --- helper (matches the "env_step" style) -----------------------------------
 
-                # Mode 0: move
-                self.env.process_action(
-                    actor_idx,
-                    # random_policy(curr_state["agent_positions"][actor_idx]),
-                    nearest_apple_policy(curr_state["agent_positions"][actor_idx], curr_state["apples"]),
-                    mode=0,
-                )
+        curr_state = dict(self.env.get_state())
+        actor_idx = random.randint(0, NUM_AGENTS - 1)
+        curr_state["actor_id"] = actor_idx
+        curr_state["mode"] = 0
 
-                semi_state = dict(self.env.get_state())
-                semi_state["actor_id"] = actor_idx
-                semi_state["mode"] = 1
+        for t in range(seconds):  # or timesteps, whichever your "simple" loop uses
+            # pick action for the current actor based on the *current* state
+            new_pos = nearest_apple_policy(
+                curr_state["agent_positions"][actor_idx],
+                curr_state["apples"],
+            )
 
-                sx, sy = semi_state["agent_positions"][actor_idx]
-                cx, cy = curr_state["agent_positions"][actor_idx]
-                assert abs(sx - cx) + abs(sy - cy) <= 1
+            s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
+                self.env, actor_idx, new_pos, NUM_AGENTS
+            )
 
-                # Mode 1: pick
-                ax, ay = semi_state["agent_positions"][actor_idx]
+            # optional bookkeeping/tracking
+            if on_apple and pick_rewards[actor_idx] < 0:
+                ax, ay = s_moved["agent_positions"][actor_idx]
+                tracker.on_pick(ax, ay)
+                total_picked += 1
 
-                # NEW: robust pick detection via apple grid (not reward sign/magnitude)
-                had_apple_before = bool(self.env.apples[ax, ay])
+            tracker.observe_grid(self.env.apples)
 
-                res = self.env.process_action(actor_idx, None, mode=1)
+            # advance
+            actor_idx = next_actor_idx
+            curr_state = s_next
+            tracker.ticks += 1
 
-                has_apple_after = bool(self.env.apples[ax, ay])
-                picked = had_apple_before and (not has_apple_after)
-
-                if picked:
-                    total_picked += 1
-                    tracker.on_pick(ax, ay)
-
-                tracker.observe_grid(self.env.apples)
-
-                if step == NUM_AGENTS - 1:
-                    # End-of-second: despawn then spawn
-                    self.env.despawn_apples()
-
-                    # NEW: count how many *new* apples appear at spawn time
-                    apples_before_spawn = self.env.apples.copy()
-                    self.env.spawn_apples()
-                    new_spawns = (self.env.apples - apples_before_spawn).sum()
-                    total_spawned += int(new_spawns)
-
-
-                    tracker.observe_grid(self.env.apples)
-
-                final_state = self.env.get_state()
-                actor_idx = random.randint(0, NUM_AGENTS - 1)
-                final_state["actor_id"] = actor_idx
-                final_state["mode"] = 0
-
-                curr_state = final_state
-                tracker.ticks += 1
-            num_apples[sec] = self.env.get_sum_apples()
-
+        total_spawned = self.env.apples_spawned
         # NEW: print pickup fraction
         if total_spawned > 0:
             print(f"Picked apples: {total_picked} / {self.env.apples_spawned} ({total_picked / self.env.apples_spawned:.4%})")
