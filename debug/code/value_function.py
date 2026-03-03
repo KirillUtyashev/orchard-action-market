@@ -16,6 +16,7 @@ class VNetwork(NetworkWrapper):
             output_dim: int,
             alpha: float,
             discount: float,
+            lam: float = 0.9,  # <-- TD(lambda)
             mlp_dims: tuple[int, ...] = (128, 128),
             num_training_steps: int = 10_000,
             schedule: bool = False,
@@ -31,9 +32,35 @@ class VNetwork(NetworkWrapper):
             kernel_size=kernel_size,
         )
 
+        self.lam = float(lam)
+
         self.batch_rewards = []
         self.batch_discounts = []
         self.theoretical_vals = []
+
+        # eligibility traces over parameters (initialized lazily or via reset_traces())
+        self._traces = None
+        self.reset_traces()
+
+    def reset_traces(self):
+        """Call at episode start (and when done=True), like Sutton & Barto Fig. 9.1."""
+        self._traces = {}
+        for p in self.model.parameters():
+            if p.requires_grad:
+                self._traces[p] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
+    @torch.no_grad()
+    def _apply_td_lambda_update(self, delta: torch.Tensor):
+        """w <- w + alpha * delta * e  (expects e already updated)."""
+        a = float(self.alpha)
+        d = float(delta)
+        for p in self.model.parameters():
+            if not p.requires_grad:
+                continue
+            e = self._traces.get(p, None)
+            if e is None:
+                continue
+            p.add_(a * d * e)
 
     def get_value_function(self, enc: EncoderOutput) -> float:
         self.model.eval()
@@ -42,7 +69,85 @@ class VNetwork(NetworkWrapper):
         self.model.train()
         return float(out.squeeze())
 
-    def train(self):
+    def td_lambda_update(
+            self,
+            state,
+            next_state,
+            reward,
+            discount,
+    ) -> float:
+        """
+        One TD(lambda) semi-gradient step (backward view eligibility traces):
+          delta = r + gamma * V(s') - V(s)
+          e     = gamma*lambda*e + grad_w V(s)
+          w     = w + alpha * delta * e
+
+        Returns delta as a python float (useful for logging).
+        """
+        # Compute V(s) with grad tracking
+        v = self.model(state).squeeze()
+
+        # Compute V(s') without grad tracking
+        with torch.no_grad():
+            v_next = self.model(next_state).squeeze()
+
+            # Use per-transition discount (gamma_{t+1}) passed in
+            delta = reward + discount * v_next - v
+
+        # Get grad_w V(s)
+        self.model.zero_grad(set_to_none=True)
+        v.backward()
+
+        # Update eligibility traces: e <- gamma*lambda*e + grad
+        with torch.no_grad():
+            gl = float(discount) * self.lam
+            for p in self.model.parameters():
+                if p.grad is None or not p.requires_grad:
+                    continue
+                self._traces[p].mul_(gl).add_(p.grad)
+
+        # Apply parameter update directly (do NOT call optimizer.step() here)
+        self._apply_td_lambda_update(delta)
+
+        return float(delta.detach().item())
+
+    def train_lambda(self):
+        """
+        Drop-in replacement that consumes the stored batch sequentially.
+        IMPORTANT: TD(lambda) is order-dependent; do NOT shuffle this batch.
+        If your batch spans multiple episodes, you must also store `done` flags
+        and pass them into td_lambda_update(...) to reset traces correctly.
+        """
+        if len(self.batch_states) == 0:
+            return 0.0
+
+        # If your existing code calls train() once per episode, traces are already fine.
+        # If train() is called mid-episode, do NOT reset traces here.
+        total_abs_delta = 0.0
+
+        batch = list(zip(
+            self.batch_states,
+            self.batch_new_states,
+            self.batch_rewards,
+            self.batch_discounts,
+        ))
+
+        for state, next_state, reward, discount in batch:
+            # done=False here because your stored experience doesn't include terminals.
+            # If you have terminals, add self.batch_dones and pass done accordingly.
+            delta = self.td_lambda_update(state, next_state, reward, discount)
+            total_abs_delta += abs(delta)
+
+        self._after_update()
+
+        self.batch_states = []
+        self.batch_new_states = []
+        self.batch_rewards = []
+        self.batch_discounts = []
+
+        return total_abs_delta / len(batch)
+
+    def train_td0(self):
         if len(self.batch_states) == 0:
             return 0.0
 
@@ -70,6 +175,12 @@ class VNetwork(NetworkWrapper):
         self.batch_discounts = []
 
         return total_loss / len(batch)
+
+    def train(self):
+        if self.lam == -1:
+            return self.train_td0()
+        else:
+            return self.train_lambda()
 
     def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)

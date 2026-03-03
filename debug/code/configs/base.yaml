@@ -10,7 +10,7 @@ train:
   timesteps: 100
   seed: 1234
   epsilon: 0.3
-  lmda: 0.0
+  lmda: -1.0
   schedule_lr: true
   load_weights: false
 
