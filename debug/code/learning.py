@@ -9,13 +9,15 @@ import multiprocessing as mp
 
 import torch
 
+from debug.code.encoders import CenConcatEncoder, CenEntityEncoder, \
+    CenGridEncoder, \
+    DecEntityEncoder, DecGridEncoder
 from debug.code.log import CSVLogger, build_main_csv_fieldnames, \
     finalize_logging, \
     setup_logging
 from debug.code.td_lambda import TDLambda
 from utils import ten
-from debug.code.controllers import AgentControllerDecentralized, \
-    ViewControllerCen, ViewControllerDec
+from debug.code.controllers import AgentControllerDecentralized, AgentControllerCentralized
 from debug.code.monte_carlo import generate_careful_distance_series, \
     generate_initial_state_full, \
     generate_initial_state_supervised
@@ -76,22 +78,21 @@ def _state_path(picker_r: float, run_id: int) -> Path:
     return data_dir / "states" / "full" / f"init_state_reward_{picker_r}_{run_id}.npz"
 
 
-def _load_state_npz(path: Path) -> dict:
-    with np.load(path, allow_pickle=True) as f:
-        return f["dict"].item()
-
-
 def _careful_state_path(agent_id: int, seed: int, distance: int):
     out_dir = data_dir / "states" / "careful"
     return out_dir / f"careful_agent{agent_id}_seed{seed}_d{distance}.npz"
 
 
+def _load_state_npz(path: Path) -> dict:
+    with np.load(path, allow_pickle=True) as f:
+        return f["dict"].item()
+
+
 class Learning:
     def __init__(self, exp_config):
         self.env = None
-        self.view_controller = None
+        self.encoder = None          # replaces view_controller
         self.agent_controller = None
-        self.input_type = None
         self.rng_state = None
         self.agents = []
         self.critic_networks = []
@@ -109,20 +110,11 @@ class Learning:
         self._networks_for_eval = []
         self.eval_history = []
 
-        self.input_dim = 0
-        if not self.exp_config.network.CNN and self.exp_config.network.input_dim != 3 and self.exp_config.network.input_dim != 326:
-            self.input_dim = 2 + 3 * NUM_AGENTS + 8 * self.exp_config.reward.top_k_num_apples
-        elif not self.exp_config.network.CNN:
-            self.input_dim = self.exp_config.network.input_dim
-        else:
-            self.input_dim = self.exp_config.network.cnn_dim
-
         self.data_dir = setup_logging(self.exp_config)
         main_fields = build_main_csv_fieldnames()
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
 
         self._last_eval_errors_by_state = None
-
         self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
 
         self.careful_evals = []
@@ -136,47 +128,9 @@ class Learning:
         ]
 
         if self.exp_config.train.load_weights:
-            path = self.data_dir / "weights" / f"weights.pt"
+            path = self.data_dir / "weights" / "weights.pt"
             ckpt = torch.load(path, map_location="cpu")
             self.crit_blobs = ckpt.get("critics", [])
-
-    def _init_critic_networks(self):
-        if self.exp_config.algorithm.centralized:
-            self.critic_networks.append(VNetwork(
-                self.input_dim, 1, self.exp_config.train.alpha, self.discount_factor,
-                self.exp_config.network.mlp_dims,
-                self.trajectory_length, self.exp_config.train.schedule_lr
-            ))
-        else:
-            for i in range(NUM_AGENTS):
-                nn = VNetwork(
-                    self.input_dim, 1,
-                    self.exp_config.train.alpha,
-                    self.discount_factor,
-                    mlp_dims=tuple(self.exp_config.network.mlp_dims),
-                    num_training_steps=self.trajectory_length * NUM_AGENTS,
-                    schedule=self.exp_config.train.schedule_lr,
-                    is_cnn=self.exp_config.network.CNN,
-                    conv_channels=self.exp_config.network.conv_channels,
-                    kernel_size=self.exp_config.network.kernel_size,
-                )
-                if self.exp_config.train.load_weights:
-                    nn.import_net_state(self.crit_blobs[i]["blob"])
-                self.critic_networks.append(nn)
-
-    def _init_agents_for_training(self):
-        if self.exp_config.algorithm.centralized:
-            for i in range(NUM_AGENTS):
-                self.agents.append(SimpleAgent(
-                    teleport(W) if not self.exp_config.algorithm.random_policy else random_policy,
-                    i, self.critic_networks[0]
-                ))
-        else:
-            for i in range(NUM_AGENTS):
-                self.agents.append(SimpleAgent(
-                    teleport(W) if not self.exp_config.algorithm.random_policy else random_policy,
-                    i, self.critic_networks[i]
-                ))
 
     def _generate_evaluation_states(self, p_apple, d_apple, sequential: bool = False, processes: int = 8):
         start = time.time()
@@ -257,7 +211,74 @@ class Learning:
                 state_dict["agent_positions"] = agent_positions
                 self.evaluation_states[state_type].append(state_dict)
 
+    # -----------------------------------------------------------------------
+    # Encoder factory — replaces the view_controller block in build_experiment
+    # -----------------------------------------------------------------------
+
+    def _build_encoder(self):
+        cfg = self.exp_config
+        k = cfg.reward.top_k_num_apples
+
+        if cfg.algorithm.centralized:
+            if cfg.network.CNN:
+                self.encoder = CenGridEncoder(W, W, NUM_AGENTS)
+            elif cfg.algorithm.concat:
+                dec = DecEntityEncoder(W, W, NUM_AGENTS, k)
+                self.encoder = CenConcatEncoder(dec)
+            else:
+                self.encoder = CenEntityEncoder(W, W, NUM_AGENTS, k)
+        else:
+            if cfg.network.CNN:
+                self.encoder = DecGridEncoder(W, W, NUM_AGENTS)
+            else:
+                self.encoder = DecEntityEncoder(W, W, NUM_AGENTS, k)
+
+    # -----------------------------------------------------------------------
+    # Network init now derives dims from the encoder
+    # -----------------------------------------------------------------------
+
+    def _init_critic_networks(self):
+        cfg = self.exp_config
+
+        if cfg.algorithm.centralized:
+            self.critic_networks.append(VNetwork(
+                self.encoder, 1,
+                cfg.train.alpha,
+                self.discount_factor,
+                mlp_dims=tuple(cfg.network.mlp_dims),
+                num_training_steps=self.trajectory_length,
+                schedule=cfg.train.schedule_lr,
+                conv_channels=cfg.network.conv_channels,
+                kernel_size=cfg.network.kernel_size,
+            ))
+        else:
+            for i in range(NUM_AGENTS):
+                nn = VNetwork(
+                    self.encoder, 1,
+                    cfg.train.alpha,
+                    self.discount_factor,
+                    mlp_dims=tuple(cfg.network.mlp_dims),
+                    num_training_steps=self.trajectory_length * NUM_AGENTS,
+                    schedule=cfg.train.schedule_lr,
+                    conv_channels=cfg.network.conv_channels,
+                    kernel_size=cfg.network.kernel_size,
+                )
+                if cfg.train.load_weights:
+                    nn.import_net_state(self.crit_blobs[i]["blob"])
+                self.critic_networks.append(nn)
+
+    def _init_agents_for_training(self):
+        policy_fn = teleport(W) if not self.exp_config.algorithm.random_policy else random_policy
+        for i in range(NUM_AGENTS):
+            net = self.critic_networks[0] if self.exp_config.algorithm.centralized else self.critic_networks[i]
+            self.agents.append(SimpleAgent(policy_fn, i, net))
+
+    # -----------------------------------------------------------------------
+    # build_experiment: encoder built first, then networks (order matters)
+    # -----------------------------------------------------------------------
+
     def build_experiment(self):
+        self._build_encoder()            # must come before _init_critic_networks
         self._init_critic_networks()
         self._init_agents_for_training()
 
@@ -269,31 +290,30 @@ class Learning:
         elif self.exp_config.reward.reward_learning:
             self._generate_evaluation_states_reward_learning()
 
-        if not self.exp_config.algorithm.centralized:
-            self.view_controller = ViewControllerDec(
-                self.input_dim, self.exp_config.reward.top_k_num_apples, self.exp_config.network.CNN
+        if self.exp_config.algorithm.centralized:
+            self.agent_controller = AgentControllerCentralized(
+                self.agents, self.encoder, self.discount_factor, self.exp_config.train.epsilon
             )
         else:
-            self.view_controller = ViewControllerCen(
-                self.exp_config.reward.top_k_num_apples, self.exp_config.algorithm.concat,
-                ViewControllerDec(self.input_dim, self.exp_config.reward.top_k_num_apples)
+            self.agent_controller = AgentControllerDecentralized(
+                self.agents, self.encoder, self.discount_factor, self.exp_config.train.epsilon
             )
-
-        self.agent_controller = AgentControllerDecentralized(
-            self.agents, self.view_controller, self.discount_factor, self.exp_config.train.epsilon
-        )
 
         self.env = Orchard(W, L, NUM_AGENTS, self.reward_module, p_apple, d_apple)
         self.env.set_positions()
         self._networks_for_eval = self.critic_networks
 
+    # -----------------------------------------------------------------------
+    # Training loop: view_controller(...) → encoder.encode(...)
+    # -----------------------------------------------------------------------
+
     def step_and_collect_observation(self) -> None:
-        if self.exp_config.algorithm.random_policy:
-            self.evaluate_networks(step=0, plot=True, store_last=True)
-        elif self.exp_config.reward.reward_learning:
-            self.evaluate_networks_reward(step=0, plot=True, store_last=True)
-        else:
-            self.eval_performance(0)
+        # if self.exp_config.algorithm.random_policy:
+        #     self.evaluate_networks(step=0, plot=True, store_last=True)
+        # elif self.exp_config.reward.reward_learning:
+        #     self.evaluate_networks_reward(step=0, plot=True, store_last=True)
+        # else:
+        #     self.eval_performance(0)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0
@@ -306,32 +326,37 @@ class Learning:
                 else:
                     new_pos = self.agent_controller.agent_get_action(self.env, actor_idx)
 
-                # --- Environment step ---
                 s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
-                    self.env, actor_idx,
-                    new_pos, NUM_AGENTS
+                    self.env, actor_idx, new_pos, NUM_AGENTS
                 )
 
-                for i in range(NUM_AGENTS):
-                    processed_s_t = self.view_controller(curr_state, i)
-                    processed_s_moved = self.view_controller(s_moved, i)
-                    processed_s_next = self.view_controller(s_next, i)
+                if self.exp_config.algorithm.centralized:
+                    enc_t = self.encoder.encode(curr_state, 0)   # agent_idx ignored
+                    enc_moved = self.encoder.encode(s_moved, 0)
+                    enc_next = self.encoder.encode(s_next, 0)
+                    net = self.critic_networks[0]
+                    reward = sum(pick_rewards)
 
                     if on_apple:
-                        self.critic_networks[i].add_experience(
-                            processed_s_t, processed_s_moved, 0,
-                            discount_factor=self.discount_factor
-                        )
-                        self.critic_networks[i].add_experience(
-                            processed_s_moved, processed_s_next,
-                            pick_rewards[i], discount_factor=1.0
-                        )
+                        net.add_experience(enc_t,     enc_moved, 0,      discount_factor=self.discount_factor)
+                        net.add_experience(enc_moved, enc_next,  reward, discount_factor=1.0)
                     else:
-                        self.critic_networks[i].add_experience(
-                            processed_s_t, processed_s_next,
-                            pick_rewards[i], discount_factor=self.discount_factor
-                        )
-                    self.critic_networks[i].train()
+                        net.add_experience(enc_t, enc_next, reward, discount_factor=self.discount_factor)
+
+                    net.train()
+                else:
+                    for i in range(len(self.critic_networks)):
+                        enc_t = self.encoder.encode(curr_state, i)
+                        enc_moved = self.encoder.encode(s_moved, i)
+                        enc_next = self.encoder.encode(s_next, i)
+
+                        if on_apple:
+                            self.critic_networks[i].add_experience(enc_t,     enc_moved, 0,               discount_factor=self.discount_factor)
+                            self.critic_networks[i].add_experience(enc_moved, enc_next,  pick_rewards[i], discount_factor=1.0)
+                        else:
+                            self.critic_networks[i].add_experience(enc_t, enc_next, pick_rewards[i], discount_factor=self.discount_factor)
+
+                        self.critic_networks[i].train()
 
                 curr_state = s_next
                 actor_idx = next_actor_idx
@@ -348,19 +373,15 @@ class Learning:
                     plot = sec == self.trajectory_length - 1
                     self.evaluate_networks_reward(step=(sec + 1), plot=plot, store_last=True)
 
+    # eval_performance, save/restore rng unchanged
     def eval_performance(self, step):
         env = make_env(self.env.reward_module, self.env.p_apple, self.env.d_apple)
         self.save_rng_state()
-
         set_all_seeds(42069)
         env.set_positions()
         self.agent_controller.epsilon = 0
-
         with torch.no_grad():
-            results = eval_performance(
-                agent_controller=self.agent_controller,
-                env=env,
-            )
+            results = eval_performance(agent_controller=self.agent_controller, env=env)
         results["step"] = step
         self.agent_controller.epsilon = self.exp_config.train.epsilon
         self.main_logger.log(results)
@@ -375,8 +396,8 @@ class Learning:
     def save_rng_state(self):
         self.rng_state = {
             "python": random.getstate(),
-            "numpy": np.random.get_state(),
-            "torch": torch.get_rng_state(),
+            "numpy":  np.random.get_state(),
+            "torch":  torch.get_rng_state(),
         }
 
     def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):

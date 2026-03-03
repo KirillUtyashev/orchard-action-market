@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+
+from debug.code.encoders import BaseEncoder, EncoderOutput
 from debug.code.helpers import ten
 from debug.code.enums import DEVICE
 from debug.code.network import NetworkWrapper
@@ -10,23 +12,21 @@ torch.set_default_dtype(torch.float64)
 class VNetwork(NetworkWrapper):
     def __init__(
             self,
-            input_dim,
-            output_dim,
-            alpha,
-            discount,
+            encoder: BaseEncoder,
+            output_dim: int,
+            alpha: float,
+            discount: float,
             mlp_dims: tuple[int, ...] = (128, 128),
-            num_training_steps: int = 10000,
+            num_training_steps: int = 10_000,
             schedule: bool = False,
-            is_cnn: bool = False,
             conv_channels: list[int] = None,
             kernel_size: int = 3,
     ):
         super().__init__(
-            input_dim, output_dim, alpha, discount,
+            encoder, output_dim, alpha, discount,
             mlp_dims=mlp_dims,
             schedule=schedule,
             decay_steps=num_training_steps,
-            is_cnn=is_cnn,
             conv_channels=conv_channels,
             kernel_size=kernel_size,
         )
@@ -35,15 +35,12 @@ class VNetwork(NetworkWrapper):
         self.batch_discounts = []
         self.theoretical_vals = []
 
-    def get_value_function(self, x):
-        res = ten(x, DEVICE)
-        res = res.unsqueeze(0).float()
+    def get_value_function(self, enc: EncoderOutput) -> float:
+        self.model.eval()
         with torch.no_grad():
-            val = self.model(res).cpu().numpy().item()
-        return val
-
-    def get_input_dim(self):
-        return self._input_dim
+            out = self.model(enc)
+        self.model.train()
+        return float(out.squeeze())
 
     def train(self):
         if len(self.batch_states) == 0:
@@ -55,18 +52,16 @@ class VNetwork(NetworkWrapper):
         for state, next_state, reward, discount in batch:
             self.optimizer.zero_grad()
 
-            s = ten(state[np.newaxis], DEVICE)       # (1, 5, H, W)
-            s_next = ten(next_state[np.newaxis], DEVICE)
-
             with torch.no_grad():
-                target = reward + discount * self.model(s_next).squeeze()
+                target = reward + discount * self.model(next_state).squeeze()
 
-            pred = self.model(s).squeeze()
+            pred = self.model(state).squeeze()
             loss = (pred - target) ** 2
             total_loss += float(loss.item())
 
             loss.backward()
             self.optimizer.step()
+
         self._after_update()
 
         self.batch_states = []

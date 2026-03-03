@@ -9,7 +9,7 @@ train:
   alpha: 0.01
   timesteps: 100
   seed: 1234
-  epsilon: 0.1
+  epsilon: 0.3
   lmda: 0.0
   schedule_lr: true
   load_weights: false
@@ -20,7 +20,7 @@ algorithm:
   monte_carlo: false
   random_policy: false
   q_agent: 0.5
-  centralized: false
+  centralized: true
   concat: false
 
 reward:

@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+from debug.code.encoders import EncoderOutput
+from debug.code.enums import DEVICE
+
 
 class MainNet(nn.Module):
     def __init__(
@@ -26,8 +29,11 @@ class MainNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, x):
-        return self.net(x.flatten(start_dim=1))
+    def forward(self, enc: EncoderOutput) -> torch.Tensor:
+        x = enc.scalar.to(DEVICE).float()
+        if x.dim() == 1:
+            x = x.unsqueeze(0)      # (1, D)
+        return self.net(x)
 
 
 class CNNMainNet(nn.Module):
@@ -46,17 +52,16 @@ class CNNMainNet(nn.Module):
         conv_channels = conv_channels or [32, 64]
 
         conv_layers: list[nn.Module] = []
-        in_channels = C
-        for out_channels in conv_channels:
+        in_ch = C
+        for out_ch in conv_channels:
             conv_layers += [
-                nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=kernel_size // 2),
+                nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=kernel_size // 2),
                 nn.ReLU(),
             ]
-            in_channels = out_channels
+            in_ch = out_ch
         self.cnn = nn.Sequential(*conv_layers)
 
-        mlp_input_dim = in_channels * H * W + scalar_dim
-
+        mlp_input_dim = in_ch * H * W + scalar_dim
         mlp_layers: list[nn.Module] = []
         d = mlp_input_dim
         for hd in mlp_dims:
@@ -76,8 +81,17 @@ class CNNMainNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        grid = x[:, :4, :, :]
-        scalars = x[:, 4, 0, :2]
-        flat = self.cnn(grid).flatten(start_dim=1)
-        return self.mlp(torch.cat([flat, scalars], dim=1))
+    def forward(self, enc: EncoderOutput) -> torch.Tensor:
+        grid = enc.grid.to(DEVICE).float()
+        if grid.dim() == 3:
+            grid = grid.unsqueeze(0)            # (1, C, H, W)
+
+        flat = self.cnn(grid).flatten(start_dim=1)  # (B, in_ch*H*W)
+
+        if enc.scalar is not None:
+            scalar = enc.scalar.to(DEVICE).float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)    # (1, D)
+            flat = torch.cat([flat, scalar], dim=1)
+
+        return self.mlp(flat)
