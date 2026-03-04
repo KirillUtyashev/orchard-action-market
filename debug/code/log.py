@@ -111,7 +111,7 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
 def build_main_csv_fieldnames() -> list[str]:
     """Build column names for metrics.csv."""
     fields = ["step"]
-    fields.extend(["greedy_pps", "greedy_ratio", "nearest_pps", "nearest_ratio", "total_apples", "nearest_total_apples"])
+    fields.extend(["greedy_pps", "greedy_ratio", "nearest_pps", "nearest_ratio", "total_apples", "nearest_total_apples", "current_lr"])
     return fields
 
 

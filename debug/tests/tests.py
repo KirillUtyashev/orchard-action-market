@@ -201,8 +201,9 @@ class TestEnvironment:
             L,
             NUM_AGENTS,
             reward_module,
-            p_apple,
-            d_apple
+            0.04,
+            0.01,
+            max_apples=9
         )
         self.env.set_positions()
         self.env.spawn_apples()

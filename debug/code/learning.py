@@ -383,6 +383,7 @@ class Learning:
             results = eval_performance(agent_controller=self.agent_controller, reward_module=self.reward_module,
                                        d_apple=self.env.d_apple, p_apple=self.env.p_apple)
         results["step"] = step
+        results["current_lr"] = self.critic_networks[0].get_lr()
         self.agent_controller.epsilon = self.exp_config.train.epsilon
         self.main_logger.log(results)
         self.restore_rng_state()
