@@ -99,7 +99,7 @@ class DecGridEncoder(GridEncoder):
 
         # Ch 2: others (not self, not actor)
         for i, (r, c) in enumerate(agent_pos):
-            if i != agent_idx and i != actor_idx:
+            if i != agent_idx:
                 grid[2, r, c] += 1.0
 
         # Ch 3: actor
