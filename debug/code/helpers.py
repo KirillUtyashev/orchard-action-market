@@ -153,43 +153,70 @@ def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_po
                    start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions)
 
 
-def eval_performance(
-        agent_controller,
-        env,
-        timesteps=10000,
-        num_agents=NUM_AGENTS,
-):
+def _run_eval_loop(env, action_fn, timesteps, num_agents):
+    """Runs a single evaluation loop using action_fn(state, actor_idx) -> new_pos."""
     reward = 0
-
-    # Init state
-    curr_state = dict(env.get_state())
-    curr_state["actor_id"] = 0
     actor_idx = 0
 
     for sec in range(timesteps):
-        new_pos = agent_controller.agent_get_action(env, actor_idx)
-        s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
-            env, actor_idx, new_pos, num_agents
-        )
+        curr_state = dict(env.get_state())
+        new_pos = action_fn(curr_state, actor_idx)
+        _, _, _, on_apple, actor_idx = env_step(env, actor_idx, new_pos, num_agents)
 
         if on_apple:
             reward += 1
 
-        actor_idx = next_actor_idx
-
         if sec % 1000 == 0:
             print(sec)
+
+    return reward
+
+
+def eval_performance(
+        agent_controller,
+        reward_module,
+        p_apple,
+        d_apple,
+        timesteps=10000,
+        num_agents=NUM_AGENTS,
+):
+    env = make_env(reward_module, p_apple, d_apple)
+    env.set_positions()
+
+    initial_state = env.get_state()
+    env_nearest = make_env(
+        reward_module, p_apple, d_apple,
+        apples=initial_state["apples"],
+        agents=initial_state["agents"],
+        agent_positions=initial_state["agent_positions"],
+    )
+
+    reward = _run_eval_loop(
+        env,
+        action_fn=lambda state, idx: agent_controller.agent_get_action(env, idx),
+        timesteps=timesteps,
+        num_agents=num_agents,
+    )
     assert env.total_picked == reward
+
+    reward_nearest = _run_eval_loop(
+        env_nearest,
+        action_fn=lambda state, idx: nearest_apple_policy(state["agent_positions"][idx], state["apples"]),
+        timesteps=timesteps,
+        num_agents=num_agents,
+    )
+
     print("Results")
     print("Reward: ", reward)
     print("Apples per agent:", reward / NUM_AGENTS)
     print("Average Reward: ", reward / env.apples_spawned)
     print("Total apples: ", env.apples_spawned)
-    # print(
-    #     "Picked vs Spawned per agent",
-    #     (reward / NUM_AGENTS) / (env.total_apples / NUM_AGENTS),
-    #     )
+
     return {
         "greedy_pps": reward,
-        "total_apples": env.apples_spawned
+        "total_apples": env.apples_spawned,
+        "greedy_ratio": reward / env.apples_spawned,
+        "nearest_pps": reward_nearest,
+        "nearest_ratio": reward_nearest / env_nearest.apples_spawned,
+        "nearest_total_apples": env_nearest.apples_spawned,
     }

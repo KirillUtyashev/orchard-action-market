@@ -145,26 +145,6 @@ class Orchard:
         else:
             return position
 
-    def process_action(
-            self, actor_id: int, new_pos: np.ndarray | None, mode) -> ProcessAction:
-        """Process an agent's action and return reward and pick status."""
-
-        position = self.agent_positions[actor_id]
-        new_pos = self._apply_move(position, new_pos)
-
-        self.agent_positions[actor_id] = new_pos
-
-        reward_vector = self.reward_module.get_reward(
-            self.get_state(), actor_id, new_pos, mode
-        )
-
-        picked = reward_vector.sum() != 0
-        if picked:
-            self.remove_apple(new_pos)
-            self.total_picked += 1
-
-        return ProcessAction(reward_vector=reward_vector, picked=picked)
-
     def remove_apple(self, pos: np.ndarray) -> None:
         """Remove an apple at the given position if present."""
         if self.apples[tuple(pos)] >= 1:

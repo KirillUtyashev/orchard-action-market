@@ -376,13 +376,12 @@ class Learning:
 
     # eval_performance, save/restore rng unchanged
     def eval_performance(self, step):
-        env = make_env(self.env.reward_module, self.env.p_apple, self.env.d_apple)
         self.save_rng_state()
         set_all_seeds(42069)
-        env.set_positions()
         self.agent_controller.epsilon = 0
         with torch.no_grad():
-            results = eval_performance(agent_controller=self.agent_controller, env=env)
+            results = eval_performance(agent_controller=self.agent_controller, reward_module=self.reward_module,
+                                       d_apple=self.env.d_apple, p_apple=self.env.p_apple)
         results["step"] = step
         self.agent_controller.epsilon = self.exp_config.train.epsilon
         self.main_logger.log(results)
