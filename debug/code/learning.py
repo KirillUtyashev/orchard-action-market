@@ -115,7 +115,7 @@ class Learning:
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
 
         self._last_eval_errors_by_state = None
-        self.discount_factor = DISCOUNT_FACTOR ** (1 / NUM_AGENTS)
+        self.discount_factor = DISCOUNT_FACTOR
 
         self.careful_evals = []
         self.focus_actor_id = 0
