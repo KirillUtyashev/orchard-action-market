@@ -285,7 +285,7 @@ class Learning:
         self._init_agents_for_training()
 
         p_apple = self.exp_config.algorithm.q_agent / (W ** 2)
-        d_apple = 1 / (self.exp_config.env.apple_life * NUM_AGENTS)
+        d_apple = 1 / self.exp_config.env.apple_life
 
         if self.exp_config.algorithm.random_policy:
             self._generate_evaluation_states(p_apple, d_apple)
