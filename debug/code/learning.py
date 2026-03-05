@@ -301,7 +301,7 @@ class Learning:
                 self.agents, self.encoder, self.discount_factor, self.exp_config.train.epsilon
             )
 
-        self.env = Orchard(W, L, NUM_AGENTS, self.reward_module, p_apple, d_apple)
+        self.env = Orchard(W, L, NUM_AGENTS, self.reward_module, p_apple, d_apple, max_apples=self.exp_config.env.max_apples)
         self.env.set_positions()
         self._networks_for_eval = self.critic_networks
 

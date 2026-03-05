@@ -74,6 +74,7 @@ class EnvironmentConfig:
     length: int = 6
     width: int = 6
     apple_life: float = 8.0
+    max_apples: int = 9
 
 
 @dataclass

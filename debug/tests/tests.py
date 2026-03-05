@@ -202,13 +202,14 @@ class TestEnvironment:
             NUM_AGENTS,
             reward_module,
             0.04,
-            0.05,
+            0.1,
             max_apples=9
         )
         self.env.set_positions()
         self.env.spawn_apples()
 
         tracker = TimeToAppleTracker(self.env.apples.shape)
+        spawn_tracker = SpawnHeatmapTracker(self.env.apples.shape)
 
         # NEW: counters
         total_picked = 0
@@ -244,6 +245,7 @@ class TestEnvironment:
                 total_picked += 1
 
             tracker.observe_grid(self.env.apples)
+            spawn_tracker.observe_grid(self.env.apples)  # NEW
 
             # advance
             actor_idx = next_actor_idx
@@ -285,3 +287,36 @@ class TestEnvironment:
         plt.ylabel("Number of apples")
         plt.title("Apple count over time")
         plt.show()
+        spawn_heatmap = spawn_tracker.get_heatmap()
+        plt.figure(figsize=(6, 5))
+        plt.imshow(spawn_heatmap, cmap='hot', interpolation='nearest')
+        plt.colorbar(label='Spawn fraction')
+        plt.title('Apple Spawn Heatmap\n(fraction of steps each cell spawned)')
+        plt.xlabel('Column')
+        plt.ylabel('Row')
+        plt.show()
+
+
+class SpawnHeatmapTracker:
+    def __init__(self, grid_shape):
+        self.grid_shape = grid_shape  # (W, W)
+        self.spawn_counts = np.zeros(grid_shape, dtype=int)
+        self.total_steps = 0
+        self.prev_apples = None
+
+    def observe_grid(self, apples):
+        if self.prev_apples is None:
+            self.prev_apples = apples.copy()
+            return
+
+        # Detect new spawns: apples appeared where none before
+        new_spawns = (apples == 1) & (self.prev_apples == 0)
+        self.spawn_counts += new_spawns
+
+        self.prev_apples = apples.copy()
+        self.total_steps += 1
+
+    def get_heatmap(self):
+        if self.total_steps == 0:
+            return np.zeros(self.grid_shape)
+        return self.spawn_counts / self.total_steps  # fraction of steps spawned here

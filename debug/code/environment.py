@@ -327,6 +327,29 @@ class Orchard:
         self.apples_spawned += spawned
         return spawned
 
+    # def spawn_apples(self) -> int:
+    #     if self.p_apple <= 0.0:
+    #         return 0
+    #
+    #     spawned = 0
+    #     current = int(self.apples.sum())
+    #     if current >= self.max_apples:
+    #         return 0
+    #
+    #     occupied = (self.agents > 0) | (self.apples > 0)
+    #     empty_coords = np.argwhere(~occupied)  # deterministic row-major order
+    #
+    #     for r, c in empty_coords:
+    #         if current >= self.max_apples:
+    #             break
+    #         if np.random.rand() < self.p_apple:
+    #             self.apples[r, c] = 1
+    #             spawned += 1
+    #             current += 1
+    #
+    #     self.apples_spawned += spawned
+    #     return spawned
+
     def apply_action(self, actor_id: int, new_pos: np.ndarray) -> dict:
         """Move agent, return s_moved state (pre-pick, pre-spawn)."""
         position = self.agent_positions[actor_id]
