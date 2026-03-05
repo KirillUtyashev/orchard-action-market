@@ -202,7 +202,7 @@ class TestEnvironment:
             NUM_AGENTS,
             reward_module,
             0.04,
-            0.01,
+            0.05,
             max_apples=9
         )
         self.env.set_positions()

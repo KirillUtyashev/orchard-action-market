@@ -214,7 +214,7 @@ class Orchard:
             reward: Reward | None,
             p_apple: float = 0.1,
             d_apple: float = 0.0,
-            max_apples: int = 256,          # <-- NEW
+            max_apples: int = 9,
             start_agents_map: Optional[np.ndarray] = None,
             start_apples_map: Optional[np.ndarray] = None,
             start_agent_positions: Optional[np.ndarray] = None,
