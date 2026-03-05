@@ -292,25 +292,38 @@ class Orchard:
         return removed
 
     def spawn_apples(self) -> int:
+        """
+        Probability-mode spawn with a global cap max_apples:
+        iterate over empty cells (not agents, not apples) and spawn with prob p_apple
+        until max_apples is reached.
+        """
         if self.p_apple <= 0.0:
             return 0
 
-        spawned = 0
         current = int(self.apples.sum())
-        if current >= self.max_apples:
+        remaining = self.max_apples - current
+        if remaining <= 0:
             return 0
 
+        # occupied cells: any agent OR any apple
         occupied = (self.agents > 0) | (self.apples > 0)
-        empty_coords = np.argwhere(~occupied)  # deterministic row-major order
+        empty_coords = np.argwhere(~occupied)  # (E, 2)
+        if empty_coords.size == 0:
+            return 0
 
-        for r, c in empty_coords:
-            if current >= self.max_apples:
-                break
-            if np.random.rand() < self.p_apple:
-                self.apples[r, c] = 1
-                spawned += 1
-                current += 1
+        # Decide which empty cells want to spawn (Bernoulli p_apple)
+        wants = np.random.rand(empty_coords.shape[0]) < self.p_apple
+        spawn_coords = empty_coords[wants]
+        if spawn_coords.size == 0:
+            return 0
 
+        # Cap by remaining slots: randomly choose up to `remaining`
+        if spawn_coords.shape[0] > remaining:
+            pick = np.random.choice(spawn_coords.shape[0], size=remaining, replace=False)
+            spawn_coords = spawn_coords[pick]
+
+        self.apples[spawn_coords[:, 0], spawn_coords[:, 1]] = 1
+        spawned = int(spawn_coords.shape[0])
         self.apples_spawned += spawned
         return spawned
 

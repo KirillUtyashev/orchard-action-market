@@ -260,7 +260,7 @@ class Learning:
                     self.discount_factor,
                     mlp_dims=tuple(cfg.network.mlp_dims),
                     lam=self.exp_config.train.lmda,
-                    num_training_steps=self.trajectory_length * NUM_AGENTS,
+                    num_training_steps=self.trajectory_length,
                     schedule=cfg.train.schedule_lr,
                     conv_channels=cfg.network.conv_channels,
                     kernel_size=cfg.network.kernel_size,
