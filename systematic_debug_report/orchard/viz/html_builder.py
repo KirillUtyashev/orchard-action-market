@@ -81,10 +81,24 @@ def _build_frame_info_html(frame: Frame) -> str:
         )
 
     # Stats
-    parts.append(
+    stats_line = (
         f'Apples: <span style="color:#d62728">{frame.apples_on_grid}</span> '
         f'| Picks/step: <span style="color:#2ca02c">{frame.picks_per_step:.4f}</span>'
     )
+    parts.append(stats_line)
+
+    # Per-agent picks
+    if frame.agent_picks:
+        n_agents = len(frame.rewards)
+        pick_parts = []
+        for i in range(n_agents):
+            c = _agent_css_color(i)
+            cnt = frame.agent_picks.get(i, 0)
+            pps = frame.agent_picks_per_step(i)
+            pick_parts.append(
+                f'<span style="color:{c}">A{i}: {cnt} ({pps:.4f}/step)</span>'
+            )
+        parts.append(f'Agent picks: {" &nbsp; ".join(pick_parts)}')
 
     # Position table
     pos_parts = []
@@ -100,6 +114,7 @@ def _build_frame_info_html(frame: Frame) -> str:
 
     # Decisions (Q-values)
     if frame.decisions:
+        has_agent_breakdown = any(d.agent_q_values is not None for d in frame.decisions)
         dec_lines = ['<div style="margin-top:6px"><b>Q-values:</b>']
         sorted_decs = sorted(frame.decisions, key=lambda d: d.q_value, reverse=True)
         for d in sorted_decs:
@@ -109,6 +124,14 @@ def _build_frame_info_html(frame: Frame) -> str:
             dec_lines.append(
                 f'<div style="{style}">&nbsp;&nbsp;{sym} {d.action.name:<5} Q={d.q_value:+.4f}{chosen}</div>'
             )
+            # Per-agent breakdown (decentralized only)
+            if has_agent_breakdown and d.agent_q_values:
+                for i, v in sorted(d.agent_q_values.items()):
+                    c = _agent_css_color(i)
+                    dec_lines.append(
+                        f'<div style="color:{c};font-size:11px">'
+                        f'&nbsp;&nbsp;&nbsp;&nbsp;V<sub>{i}</sub>(s<sup>a</sup>) = {v:+.4f}</div>'
+                    )
         dec_lines.append("</div>")
         parts.append("\n".join(dec_lines))
 

@@ -12,7 +12,6 @@ from orchard.enums import Action, ACTION_PRIORITY
 from orchard.env.base import BaseEnv
 from orchard.eval import rollout_trajectory
 from orchard.model import ValueNetwork
-from orchard.policy import Q_team
 from orchard.viz.frame import Decision, Frame
 
 
@@ -47,6 +46,9 @@ def generate_frames(
     decision_count = 0
     state_index = 0
     transition_index = 0
+    n_agents = env.cfg.n_agents
+    agent_pick_counts: dict[int, int] = {i: 0 for i in range(n_agents)}
+    is_decentralized = networks is not None and len(networks) > 1
 
     for transition in rollout_trajectory(start_state, policy_fn, env, n_steps):
         is_pick = (transition.action == Action.PICK)
@@ -54,6 +56,7 @@ def generate_frames(
 
         if picked:
             total_picks += 1
+            agent_pick_counts[transition.s_t.actor] += 1
 
         # Increment decision count on non-PICK transitions (actual agent choices)
         if not is_pick:
@@ -64,11 +67,20 @@ def generate_frames(
         if include_decisions and networks is not None and not is_pick:
             decisions = []
             for action in ACTION_PRIORITY:
-                q = Q_team(transition.s_t, action, networks, env)
+                s_after = env.apply_action(transition.s_t, action)
+                # Compute per-agent V_i(s^a) and sum for Q_team
+                agent_qvals: dict[int, float] = {}
+                q_total: float = 0.0
+                with torch.no_grad():
+                    for i, network in enumerate(networks):
+                        v_i = network(encoding.encode(s_after, i)).item()
+                        agent_qvals[i] = v_i
+                        q_total += v_i
                 decisions.append(Decision(
                     action=action,
-                    q_value=q,
+                    q_value=q_total,
                     is_chosen=(action == transition.action),
+                    agent_q_values=agent_qvals if is_decentralized else None,
                 ))
 
         # --- Optional: per-agent values (only at decision points) ---
@@ -99,6 +111,7 @@ def generate_frames(
             apples_after=len(transition.s_t_after.apple_positions),
             decisions=decisions,
             agent_values=agent_values,
+            agent_picks=dict(agent_pick_counts),
         )
         frames.append(frame)
 

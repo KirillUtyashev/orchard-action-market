@@ -15,6 +15,9 @@ class Decision:
     q_value: float
     is_chosen: bool
 
+    # Per-agent V_i(after_state(s, a)) breakdown (decentralized only)
+    agent_q_values: dict[int, float] | None = None
+
 
 @dataclass(frozen=True)
 class Frame:
@@ -58,6 +61,15 @@ class Frame:
     # Optional: per-agent values (--values)
     agent_values: dict[int, float] | None = None
 
+    # Per-agent cumulative picks
+    agent_picks: dict[int, int] | None = None
+
     @property
     def picks_per_step(self) -> float:
         return self.total_picks / self.total_decisions if self.total_decisions > 0 else 0.0
+
+    def agent_picks_per_step(self, agent: int) -> float:
+        """Per-agent picks / total decisions."""
+        if self.agent_picks is None or self.total_decisions == 0:
+            return 0.0
+        return self.agent_picks.get(agent, 0) / self.total_decisions

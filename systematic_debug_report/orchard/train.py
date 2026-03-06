@@ -90,7 +90,7 @@ def _save_checkpoint(
     torch.save(ckpt, path)
     
 
-def train(cfg: ExperimentConfig) -> None:
+def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     """Main training loop."""
     start_time = time.time()
 
@@ -108,6 +108,20 @@ def train(cfg: ExperimentConfig) -> None:
             nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda,
             train_method=cfg.train.train_method, n_networks=n_networks,
         )
+
+    # --- Resume from checkpoint (weights only) ---
+    if resume_checkpoint is not None:
+        ckpt = torch.load(resume_checkpoint, map_location="cpu", weights_only=True)
+        state_dicts = ckpt["networks"]
+        if len(state_dicts) != len(networks):
+            raise ValueError(
+                f"Checkpoint has {len(state_dicts)} networks but current config "
+                f"expects {len(networks)}. Check learning_type (centralized vs decentralized)."
+            )
+        for net, sd in zip(networks, state_dicts):
+            net.load_state_dict(sd, strict=True)
+        print(f"Loaded pretrained weights from: {resume_checkpoint}")
+        print(f"  Checkpoint was at step {ckpt.get('step', '?')}. Training restarts from step 0.")
     
     run_dir = setup_logging(cfg)
     # --- CSV loggers ---
@@ -374,6 +388,10 @@ def train(cfg: ExperimentConfig) -> None:
 # ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(description="Orchard RL Training")
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help="Path to checkpoint (.pt) to load pretrained weights from.",
+    )
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument(
         "--override", nargs="*", default=[],
@@ -382,7 +400,7 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.config, args.override)
-    train(cfg)
+    train(cfg, resume_checkpoint=args.resume)
 
 
 if __name__ == "__main__":

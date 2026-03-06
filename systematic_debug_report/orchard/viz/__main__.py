@@ -166,10 +166,20 @@ def main() -> None:
     encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest)
 
     # --- Load checkpoint if provided ---
+    from orchard.enums import LearningType
+    centralized = cfg.train.learning_type == LearningType.CENTRALIZED
+    n_networks = 1 if centralized else cfg.env.n_agents
+
     networks: list[ValueNetwork] | None = None
     if args.checkpoint:
         print(f"Loading checkpoint: {args.checkpoint}")
-        networks = create_networks(cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps, nstep=cfg.train.nstep)
+        if centralized:
+            print(f"  Centralized mode: creating 1 shared network for {cfg.env.n_agents} agents")
+        networks = create_networks(
+            cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps,
+            nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda,
+            train_method=cfg.train.train_method, n_networks=n_networks,
+        )
         ckpt_step = load_checkpoint(args.checkpoint, networks)
         print(f"  Loaded checkpoint at training step {ckpt_step}")
 

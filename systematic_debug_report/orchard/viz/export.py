@@ -16,6 +16,7 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
 
     n_agents = len(frames[0].rewards)
     reward_cols = [f"reward_{i}" for i in range(n_agents)]
+    agent_pick_cols = [f"agent_picks_{i}" for i in range(n_agents)]
 
     fieldnames = [
         "transition",
@@ -30,6 +31,7 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
         "n_apples_after",
         "cum_picks",
         "picks_per_step",
+        *agent_pick_cols,
     ]
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +54,8 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
             }
             for i, rcol in enumerate(reward_cols):
                 row[rcol] = f"{frame.rewards[i]:.4f}"
+            for i, pcol in enumerate(agent_pick_cols):
+                row[pcol] = frame.agent_picks.get(i, 0) if frame.agent_picks else 0
             writer.writerow(row)
 
 
