@@ -164,7 +164,7 @@ def random_action(agent_pos, grid_size):
 # 2-MODE TRANSITION  (mode 0 = move, mode 1 = reward check)
 # =============================================================================
 
-def transition(step, curr_state, env, actor_idx):
+def transition(step, curr_state, env, actor_idx, action_override=None):
     """
     step == -1 : init only (no env mutation)
     step >= 0  : mode-0 move, then mode-1 reward check
@@ -182,11 +182,10 @@ def transition(step, curr_state, env, actor_idx):
         return curr_state, None, None, actor_idx
 
     # Mode 0: move
-    env.process_action(
-        actor_idx,
-        random_action(curr_state["agent_positions"][actor_idx], W),
-        mode=0,
-    )
+    new_pos = (action_override if action_override is not None
+               else random_action(curr_state["agent_positions"][actor_idx], W))
+    env.process_action(actor_idx, new_pos, mode=0)
+    
     semi_state = dict(env.get_state())
     semi_state["actor_id"] = actor_idx
     semi_state["mode"] = 1
@@ -370,7 +369,7 @@ def mc_ground_truth(seed, trajectory_length, init_env, init_state,
             returns[:, j] = rba @ discounts
         stored_means[:, i] = returns.mean(axis=1)
 
-    return stored_means.mean(axis=1)
+    return stored_means.mean(axis=1), stored_means
 
 
 def generate_eval_states(num_states, reward_module, seed, discount_factor,
@@ -401,7 +400,7 @@ def generate_eval_states(num_states, reward_module, seed, discount_factor,
         st["mode"] = 0
 
         t0 = time.time()
-        mc = mc_ground_truth(
+        mc, _ = mc_ground_truth(
             seed + idx, mc_depth, orchard, st, discount_factor,
             mc_trajectories, mc_rollouts,
         )
@@ -449,7 +448,12 @@ def evaluate_on_mc(models, eval_states, device='cpu'):
         metrics[f'a{i}_pct_error'] = pct
         metrics[f'a{i}_mean_pred'] = float(np.mean(preds[:, i]))
         metrics[f'a{i}_mean_true'] = float(np.mean(true[:, i]))
-
+    # MAPE: per-sample |err|/|true|, averaged
+    for i in range(NUM_AGENTS):
+        ape = np.abs(preds[:, i] - true[:, i]) / np.maximum(np.abs(true[:, i]), eps) * 100
+        metrics[f'a{i}_mape'] = float(np.mean(ape))
+    metrics['mape_total'] = np.mean([metrics[f'a{i}_mape'] for i in range(NUM_AGENTS)])
+    
     metrics['mae_total'] = np.mean([metrics[f'a{i}_mae'] for i in range(NUM_AGENTS)])
     metrics['pct_err_total'] = np.mean([metrics[f'a{i}_pct_error'] for i in range(NUM_AGENTS)])
     metrics['bias_total'] = np.mean([metrics[f'a{i}_bias'] for i in range(NUM_AGENTS)])
@@ -477,3 +481,139 @@ def get_weight_stats(model, prev_norms):
                 stats[f'L{idx}_delta'] = 0.0
             current.append(norm)
     return stats, current
+
+def greedy_action(state, actor_id, models, device):
+    """Algorithm 3 from report: argmax_a Σ_i V_i(s'(a)), ε=0."""
+    pos = state["agent_positions"][actor_id]
+    r, c = int(pos[0]), int(pos[1])
+    grid_size = state["apples"].shape[0]
+
+    # 5 candidate destinations (up/down/left/right/stay), clamped
+    deltas = [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)]
+    candidates = []
+    for dr, dc in deltas:
+        nr, nc = r + dr, c + dc
+        if not (0 <= nr < grid_size and 0 <= nc < grid_size):
+            nr, nc = r, c
+        candidates.append(np.array([nr, nc]))
+
+    best_val = -float('inf')
+    best_pos = candidates[-1]  # default: stay
+
+    for new_pos in candidates:
+        # Build hypothetical mode-1 state after agent moves
+        hyp = {
+            "apples": state["apples"].copy(),
+            "agents": state["agents"].copy(),
+            "agent_positions": state["agent_positions"].copy(),
+            "actor_id": actor_id,
+            "mode": 1,
+        }
+        # Update agents grid and position
+        hyp["agents"][r, c] -= 1
+        hyp["agents"][new_pos[0], new_pos[1]] += 1
+        hyp["agent_positions"][actor_id] = new_pos.copy()
+
+        # Σ_i V_i(encode(hyp, i))
+        encs = np.stack([encode_state(hyp, i) for i in range(NUM_AGENTS)])
+        with torch.no_grad():
+            vals = sum(
+                models[i](torch.tensor(encs[i:i+1], dtype=torch.float64, device=device)).item()
+                for i in range(NUM_AGENTS)
+            )
+
+        if vals > best_val:
+            best_val = vals
+            best_pos = new_pos
+
+    return best_pos
+
+def nearest_apple_action(agent_pos, apples, grid_size):
+    """Nearest-apple heuristic: argmin_a d(dest(a), nearest_apple)."""
+    r, c = int(agent_pos[0]), int(agent_pos[1])
+    apple_locs = np.argwhere(apples > 0)
+    if len(apple_locs) == 0:
+        return agent_pos.copy()
+
+    deltas = [(-1, 0), (1, 0), (0, -1), (0, 1), (0, 0)]
+    best_dist = float('inf')
+    best_pos = agent_pos.copy()
+
+    for dr, dc in deltas:
+        nr, nc = r + dr, c + dc
+        if not (0 <= nr < grid_size and 0 <= nc < grid_size):
+            nr, nc = r, c
+        dists = np.abs(apple_locs[:, 0] - nr) + np.abs(apple_locs[:, 1] - nc)
+        d = dists.min()
+        if d < best_dist:
+            best_dist = d
+            best_pos = np.array([nr, nc])
+
+    return best_pos
+
+def run_episode(policy, models, reward_mod, num_seconds, seed, device):
+    """
+    Run one episode, return total picks.
+    policy: 'random' | 'nearest' | 'greedy'
+    """
+    set_all_seeds(seed)
+    env = Orchard(W, W, NUM_AGENTS, reward_mod, p_apple=0.2, d_apple=P_DESPAWN)
+    env.p_apple = P_SPAWN
+    env.set_positions()
+    curr_state = dict(env.get_state())
+    actor_idx = random.randint(0, NUM_AGENTS - 1)
+    curr_state["actor_id"] = actor_idx
+    curr_state["mode"] = 0
+
+    total_picks = 0
+    for sec in range(num_seconds):
+        for step in range(NUM_AGENTS):
+            pos = curr_state["agent_positions"][actor_idx]
+
+            # Choose action
+            if policy == "random":
+                new_pos = random_action(pos, W)
+            elif policy == "nearest":
+                new_pos = nearest_apple_action(pos, env.apples, W)
+            elif policy == "greedy":
+                new_pos = greedy_action(curr_state, actor_idx, models, device)
+            else:
+                raise ValueError(f"Unknown policy: {policy}")
+
+            # Mode 0: move
+            env.process_action(actor_idx, new_pos, mode=0)
+            semi_state = dict(env.get_state())
+            semi_state["actor_id"] = actor_idx
+            semi_state["mode"] = 1
+
+            # Mode 1: reward check
+            res = env.process_action(actor_idx, None, mode=1)
+            if res.picked:
+                total_picks += 1
+
+            # Despawn/spawn at end of second
+            if step == NUM_AGENTS - 1:
+                env.despawn_apples()
+                env.spawn_apples()
+
+            # Next state
+            curr_state = dict(env.get_state())
+            actor_idx = random.randint(0, NUM_AGENTS - 1)
+            curr_state["actor_id"] = actor_idx
+            curr_state["mode"] = 0
+
+    return total_picks
+
+def evaluate_policies(models, num_episodes, num_seconds, reward_mod, seed, device):
+    """Run 3 policies, return avg picks/sec for each."""
+    results = {p: [] for p in ["random", "nearest", "greedy"]}
+    for ep in range(num_episodes):
+        for policy in results:
+            picks = run_episode(policy, models, reward_mod, num_seconds, seed + ep, device)
+            results[policy].append(picks / num_seconds)
+    return {
+        "random_picks_per_sec": float(np.mean(results["random"])),
+        "nearest_picks_per_sec": float(np.mean(results["nearest"])),
+        "greedy_picks_per_sec": float(np.mean(results["greedy"])),
+    }
+    

@@ -8,7 +8,7 @@
 
 set -e
 
-echo "Submitting MC jobs..."
+echo "Submitting MC jobs (50 states)..."
 MC_JOB=$(sbatch --parsable -D monte_carlo_script monte_carlo_script/run_mc.sh)
 echo "MC job array: ${MC_JOB}"
 
@@ -18,7 +18,7 @@ echo "Training job array: ${TRAIN_JOB}"
 
 echo ""
 echo "Pipeline:"
-echo "  MC:    ${MC_JOB}  (array 0-9)  — ~30s each"
-echo "  Train: ${TRAIN_JOB} (array 0-7) — starts after MC"
+echo "  MC:    ${MC_JOB}  (array 0-49) — ~25s each"
+echo "  Train: ${TRAIN_JOB} (array 0-5)  — starts after MC"
 echo ""
 echo "Monitor: squeue -u \$USER"

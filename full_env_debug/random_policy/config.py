@@ -15,7 +15,7 @@ GAMMA = 0.9
 GAMMA_STEP = GAMMA ** (1.0 / NUM_AGENTS)
 
 # Encoding
-K_NEAREST = 3
+K_NEAREST = 10
 INPUT_DIM = 3 + 3 * (NUM_AGENTS - 1) + 4 * K_NEAREST  # = 24
 
 # Spawn/despawn (applied once per round, i.e. every L rounds of N ticks)

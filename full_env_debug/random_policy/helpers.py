@@ -246,14 +246,12 @@ class SlidingWindowBuffer:
         self.n = window_size
         self.num_agents = num_agents
         self.encodings = []     # per state: {agent_idx: np.array}
-        self.values = []        # per state: {agent_idx: float}
         self.rewards = []       # per transition: {agent_idx: float}
         self.gammas = []        # per transition: float
         self._start = 0
 
-    def add_state(self, enc_dict, val_dict):
+    def add_state(self, enc_dict):
         self.encodings.append(enc_dict)
-        self.values.append(val_dict)
 
     def add_transition(self, reward_dict, gamma):
         self.rewards.append(reward_dict)
@@ -266,7 +264,7 @@ class SlidingWindowBuffer:
     def can_train(self):
         return self.num_transitions >= self.n
 
-    def pop_oldest(self, lam):
+    def pop_oldest(self, lam, models, device):
         """Compute λ-returns for oldest state, pop it, return (encoding_dict, targets_dict)."""
         s = self._start
         n = self.n
@@ -274,17 +272,19 @@ class SlidingWindowBuffer:
 
         targets = {}
         for i in range(self.num_agents):
+            encs = [self.encodings[s + j][i] for j in range(n + 1)]
+            x = torch.tensor(np.stack(encs), dtype=torch.float32, device=device)
+            with torch.no_grad():
+                vals = models[i](x).cpu().numpy()  # (n+1,)
             r_i = np.array([self.rewards[s + j][i] for j in range(n)])
-            v_i = np.array([self.values[s + j][i] for j in range(n + 1)])
-            targets[i] = compute_lambda_return(r_i, v_i, gamma_arr, lam)
-
+            targets[i] = compute_lambda_return(r_i, vals, gamma_arr, lam)
+            
         enc = self.encodings[s]
         self._start += 1
 
         # Periodically compact to free memory
         if self._start > 10000:
             self.encodings = self.encodings[self._start:]
-            self.values = self.values[self._start:]
             self.rewards = self.rewards[self._start:]
             self.gammas = self.gammas[self._start:]
             self._start = 0
