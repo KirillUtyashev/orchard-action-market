@@ -25,7 +25,6 @@ slurm_logs/
 *.csv
 # Virtual environment folders
 venv/
-env/
 .venv/
 .env/
 
