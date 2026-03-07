@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=mc_debug
+#SBATCH --job-name=mc_v2
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -9,12 +9,10 @@
 #SBATCH --output=slurm_logs/mc-%A_%a.out
 #SBATCH --error=slurm_logs/mc-%A_%a.err
 #SBATCH --array=0-9
-
 # =============================================================================
-# MC Ground Truth — Debug (gamma=0.9)
-# 10 states × 10000 trajectories × 500 ticks. ~25s per state.
+# MC Ground Truth v2 — gamma=0.9, K=10
+# 50 states × 10000 trajectories × 500 ticks
 # =============================================================================
-
 mkdir -p slurm_logs mc_data
 source "../../../bin/activate"
 
@@ -27,7 +25,7 @@ echo "=== MC State ${SLURM_ARRAY_TASK_ID} ==="
 echo "R_PICKER=${R_PICKER}, NUM_TRAJ=${NUM_TRAJ}, TRAJ_LEN=${TRAJ_LEN}"
 
 python ../generate_mc.py \
-    --state_index ${SLURM_ARRAY_TASK_ID} \
+    --state_index $((SLURM_ARRAY_TASK_ID + 10)) \
     --num_trajectories ${NUM_TRAJ} \
     --trajectory_length ${TRAJ_LEN} \
     --r_picker ${R_PICKER} \
