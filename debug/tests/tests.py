@@ -202,8 +202,8 @@ class TestEnvironment:
             NUM_AGENTS,
             reward_module,
             0.04,
-            0.1,
-            max_apples=9
+            0.025,
+            max_apples=20
         )
         self.env.set_positions()
         self.env.spawn_apples()
@@ -215,7 +215,7 @@ class TestEnvironment:
         total_picked = 0
         total_spawned = int(self.env.apples.sum())  # count initial apples as "spawned"
 
-        seconds = 10_000
+        seconds = 20_000
         tracker.observe_grid(self.env.apples)
         num_apples = np.zeros(seconds + 1, dtype=int)
         num_apples[0] = self.env.get_sum_apples()

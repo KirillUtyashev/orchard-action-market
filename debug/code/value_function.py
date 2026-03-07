@@ -49,19 +49,6 @@ class VNetwork(NetworkWrapper):
             if p.requires_grad:
                 self._traces[p] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
-    @torch.no_grad()
-    def _apply_td_lambda_update(self, delta: torch.Tensor):
-        """w <- w + alpha * delta * e  (expects e already updated)."""
-        a = float(self.alpha)
-        d = float(delta)
-        for p in self.model.parameters():
-            if not p.requires_grad:
-                continue
-            e = self._traces.get(p, None)
-            if e is None:
-                continue
-            p.add_(a * d * e)
-
     def get_value_function(self, enc: EncoderOutput) -> float:
         self.model.eval()
         with torch.no_grad():
@@ -69,47 +56,37 @@ class VNetwork(NetworkWrapper):
         self.model.train()
         return float(out.squeeze())
 
-    def td_lambda_update(
-            self,
-            state,
-            next_state,
-            reward,
-            discount,
-    ) -> float:
-        """
-        One TD(lambda) semi-gradient step (backward view eligibility traces):
-          delta = r + gamma * V(s') - V(s)
-          e     = gamma*lambda*e + grad_w V(s)
-          w     = w + alpha * delta * e
-
-        Returns delta as a python float (useful for logging).
-        """
-        # Compute V(s) with grad tracking
+    def td_lambda_update(self, state, next_state, reward, discount) -> float:
+        # 1. Compute V(s) with grad tracking
         v = self.model(state).squeeze()
 
-        # Compute V(s') without grad tracking
+        # 2. Compute V(s') without grad tracking
         with torch.no_grad():
             v_next = self.model(next_state).squeeze()
+            delta = reward + discount * v_next - v.detach()
 
-            # Use per-transition discount (gamma_{t+1}) passed in
-            delta = reward + discount * v_next - v
-
-        # Get grad_w V(s)
-        self.model.zero_grad(set_to_none=True)
+        # 3. Get grad_w V(s)
+        self.optimizer.zero_grad(set_to_none=True)
         v.backward()
 
-        # Update eligibility traces: e <- gamma*lambda*e + grad
+        # 4. Update eligibility traces: e <- gamma*lambda*e + grad
         with torch.no_grad():
             gl = float(discount) * self.lam
             for p in self.model.parameters():
-                if p.grad is None or not p.requires_grad:
+                if not p.requires_grad or p.grad is None:
                     continue
                 self._traces[p].mul_(gl).add_(p.grad)
 
-        # Apply parameter update directly (do NOT call optimizer.step() here)
-        self._apply_td_lambda_update(delta)
+            # 5. Replace gradients with TD(lambda) pseudo-gradients
+            for p in self.model.parameters():
+                if not p.requires_grad:
+                    continue
+                p.grad = (-delta * self._traces[p]).clone()
 
-        return float(delta.detach().item())
+        # 6. Let SGD apply the update
+        self.optimizer.step()
+
+        return float(delta.item())
 
     def train_lambda(self):
         """

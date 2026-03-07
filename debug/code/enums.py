@@ -6,6 +6,7 @@ import torch
 # Config
 # ---------------------------------------------------------------------
 data_dir = Path(__file__).parent.parent / "data"
+runs_dir = Path(__file__).parent.parent / "runs"
 
 NUM_AGENTS = 2
 W, L = 6, 6

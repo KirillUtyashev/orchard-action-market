@@ -148,9 +148,10 @@ def env_step(env, actor_idx, new_pos, num_agents):
     return s_moved, s_next, pick_rewards, on_apple, next_actor_idx
 
 
-def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_positions=None):
+def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_positions=None, max_apples=9.0):
     return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
-                   start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions)
+                   start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions, 
+                   max_apples=max_apples)
 
 
 def _run_eval_loop(env, action_fn, timesteps, num_agents):
@@ -179,8 +180,9 @@ def eval_performance(
         d_apple,
         timesteps=10000,
         num_agents=NUM_AGENTS,
+        max_apples=9.0
 ):
-    env = make_env(reward_module, p_apple, d_apple)
+    env = make_env(reward_module, p_apple, d_apple, max_apples=max_apples)
     env.set_positions()
 
     initial_state = env.get_state()
@@ -189,6 +191,7 @@ def eval_performance(
         apples=initial_state["apples"],
         agents=initial_state["agents"],
         agent_positions=initial_state["agent_positions"],
+        max_apples=max_apples
     )
 
     reward = _run_eval_loop(

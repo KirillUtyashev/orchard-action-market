@@ -34,7 +34,7 @@ from debug.code.enums import (
 )
 
 from debug.code.environment import Orchard
-from debug.code.helpers import env_step, eval_performance, make_env, \
+from debug.code.helpers import env_step, eval_performance, \
     random_policy, \
     set_all_seeds, teleport, \
     env_step
@@ -381,7 +381,7 @@ class Learning:
         self.agent_controller.epsilon = 0
         with torch.no_grad():
             results = eval_performance(agent_controller=self.agent_controller, reward_module=self.reward_module,
-                                       d_apple=self.env.d_apple, p_apple=self.env.p_apple)
+                                       d_apple=self.env.d_apple, p_apple=self.env.p_apple, max_apples=self.env.max_apples)
         results["step"] = step
         results["current_lr"] = self.critic_networks[0].get_lr()
         self.agent_controller.epsilon = self.exp_config.train.epsilon
