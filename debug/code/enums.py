@@ -68,6 +68,9 @@ class EvalConfig:
     num_seeds: int = 1000
     variance: float = 0.0
     debug: bool = True
+    action_prob_num_states: int = 100
+    action_prob_burnin: int = 500
+    action_prob_stride: int = 5
 
 
 @dataclass
@@ -82,6 +85,9 @@ class EnvironmentConfig:
 class LoggingConfig:
     output_dir: str = "runs"
     main_csv_freq: int = 20000
+    weight_samples_enabled: bool = True
+    weight_samples_per_tensor: int = 16
+    weight_samples_freq: int = 0
 
 
 @dataclass
@@ -93,4 +99,3 @@ class ExperimentConfig:
     eval: EvalConfig = None
     env: EnvironmentConfig = None
     logging: LoggingConfig = None
-

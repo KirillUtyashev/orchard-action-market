@@ -115,6 +115,16 @@ def build_main_csv_fieldnames() -> list[str]:
     return fields
 
 
+def build_action_prob_csv_fieldnames() -> list[str]:
+    """Build column names for action_probabilities.csv."""
+    return ["step", "wall_time", "left", "right", "up", "down", "stay"]
+
+
+def build_weight_sample_csv_fieldnames() -> list[str]:
+    """Build column names for sampled weight trajectories."""
+    return ["step", "wall_time", "tensor_name", "sample_id", "flat_index", "value"]
+
+
 def build_detail_csv_fieldnames(n_agents: int, networks: list[Any]) -> list[str]:
     """Build column names for details.csv."""
     fields = ["step", "wall_time", "ram_mb", "current_lr", "current_epsilon"]

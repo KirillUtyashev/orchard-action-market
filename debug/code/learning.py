@@ -2,6 +2,7 @@ import json
 import os
 import random
 import time
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,8 @@ import torch
 from debug.code.encoders import CenConcatEncoder, CenEntityEncoder, \
     CenGridEncoder, \
     DecEntityEncoder, DecGridEncoder
-from debug.code.log import CSVLogger, build_main_csv_fieldnames, \
+from debug.code.log import CSVLogger, build_action_prob_csv_fieldnames, build_main_csv_fieldnames, \
+    build_weight_sample_csv_fieldnames, \
     finalize_logging, \
     setup_logging
 from debug.code.td_lambda import TDLambda
@@ -33,11 +35,10 @@ from debug.code.enums import (
     data_dir
 )
 
-from debug.code.environment import Orchard
+from debug.code.environment import MoveAction, Orchard
 from debug.code.helpers import env_step, eval_performance, \
     random_policy, \
-    set_all_seeds, teleport, \
-    env_step
+    set_all_seeds, teleport
 from debug.code.reward import Reward
 from debug.code.value import Value
 from debug.code.value_function import VNetwork
@@ -88,6 +89,10 @@ def _load_state_npz(path: Path) -> dict:
         return f["dict"].item()
 
 
+ACTION_NAMES = ("LEFT", "RIGHT", "UP", "DOWN", "STAY")
+DELTA_TO_ACTION = {tuple(a.vector.tolist()): a.name for a in MoveAction}
+
+
 class Learning:
     def __init__(self, exp_config):
         self.env = None
@@ -113,9 +118,34 @@ class Learning:
         self.data_dir = setup_logging(self.exp_config)
         main_fields = build_main_csv_fieldnames()
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
+        action_prob_fields = build_action_prob_csv_fieldnames()
+        self.action_prob_loggers = {
+            agent_id: CSVLogger(
+                self.data_dir / f"action_probabilities_agent_{agent_id}.csv",
+                action_prob_fields,
+            )
+            for agent_id in range(NUM_AGENTS)
+        }
+        self.weight_samples_enabled = bool(
+            getattr(self.exp_config.logging, "weight_samples_enabled", True)
+        )
+        self.weight_samples_per_tensor = max(
+            1, int(getattr(self.exp_config.logging, "weight_samples_per_tensor", 16))
+        )
+        self.weight_samples_freq = int(
+            getattr(self.exp_config.logging, "weight_samples_freq", 0)
+        )
+        self.weight_sample_indices: dict[int, dict[str, np.ndarray]] = {}
+        self.weight_sample_loggers: dict[int, CSVLogger] = {}
 
         self._last_eval_errors_by_state = None
         self.discount_factor = DISCOUNT_FACTOR
+        self.train_start_time = None
+        self.action_prob_num_states = max(0, int(getattr(self.exp_config.eval, "action_prob_num_states", 100)))
+        self.action_prob_burnin = max(0, int(getattr(self.exp_config.eval, "action_prob_burnin", 500)))
+        self.action_prob_stride = max(1, int(getattr(self.exp_config.eval, "action_prob_stride", 5)))
+        self.action_prob_seed = 42069
+        self.action_prob_eval_states = None
 
         self.careful_evals = []
         self.focus_actor_id = 0
@@ -304,6 +334,215 @@ class Learning:
         self.env = Orchard(W, L, NUM_AGENTS, self.reward_module, p_apple, d_apple, max_apples=self.exp_config.env.max_apples)
         self.env.set_positions()
         self._networks_for_eval = self.critic_networks
+        self._init_weight_sample_indices()
+
+    def _stable_tensor_seed(self, agent_id: int, tensor_name: str) -> int:
+        digest = hashlib.blake2b(tensor_name.encode("utf-8"), digest_size=8).digest()
+        name_hash = int.from_bytes(digest, byteorder="little", signed=False)
+        base_seed = int(self.exp_config.train.seed)
+        return (base_seed + (agent_id + 1) * 1_000_003 + name_hash) % (2**63 - 1)
+
+    @staticmethod
+    def _sample_stratified_indices(numel: int, num_samples: int, rng: np.random.Generator) -> np.ndarray:
+        if numel <= 0:
+            return np.array([], dtype=np.int64)
+        k = min(num_samples, numel)
+        if k == numel:
+            return np.arange(numel, dtype=np.int64)
+        out = np.empty(k, dtype=np.int64)
+        for i in range(k):
+            start = (i * numel) // k
+            end = ((i + 1) * numel) // k
+            if end <= start:
+                out[i] = start
+            else:
+                out[i] = int(rng.integers(start, end))
+        return out
+
+    def _init_weight_sample_indices(self) -> None:
+        self.weight_sample_indices = {}
+        for logger in self.weight_sample_loggers.values():
+            logger.close()
+        self.weight_sample_loggers = {}
+        if not self.weight_samples_enabled:
+            return
+
+        weight_fields = build_weight_sample_csv_fieldnames()
+        for agent_id, network in enumerate(self.critic_networks):
+            self.weight_sample_loggers[agent_id] = CSVLogger(
+                self.data_dir / f"weight_samples_network_{agent_id}.csv",
+                weight_fields,
+            )
+            tensor_samples: dict[str, np.ndarray] = {}
+            for tensor_name, param in network.model.named_parameters():
+                if not tensor_name.endswith("weight") or param.dim() <= 1:
+                    continue
+                numel = int(param.numel())
+                if numel <= 0:
+                    continue
+                rng = np.random.default_rng(self._stable_tensor_seed(agent_id, tensor_name))
+                idx = self._sample_stratified_indices(
+                    numel, self.weight_samples_per_tensor, rng
+                )
+                if idx.size > 0:
+                    tensor_samples[tensor_name] = idx
+            self.weight_sample_indices[agent_id] = tensor_samples
+
+    def _log_weight_samples(self, step: int) -> None:
+        if not self.weight_samples_enabled:
+            return
+        wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+        for agent_id, network in enumerate(self.critic_networks):
+            logger = self.weight_sample_loggers.get(agent_id)
+            if logger is None:
+                continue
+            param_dict = dict(network.model.named_parameters())
+            for tensor_name, sample_indices in self.weight_sample_indices.get(agent_id, {}).items():
+                param = param_dict.get(tensor_name)
+                if param is None:
+                    continue
+                flat = param.detach().flatten()
+                for sample_id, flat_idx in enumerate(sample_indices):
+                    idx = int(flat_idx)
+                    row = {
+                        "step": int(step),
+                        "wall_time": wall_time,
+                        "tensor_name": tensor_name,
+                        "sample_id": int(sample_id),
+                        "flat_index": idx,
+                        "value": float(flat[idx].item()),
+                    }
+                    logger.log(row)
+
+    def _maybe_log_weight_samples(self, step: int) -> None:
+        if not self.weight_samples_enabled:
+            return
+        freq = self.weight_samples_freq if self.weight_samples_freq > 0 else self.exp_config.logging.main_csv_freq
+        if step == 0:
+            self._log_weight_samples(step)
+            return
+        if freq > 0 and step % freq == 0:
+            self._log_weight_samples(step)
+
+    @staticmethod
+    def _snapshot_state(state: dict) -> dict:
+        return {
+            "agents": state["agents"].copy(),
+            "apples": state["apples"].copy(),
+            "agent_positions": state["agent_positions"].copy(),
+        }
+
+    @staticmethod
+    def _decode_action(old_pos: np.ndarray, new_pos: np.ndarray) -> str:
+        dr = int(new_pos[0] - old_pos[0])
+        dc = int(new_pos[1] - old_pos[1])
+        return DELTA_TO_ACTION.get((dr, dc), "STAY")
+
+    def _build_env_from_state(self, state: dict) -> Orchard:
+        return Orchard(
+            W,
+            L,
+            NUM_AGENTS,
+            self.reward_module,
+            p_apple=self.env.p_apple,
+            d_apple=self.env.d_apple,
+            max_apples=self.env.max_apples,
+            start_agents_map=state["agents"],
+            start_apples_map=state["apples"],
+            start_agent_positions=state["agent_positions"],
+        )
+
+    def _sample_action_probability_states(self, num_states: int) -> list[dict]:
+        if num_states <= 0:
+            return []
+
+        sample_env = Orchard(
+            W,
+            L,
+            NUM_AGENTS,
+            self.reward_module,
+            p_apple=self.env.p_apple,
+            d_apple=self.env.d_apple,
+            max_apples=self.env.max_apples,
+        )
+        sample_env.set_positions()
+
+        actor_idx = 0
+        curr_state = dict(sample_env.get_state())
+        states = []
+        burnin = self.action_prob_burnin
+        stride = self.action_prob_stride
+        total_steps = burnin + stride * num_states
+
+        for t in range(total_steps):
+            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
+            _, s_next, _, _, actor_idx = env_step(sample_env, actor_idx, new_pos, NUM_AGENTS)
+            curr_state = s_next
+            if t >= burnin and ((t - burnin) % stride == 0):
+                states.append(self._snapshot_state(curr_state))
+                if len(states) >= num_states:
+                    break
+
+        return states
+
+    def _ensure_action_probability_states(self) -> None:
+        if self.action_prob_eval_states is not None:
+            return
+        if self.action_prob_num_states <= 0 or self.env is None:
+            self.action_prob_eval_states = []
+            return
+
+        self.save_rng_state()
+        set_all_seeds(self.action_prob_seed)
+        self.action_prob_eval_states = self._sample_action_probability_states(self.action_prob_num_states)
+        self.restore_rng_state()
+
+    def evaluate_action_probabilities(self, step: int) -> None:
+        if self.action_prob_num_states <= 0 or self.agent_controller is None or self.env is None:
+            return
+
+        self._ensure_action_probability_states()
+        sampled_states = self.action_prob_eval_states
+        if not sampled_states:
+            return
+
+        counts_by_agent = {
+            agent_id: {name: 0 for name in ACTION_NAMES}
+            for agent_id in range(NUM_AGENTS)
+        }
+        decisions_by_agent = {agent_id: 0 for agent_id in range(NUM_AGENTS)}
+
+        with torch.no_grad():
+            for state in sampled_states:
+                for agent_id in range(NUM_AGENTS):
+                    env_for_eval = self._build_env_from_state(state)
+                    old_pos = env_for_eval.agent_positions[agent_id].copy()
+                    new_pos = self.agent_controller.agent_get_action(env_for_eval, agent_id, epsilon=0.0)
+                    action = self._decode_action(old_pos, new_pos)
+                    counts_by_agent[agent_id][action] += 1
+                    decisions_by_agent[agent_id] += 1
+
+        wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+        for agent_id in range(NUM_AGENTS):
+            decisions = decisions_by_agent[agent_id]
+            if decisions == 0:
+                continue
+            counts = counts_by_agent[agent_id]
+            row = {
+                "step": int(step),
+                "wall_time": wall_time,
+                "left": counts["LEFT"] / decisions,
+                "right": counts["RIGHT"] / decisions,
+                "up": counts["UP"] / decisions,
+                "down": counts["DOWN"] / decisions,
+                "stay": counts["STAY"] / decisions,
+            }
+            self.action_prob_loggers[agent_id].log(row)
+
+    def _maybe_log_action_probabilities(self, step: int) -> None:
+        if self.exp_config.reward.reward_learning:
+            return
+        self.evaluate_action_probabilities(step=step)
 
     # -----------------------------------------------------------------------
     # Training loop: view_controller(...) → encoder.encode(...)
@@ -316,6 +555,8 @@ class Learning:
             self.evaluate_networks_reward(step=0, plot=True, store_last=True)
         else:
             self.eval_performance(0)
+        self._maybe_log_action_probabilities(step=0)
+        self._maybe_log_weight_samples(step=0)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0
@@ -361,6 +602,7 @@ class Learning:
 
             curr_state = s_next
             actor_idx = next_actor_idx
+            self._maybe_log_weight_samples(step=(sec + 1))
 
             if (sec + 1) % self.exp_config.logging.main_csv_freq == 0:
                 print(f"Running evaluation at step {sec + 1}/{self.trajectory_length}")
@@ -373,6 +615,7 @@ class Learning:
                 else:
                     plot = sec == self.trajectory_length - 1
                     self.evaluate_networks_reward(step=(sec + 1), plot=plot, store_last=True)
+                self._maybe_log_action_probabilities(step=(sec + 1))
 
     # eval_performance, save/restore rng unchanged
     def eval_performance(self, step):
@@ -541,10 +784,16 @@ class Learning:
 
     def train(self):
         start_time = time.time()
+        self.train_start_time = start_time
         self.build_experiment()
         self.step_and_collect_observation()
         self.save_networks(self.data_dir / "weights")
         finalize_logging(self.data_dir, start_time)
+        self.main_logger.close()
+        for logger in self.action_prob_loggers.values():
+            logger.close()
+        for logger in self.weight_sample_loggers.values():
+            logger.close()
 
     def save_networks(self, path: Path) -> None:
         os.makedirs(path, exist_ok=True)
