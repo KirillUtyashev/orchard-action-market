@@ -5,10 +5,10 @@ import numpy as np
 import random
 import torch
 
-from debug.code.encoders import BaseEncoder, EncoderOutput
-from debug.code.enums import W
-from debug.code.environment import MoveAction
-from debug.code.helpers import random_policy
+from debug.code.nn.encoders import BaseEncoder, EncoderOutput
+from debug.code.core.enums import W
+from debug.code.env.environment import MoveAction
+from debug.code.training.helpers import random_policy
 
 
 class AgentController:

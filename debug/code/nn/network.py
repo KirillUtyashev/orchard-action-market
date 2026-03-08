@@ -4,9 +4,9 @@ import torch
 from torch import optim
 from torch.optim.lr_scheduler import LinearLR
 
-from debug.code.encoders import BaseEncoder, GridEncoder
-from debug.code.enums import DEVICE
-from debug.code.main_net import CNNMainNet, MainNet
+from debug.code.nn.encoders import BaseEncoder, GridEncoder
+from debug.code.core.enums import DEVICE
+from debug.code.nn.main_net import CNNMainNet, MainNet
 
 
 class NetworkWrapper(ABC):
@@ -37,7 +37,7 @@ class NetworkWrapper(ABC):
                 mlp_dims=mlp_dims,
             ).to(DEVICE)
         else:
-            self.model = MainNet(encoder.output_dim(), output_dim, mlp_dims).to(DEVICE)
+            self.model = MainNet(encoder.output_dim(), output_dim, mlp_dims * 2).to(DEVICE)
 
         self.model = self.model.float()
 

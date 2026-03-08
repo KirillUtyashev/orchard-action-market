@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from debug.code.enums import AlgorithmConfig, EnvironmentConfig, EvalConfig, \
+from debug.code.core.enums import AlgorithmConfig, EnvironmentConfig, EvalConfig, \
     ExperimentConfig, \
     LoggingConfig, NetworkConfig, \
     RewardConfig, TrainingConfig

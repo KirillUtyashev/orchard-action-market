@@ -1,9 +1,9 @@
 import argparse
 import sys
 
-from debug.code.config import load_config
-from debug.code.helpers import set_all_seeds
-from debug.code.learning import Learning
+from debug.code.core.config import load_config
+from debug.code.training.helpers import set_all_seeds
+from debug.code.training.learning import Learning
 
 
 def parse_args(args):

@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 
-from debug.code.encoders import BaseEncoder, EncoderOutput
-from debug.code.helpers import ten
-from debug.code.enums import DEVICE
-from debug.code.network import NetworkWrapper
+from debug.code.nn.encoders import BaseEncoder, EncoderOutput
+from debug.code.training.helpers import ten
+from debug.code.core.enums import DEVICE
+from debug.code.nn.network import NetworkWrapper
 
 torch.set_default_dtype(torch.float64)
 
@@ -22,6 +22,7 @@ class VNetwork(NetworkWrapper):
             schedule: bool = False,
             conv_channels: list[int] = None,
             kernel_size: int = 3,
+            reward_learning: bool = False,
     ):
         super().__init__(
             encoder, output_dim, alpha, discount,
@@ -32,6 +33,7 @@ class VNetwork(NetworkWrapper):
             kernel_size=kernel_size,
         )
 
+        self.reward_learning = bool(reward_learning)
         self.lam = float(lam)
 
         self.batch_rewards = []
@@ -154,10 +156,39 @@ class VNetwork(NetworkWrapper):
         return total_loss / len(batch)
 
     def train(self):
+        if self.reward_learning:
+            return self.reward_supervised()
         if self.lam == -1:
             return self.train_td0()
         else:
             return self.train_lambda()
+
+    def reward_supervised(self):
+        if len(self.batch_states) == 0:
+            return 0.0
+
+        total_loss = 0.0
+        batch = list(zip(self.batch_states, self.batch_rewards))
+
+        for state, reward in batch:
+            self.optimizer.zero_grad()
+            pred = self.model(state).squeeze()
+            target = torch.as_tensor(float(reward), device=DEVICE, dtype=pred.dtype)
+            loss = (pred - target) ** 2
+            total_loss += float(loss.item())
+            loss.backward()
+            self.optimizer.step()
+
+        self._after_update()
+
+        self.batch_states = []
+        self.batch_new_states = []
+        self.batch_rewards = []
+        self.batch_discounts = []
+        return total_loss / len(batch)
+
+    def train_reward_supervised(self):
+        return self.reward_supervised()
 
     def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)
@@ -199,19 +230,4 @@ class VNetwork(NetworkWrapper):
         self.batch_rewards = []      # optional: keep if other code expects it
         self.theoretical_vals = []
 
-        return loss.item()
-
-    def train_reward_supervised(self):
-        states = ten(np.stack(self.batch_states, 0), DEVICE)  # (B, 5, H, W)
-        y = ten(np.array(self.batch_rewards), DEVICE).view(-1)
-
-        pred = self.model(states).squeeze(-1)  # (B,)
-
-        loss = torch.nn.functional.mse_loss(pred, y)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        self.batch_states = []
-        self.batch_rewards = []
         return loss.item()

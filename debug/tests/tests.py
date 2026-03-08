@@ -1,10 +1,10 @@
 import random
 
 from matplotlib import pyplot as plt
-from debug.code.enums import NUM_AGENTS, W, L
-from debug.code.environment import Orchard
-from debug.code.reward import Reward
-from debug.code.helpers import env_step, nearest_apple_policy, random_policy, \
+from debug.code.core.enums import NUM_AGENTS, W, L
+from debug.code.env.environment import Orchard
+from debug.code.env.reward import Reward
+from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy, \
     set_all_seeds, teleport
 import numpy as np
 from pathlib import Path

@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from debug.code.encoders import EncoderOutput
-from debug.code.enums import DEVICE
+from debug.code.nn.encoders import EncoderOutput
+from debug.code.core.enums import DEVICE
 
 
 class MainNet(nn.Module):

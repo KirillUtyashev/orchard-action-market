@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch import optim
 from torch.optim.lr_scheduler import LambdaLR
 
-from debug.code.enums import DEVICE
+from debug.code.core.enums import DEVICE
 
 
 class EligibilityCritic:

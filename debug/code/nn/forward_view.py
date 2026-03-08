@@ -8,7 +8,7 @@ from torch import optim
 from torchrl.modules import ValueOperator
 from torchrl.objectives import LossModule
 from torchrl.objectives.value import TD0Estimator, TDLambdaEstimator
-from debug.code.network import linear_decay_then_hold_factor
+from debug.code.nn.network import linear_decay_then_hold_factor
 from torch.optim.lr_scheduler import LambdaLR
 
 

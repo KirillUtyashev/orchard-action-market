@@ -1,4 +1,3 @@
-# debug/code/encoders.py
 """Encoder base classes and concrete implementations."""
 
 from __future__ import annotations

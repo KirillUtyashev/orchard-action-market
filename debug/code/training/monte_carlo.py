@@ -8,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Literal
 from typing import Optional, Union
 import copy
-from debug.code.enums import (
+from debug.code.core.enums import (
     DISCOUNT_FACTOR, NUM_AGENTS,
     W,
     L,
@@ -18,9 +18,9 @@ from debug.code.enums import (
 
 import numpy as np
 
-from debug.code.environment import Orchard
-from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport
-from debug.code.reward import Reward
+from debug.code.env.environment import Orchard
+from debug.code.training.helpers import make_env, random_policy, set_all_seeds, teleport
+from debug.code.env.reward import Reward
 
 
 # ---------------------------------------------------------------------

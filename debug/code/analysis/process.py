@@ -8,7 +8,7 @@ from scipy import stats
 from pathlib import Path
 from scipy.stats import norm
 
-from enums import (
+from debug.code.core.enums import (
     NUM_AGENTS,
     W,
     L,
@@ -17,7 +17,7 @@ from enums import (
     data_dir,
     SEEDS,
 )
-from debug.code.monte_carlo import StateType
+from debug.code.training.monte_carlo import StateType
 
 ACTOR_ID = 0
 State = str  # or your Enum type if you have one

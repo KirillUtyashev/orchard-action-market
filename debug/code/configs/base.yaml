@@ -1,17 +1,17 @@
 network:
-  mlp_dims: [128, 128]
-  conv_channels: [32, 64]
+  mlp_dims: [16, 16]
+  conv_channels: [32, 32]
   kernel_size: 3
   CNN: true
   input_dim: 0
 
 train:
-  alpha: 0.001
+  alpha: 0.01
   timesteps: 100
   seed: 1234
   epsilon: 0.3
   lmda: -1.0
-  schedule_lr: true
+  schedule_lr: false
   load_weights: false
 
 algorithm:
@@ -19,8 +19,8 @@ algorithm:
   eligibility: false
   monte_carlo: false
   random_policy: false
-  q_agent: 0.4
-  centralized: true
+  q_agent: 1.44
+  centralized: false
   concat: false
 
 reward:
@@ -34,18 +34,20 @@ eval:
   num_seeds: 1000
   variance: 0.0
   debug: true
+  reward_eval_num_states: 1000
   action_prob_num_states: 100
   action_prob_burnin: 500
   action_prob_stride: 5
+  value_track_num_states: 10
 
 env:
   length: 6
   width: 6
-  apple_life: 10.0
+  apple_life: 20.0
 
 logging:
   output_dir: /Users/utya.kirill/Desktop/orchard-action-market/debug/data/runs
   main_csv_freq: 50
   weight_samples_enabled: true
-  weight_samples_per_tensor: 16
+  weight_samples_per_tensor: 4
   weight_samples_freq: 50

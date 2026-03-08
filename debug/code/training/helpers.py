@@ -3,8 +3,8 @@ import torch
 import os
 import numpy as np
 
-from debug.code.enums import NUM_AGENTS, W
-from debug.code.environment import Orchard
+from debug.code.core.enums import NUM_AGENTS, W
+from debug.code.env.environment import Orchard
 
 same_cell_no_reward = 0
 count = 0
@@ -154,13 +154,16 @@ def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_po
                    max_apples=max_apples)
 
 
-def _run_eval_loop(env, action_fn, timesteps, num_agents):
+def _run_eval_loop(env, action_fn, timesteps, num_agents, capture_positions: bool = False):
     """Runs a single evaluation loop using action_fn(state, actor_idx) -> new_pos."""
     reward = 0
     actor_idx = 0
+    positions = [] if capture_positions else None
 
     for sec in range(timesteps):
         curr_state = dict(env.get_state())
+        if capture_positions:
+            positions.append(np.asarray(curr_state["agent_positions"], dtype=np.int16))
         new_pos = action_fn(curr_state, actor_idx)
         _, _, _, on_apple, actor_idx = env_step(env, actor_idx, new_pos, num_agents)
 
@@ -170,6 +173,8 @@ def _run_eval_loop(env, action_fn, timesteps, num_agents):
         if sec % 1000 == 0:
             print(sec)
 
+    if capture_positions:
+        return reward, np.asarray(positions, dtype=np.int16)
     return reward
 
 
@@ -180,7 +185,8 @@ def eval_performance(
         d_apple,
         timesteps=10000,
         num_agents=NUM_AGENTS,
-        max_apples=9.0
+        max_apples=9.0,
+        capture_greedy_positions: bool = False,
 ):
     env = make_env(reward_module, p_apple, d_apple, max_apples=max_apples)
     env.set_positions()
@@ -194,12 +200,23 @@ def eval_performance(
         max_apples=max_apples
     )
 
-    reward = _run_eval_loop(
-        env,
-        action_fn=lambda state, idx: agent_controller.agent_get_action(env, idx),
-        timesteps=timesteps,
-        num_agents=num_agents,
-    )
+    greedy_positions = None
+    if capture_greedy_positions:
+        reward, greedy_positions = _run_eval_loop(
+            env,
+            action_fn=lambda state, idx: agent_controller.agent_get_action(env, idx),
+            timesteps=timesteps,
+            num_agents=num_agents,
+            capture_positions=True,
+        )
+    else:
+        reward = _run_eval_loop(
+            env,
+            action_fn=lambda state, idx: agent_controller.agent_get_action(env, idx),
+            timesteps=timesteps,
+            num_agents=num_agents,
+            capture_positions=False,
+        )
     assert env.total_picked == reward
 
     reward_nearest = _run_eval_loop(
@@ -215,7 +232,7 @@ def eval_performance(
     print("Average Reward: ", reward / env.apples_spawned)
     print("Total apples: ", env.apples_spawned)
 
-    return {
+    out = {
         "greedy_pps": reward,
         "total_apples": env.apples_spawned,
         "greedy_ratio": reward / env.apples_spawned,
@@ -223,3 +240,6 @@ def eval_performance(
         "nearest_ratio": reward_nearest / env_nearest.apples_spawned,
         "nearest_total_apples": env_nearest.apples_spawned,
     }
+    if capture_greedy_positions and greedy_positions is not None:
+        out["greedy_agent_positions"] = greedy_positions
+    return out

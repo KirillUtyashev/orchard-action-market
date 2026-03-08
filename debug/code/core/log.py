@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from debug.code.enums import ExperimentConfig
+from debug.code.core.enums import ExperimentConfig
 
 
 class CSVLogger:
@@ -108,16 +108,36 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames() -> list[str]:
-    """Build column names for metrics.csv."""
-    fields = ["step"]
-    fields.extend(["greedy_pps", "greedy_ratio", "nearest_pps", "nearest_ratio", "total_apples", "nearest_total_apples", "current_lr"])
+def build_main_csv_fieldnames(*, reward_learning: bool) -> list[str]:
+    """Build column names for metrics.csv based on training mode."""
+    fields = ["step", "current_lr"]
+    if reward_learning:
+        fields.extend([
+            "reward_acc_mean",
+            "reward_mae_mean",
+        ])
+    else:
+        fields.extend([
+            "greedy_pps",
+            "greedy_ratio",
+            "nearest_pps",
+            "nearest_ratio",
+            "total_apples",
+            "nearest_total_apples",
+        ])
     return fields
 
 
 def build_action_prob_csv_fieldnames() -> list[str]:
     """Build column names for action_probabilities.csv."""
     return ["step", "wall_time", "left", "right", "up", "down", "stay"]
+
+
+def build_value_track_csv_fieldnames(num_states: int) -> list[str]:
+    """Build column names for tracked state-value trajectories."""
+    fields = ["step", "wall_time"]
+    fields.extend([f"state_{i}" for i in range(max(0, int(num_states)))])
+    return fields
 
 
 def build_weight_sample_csv_fieldnames() -> list[str]:

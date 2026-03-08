@@ -68,9 +68,11 @@ class EvalConfig:
     num_seeds: int = 1000
     variance: float = 0.0
     debug: bool = True
+    reward_eval_num_states: int = 1000
     action_prob_num_states: int = 100
     action_prob_burnin: int = 500
     action_prob_stride: int = 5
+    value_track_num_states: int = 10
 
 
 @dataclass
