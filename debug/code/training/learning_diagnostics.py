@@ -4,7 +4,6 @@ import time
 import numpy as np
 import torch
 
-from debug.code.core.enums import L, NUM_AGENTS, W
 from debug.code.env.environment import MoveAction, Orchard
 from debug.code.training.helpers import env_step, random_policy, set_all_seeds
 from debug.code.core.log import CSVLogger, build_weight_sample_csv_fieldnames
@@ -117,9 +116,9 @@ class LearningDiagnosticsMixin:
 
     def _build_env_from_state(self, state: dict) -> Orchard:
         return Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple=self.env.p_apple,
             d_apple=self.env.d_apple,
@@ -129,15 +128,14 @@ class LearningDiagnosticsMixin:
             start_agent_positions=state["agent_positions"],
         )
 
-    @staticmethod
-    def _preferred_cells() -> list[tuple[int, int]]:
+    def _preferred_cells(self) -> list[tuple[int, int]]:
         cells = []
-        for r in range(1, W - 1):
-            for c in range(1, L - 1):
+        for r in range(1, self.width - 1):
+            for c in range(1, self.length - 1):
                 cells.append((r, c))
-        for r in range(W):
-            for c in range(L):
-                if r in {0, W - 1} or c in {0, L - 1}:
+        for r in range(self.width):
+            for c in range(self.length):
+                if r in {0, self.width - 1} or c in {0, self.length - 1}:
                     cells.append((r, c))
         return cells
 
@@ -152,11 +150,11 @@ class LearningDiagnosticsMixin:
             other_anchor_positions = []
 
         actor_pos = (int(actor_pos[0]), int(actor_pos[1]))
-        agent_positions = np.full((NUM_AGENTS, 2), -1, dtype=int)
+        agent_positions = np.full((self.num_agents, 2), -1, dtype=int)
         agent_positions[actor_id] = np.array(actor_pos, dtype=int)
         used_positions = {actor_pos}
 
-        other_ids = [i for i in range(NUM_AGENTS) if i != actor_id]
+        other_ids = [i for i in range(self.num_agents) if i != actor_id]
         for other_id, pos in zip(other_ids, other_anchor_positions):
             pos_t = (int(pos[0]), int(pos[1]))
             if pos_t in used_positions:
@@ -177,13 +175,13 @@ class LearningDiagnosticsMixin:
         if np.any(agent_positions < 0):
             raise RuntimeError("Could not assign valid positions for all agents in value-tracking state.")
 
-        agents = np.zeros((W, L), dtype=int)
+        agents = np.zeros((self.width, self.length), dtype=int)
         for r, c in agent_positions:
             agents[r, c] += 1
 
-        apples = np.zeros((W, L), dtype=int)
+        apples = np.zeros((self.width, self.length), dtype=int)
         for r, c in apple_positions:
-            if 0 <= r < W and 0 <= c < L:
+            if 0 <= r < self.width and 0 <= c < self.length:
                 apples[r, c] = 1
 
         return {
@@ -205,25 +203,25 @@ class LearningDiagnosticsMixin:
         return out
 
     def _generate_value_tracking_states_for_agent(self, agent_id: int) -> list[dict]:
-        mid_r = max(1, min(W - 2, W // 2))
-        mid_c = max(1, min(L - 2, L // 2))
+        mid_r = max(1, min(self.width - 2, self.width // 2))
+        mid_c = max(1, min(self.length - 2, self.length // 2))
         actor_mid = (mid_r, mid_c)
-        right_1 = (mid_r, min(L - 1, mid_c + 1))
-        right_2 = (mid_r, min(L - 1, mid_c + 2))
+        right_1 = (mid_r, min(self.length - 1, mid_c + 1))
+        right_2 = (mid_r, min(self.length - 1, mid_c + 2))
         up_1 = (max(0, mid_r - 1), mid_c)
         left_1 = (mid_r, max(0, mid_c - 1))
         corner = (0, 0)
-        corner_right = (0, 1 if L > 1 else 0)
+        corner_right = (0, 1 if self.length > 1 else 0)
         edge_top = (0, mid_c)
-        far_bottom = (W - 1, mid_c)
-        other_far = (max(0, W - 2), max(0, L - 2))
+        far_bottom = (self.width - 1, mid_c)
+        other_far = (max(0, self.width - 2), max(0, self.length - 2))
 
         states = [
             self._build_tracking_state(agent_id, actor_mid, [], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [actor_mid], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [other_far], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [right_1], [other_far]),
-            self._build_tracking_state(agent_id, (1, 1), [(W - 1, L - 1)], [other_far]),
+            self._build_tracking_state(agent_id, (1, 1), [(self.width - 1, self.length - 1)], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [right_1], [right_2]),
             self._build_tracking_state(agent_id, actor_mid, [up_1, left_1], [other_far]),
             self._build_tracking_state(agent_id, corner, [corner_right], [other_far]),
@@ -231,7 +229,7 @@ class LearningDiagnosticsMixin:
             self._build_tracking_state(agent_id, actor_mid, [], [other_far]),
         ]
 
-        dense_excluded = {tuple(states[-1]["agent_positions"][i]) for i in range(NUM_AGENTS)}
+        dense_excluded = {tuple(states[-1]["agent_positions"][i]) for i in range(self.num_agents)}
         states[-1]["apples"][:, :] = 0
         for r, c in self._dense_apple_positions(dense_excluded):
             states[-1]["apples"][r, c] = 1
@@ -242,10 +240,10 @@ class LearningDiagnosticsMixin:
         if self.value_track_states_by_agent is not None:
             return
         if self.value_track_num_states <= 0:
-            self.value_track_states_by_agent = {agent_id: [] for agent_id in range(NUM_AGENTS)}
+            self.value_track_states_by_agent = {agent_id: [] for agent_id in range(self.num_agents)}
             return
         self.value_track_states_by_agent = {
-            agent_id: self._generate_value_tracking_states_for_agent(agent_id) for agent_id in range(NUM_AGENTS)
+            agent_id: self._generate_value_tracking_states_for_agent(agent_id) for agent_id in range(self.num_agents)
         }
 
     def _predict_state_value(self, state: dict, agent_id: int) -> float:
@@ -265,7 +263,7 @@ class LearningDiagnosticsMixin:
         wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
 
         with torch.no_grad():
-            for agent_id in range(NUM_AGENTS):
+            for agent_id in range(self.num_agents):
                 logger = self.value_track_loggers.get(agent_id)
                 if logger is None:
                     continue
@@ -288,9 +286,9 @@ class LearningDiagnosticsMixin:
             return []
 
         sample_env = Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple=self.env.p_apple,
             d_apple=self.env.d_apple,
@@ -306,8 +304,12 @@ class LearningDiagnosticsMixin:
         total_steps = burnin + stride * num_states
 
         for t in range(total_steps):
-            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
-            _, s_next, _, _, actor_idx = env_step(sample_env, actor_idx, new_pos, NUM_AGENTS)
+            new_pos = random_policy(
+                curr_state["agent_positions"][actor_idx],
+                width=self.width,
+                length=self.length,
+            )
+            _, s_next, _, _, actor_idx = env_step(sample_env, actor_idx, new_pos, self.num_agents)
             curr_state = s_next
             if t >= burnin and ((t - burnin) % stride == 0):
                 states.append(self._snapshot_state(curr_state))
@@ -339,12 +341,12 @@ class LearningDiagnosticsMixin:
         if not sampled_states:
             return
 
-        counts_by_agent = {agent_id: {name: 0 for name in ACTION_NAMES} for agent_id in range(NUM_AGENTS)}
-        decisions_by_agent = {agent_id: 0 for agent_id in range(NUM_AGENTS)}
+        counts_by_agent = {agent_id: {name: 0 for name in ACTION_NAMES} for agent_id in range(self.num_agents)}
+        decisions_by_agent = {agent_id: 0 for agent_id in range(self.num_agents)}
 
         with torch.no_grad():
             for state in sampled_states:
-                for agent_id in range(NUM_AGENTS):
+                for agent_id in range(self.num_agents):
                     env_for_eval = self._build_env_from_state(state)
                     old_pos = env_for_eval.agent_positions[agent_id].copy()
                     new_pos = self.agent_controller.agent_get_action(env_for_eval, agent_id, epsilon=0.0)
@@ -353,7 +355,7 @@ class LearningDiagnosticsMixin:
                     decisions_by_agent[agent_id] += 1
 
         wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
-        for agent_id in range(NUM_AGENTS):
+        for agent_id in range(self.num_agents):
             decisions = decisions_by_agent[agent_id]
             if decisions == 0:
                 continue
@@ -377,8 +379,8 @@ class LearningDiagnosticsMixin:
 
     def _save_greedy_eval_positions(self, *, step: int, positions: np.ndarray) -> None:
         arr = np.asarray(positions, dtype=np.int16)
-        if arr.ndim != 3 or arr.shape[1] != NUM_AGENTS or arr.shape[2] != 2:
-            raise ValueError(f"Unexpected greedy position shape: {arr.shape}, expected (T, {NUM_AGENTS}, 2)")
+        if arr.ndim != 3 or arr.shape[1] != self.num_agents or arr.shape[2] != 2:
+            raise ValueError(f"Unexpected greedy position shape: {arr.shape}, expected (T, {self.num_agents}, 2)")
 
         out_path = self.agent_positions_dir / f"greedy_eval_step_{int(step):09d}.npz"
         np.savez_compressed(out_path, positions=arr)
@@ -392,15 +394,15 @@ class LearningDiagnosticsMixin:
         with np.load(self.last_greedy_positions_path) as data:
             positions = np.asarray(data["positions"], dtype=np.int64)
 
-        if positions.ndim != 3 or positions.shape[1] != NUM_AGENTS or positions.shape[2] != 2:
+        if positions.ndim != 3 or positions.shape[1] != self.num_agents or positions.shape[2] != 2:
             return
 
         import matplotlib.pyplot as plt
 
-        for agent_id in range(NUM_AGENTS):
-            visits = np.zeros((W, L), dtype=np.int64)
+        for agent_id in range(self.num_agents):
+            visits = np.zeros((self.width, self.length), dtype=np.int64)
             for r, c in positions[:, agent_id]:
-                if 0 <= r < W and 0 <= c < L:
+                if 0 <= r < self.width and 0 <= c < self.length:
                     visits[r, c] += 1
 
             fig, ax = plt.subplots(figsize=(6, 5))

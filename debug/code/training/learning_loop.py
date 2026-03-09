@@ -4,7 +4,6 @@ import time
 
 import torch
 
-from debug.code.core.enums import NUM_AGENTS
 from debug.code.training.helpers import env_step, random_policy
 from debug.code.core.log import finalize_logging
 
@@ -23,7 +22,11 @@ class LearningLoopMixin:
 
     def _select_training_action(self, curr_state: dict, actor_idx: int):
         if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
-            return random_policy(curr_state["agent_positions"][actor_idx])
+            return random_policy(
+                curr_state["agent_positions"][actor_idx],
+                width=self.width,
+                length=self.length,
+            )
         return self.agent_controller.agent_get_action(self.env, actor_idx)
 
     def _train_centralized_transition(self, curr_state, s_moved, s_next, pick_rewards, on_apple):
@@ -98,7 +101,7 @@ class LearningLoopMixin:
                 self.env,
                 actor_idx,
                 new_pos,
-                NUM_AGENTS,
+                self.num_agents,
             )
 
             if self.exp_config.algorithm.centralized:

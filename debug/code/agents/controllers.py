@@ -6,7 +6,6 @@ import random
 import torch
 
 from debug.code.nn.encoders import BaseEncoder, EncoderOutput
-from debug.code.core.enums import W
 from debug.code.env.environment import MoveAction
 from debug.code.training.helpers import random_policy
 
@@ -54,7 +53,7 @@ class AgentControllerValue(AgentController):
             curr_state = copy.deepcopy(env.get_state())
             r, c = curr_state["agent_positions"][actor_id]
             nr, nc = r + act.vector[0], c + act.vector[1]
-            if not (0 <= nr < W and 0 <= nc < W):
+            if not (0 <= nr < env.width and 0 <= nc < env.length):
                 continue
 
             new_pos = np.array([nr, nc])
@@ -74,7 +73,7 @@ class AgentControllerValue(AgentController):
     def agent_get_action(self, env, agent_id, epsilon=None):
         eps = epsilon if epsilon is not None else self.epsilon
         if random.random() < eps:
-            return random_policy(env.agent_positions[agent_id])
+            return random_policy(env.agent_positions[agent_id], width=env.width, length=env.length)
         with torch.no_grad():
             return self.get_best_action(env, agent_id)
 

@@ -9,20 +9,23 @@ from pathlib import Path
 from scipy.stats import norm
 
 from debug.code.core.enums import (
-    NUM_AGENTS,
-    W,
-    L,
     DISCOUNT_FACTOR,
     PROBABILITY_APPLE,
     data_dir,
     SEEDS,
 )
+from debug.code.core.config import load_config
 from debug.code.training.monte_carlo import StateType
+
+_DEFAULT_CONFIG = load_config(Path(__file__).resolve().parents[1] / "configs" / "base.yaml")
+CFG_NUM_AGENTS = int(_DEFAULT_CONFIG.env.num_agents)
+CFG_W = int(_DEFAULT_CONFIG.env.width)
+CFG_L = int(_DEFAULT_CONFIG.env.length)
 
 ACTOR_ID = 0
 State = str  # or your Enum type if you have one
 ValueGenerator = Callable[[float, State], tuple[np.ndarray, np.ndarray]]
-# returns: (mean_by_agent, std_by_agent), each shape (NUM_AGENTS,)
+# returns: (mean_by_agent, std_by_agent), each shape (CFG_NUM_AGENTS,)
 
 
 
@@ -107,19 +110,19 @@ def plot_distributions(
         state
 ) -> None:
     """
-    values: shape (NUM_AGENTS, SEEDS)
+    values: shape (CFG_NUM_AGENTS, SEEDS)
     kind: 'MC' or 'IID' (used in titles / filenames)
     """
-    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{r_pick}"
+    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{r_pick}"
     plots_dir = data_dir / "plots" / state / kind / exp_name
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    for agent_id in range(NUM_AGENTS):
+    for agent_id in range(CFG_NUM_AGENTS):
         v_theory = theoretical_value(
             r_pick=r_pick,
             r_other=r_other,
             p_apple=PROBABILITY_APPLE,
-            num_agents=NUM_AGENTS,
+            num_agents=CFG_NUM_AGENTS,
             gamma=DISCOUNT_FACTOR,
             state=state,
             agent_id=agent_id
@@ -160,8 +163,8 @@ def load_returns_for_experiment(
         state: StateType,
         trajectory_length: int | None = None,
 ) -> np.ndarray:
-    folder = f"{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{reward}"
-    returns = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
+    folder = f"{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{reward}"
+    returns = np.zeros((CFG_NUM_AGENTS, SEEDS), dtype=float)
 
     for seed in range(SEEDS):
         filepath = data_dir / state / kind / folder / f"results_seed{seed}.npz"
@@ -182,15 +185,15 @@ def plot_mean0_minus_meani_from_agent_means(
 ) -> None:
     state = "agent_on_apple"
     rewards_sorted = sorted(rewards)
-    other_agents = [i for i in range(NUM_AGENTS) if i != baseline_agent]
+    other_agents = [i for i in range(CFG_NUM_AGENTS) if i != baseline_agent]
 
     # Store |mean difference| and asymmetric 95% CI errors (lower/upper)
-    abs_mean_diff = np.full((NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
-    abs_err_low   = np.full((NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
-    abs_err_high  = np.full((NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
+    abs_mean_diff = np.full((CFG_NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
+    abs_err_low   = np.full((CFG_NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
+    abs_err_high  = np.full((CFG_NUM_AGENTS, len(rewards_sorted)), np.nan, dtype=float)
 
     for r_idx, r in enumerate(rewards_sorted):
-        returns = load_returns_for_experiment(kind, r, state)  # (NUM_AGENTS, num_seeds)
+        returns = load_returns_for_experiment(kind, r, state)  # (CFG_NUM_AGENTS, num_seeds)
         n = returns.shape[1]
         if n < 2:
             raise ValueError(f"Need at least 2 seeds to form a CI; got n={n} for r={r}.")
@@ -260,7 +263,7 @@ def plot_mean0_minus_meani_from_agent_means(
     plots_root.mkdir(parents=True, exist_ok=True)
     out_path = plots_root / (
         f"abs_diff_of_means_V{baseline_agent}_minus_Vi-{kind}-{state}-"
-        f"{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}.{fmt}"
+        f"{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}.{fmt}"
     )
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
@@ -290,7 +293,7 @@ def plot_mc_prefix_bias_vs_theory(
     colors = ["tab:red", "tab:green", "tab:blue", "tab:purple", "tab:orange"]
 
     for r_pick in rewards:
-        r_other = (1.0 - r_pick) / (NUM_AGENTS - 1)
+        r_other = (1.0 - r_pick) / (CFG_NUM_AGENTS - 1)
 
         for fig_label, agent_ids in plot_specs:
             fig, ax = plt.subplots(figsize=(7, 4))
@@ -306,7 +309,7 @@ def plot_mc_prefix_bias_vs_theory(
                     r_pick=r_pick,
                     r_other=r_other,
                     p_apple=PROBABILITY_APPLE,
-                    num_agents=NUM_AGENTS,
+                    num_agents=CFG_NUM_AGENTS,
                     gamma=DISCOUNT_FACTOR,
                     state=state,
                     agent_id=agent_id,
@@ -322,8 +325,8 @@ def plot_mc_prefix_bias_vs_theory(
                         rewards_by_agent = load_results(
                             kind=kind,
                             seed=seed,
-                            num_agents=NUM_AGENTS,
-                            width=W,
+                            num_agents=CFG_NUM_AGENTS,
+                            width=CFG_W,
                             reward=r_pick,
                             state=state,
                         )
@@ -373,7 +376,7 @@ def plot_mc_prefix_bias_vs_theory(
 
 
 def plot_distributions_prefix(
-        values: np.ndarray,          # shape (NUM_AGENTS, SEEDS)
+        values: np.ndarray,          # shape (CFG_NUM_AGENTS, SEEDS)
         *,
         kind: str,
         r_pick: float,
@@ -387,7 +390,7 @@ def plot_distributions_prefix(
     Same plot as plot_distributions, but saved under a per-prefix-length folder.
     Returns the directory containing agent PNGs for this T.
     """
-    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{r_pick}-T{trajectory_length}"
+    exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{r_pick}-T{trajectory_length}"
     plots_dir = data_dir / "plots" / state / kind / exp_name
     plots_dir.mkdir(parents=True, exist_ok=True)
 
@@ -396,7 +399,7 @@ def plot_distributions_prefix(
             r_pick=r_pick,
             r_other=r_other,
             p_apple=PROBABILITY_APPLE,
-            num_agents=NUM_AGENTS,
+            num_agents=CFG_NUM_AGENTS,
             gamma=DISCOUNT_FACTOR,
             state=state,
             agent_id=agent_id,
@@ -495,7 +498,7 @@ def plot_prefix_distributions_and_stitch(
         raise ValueError("trajectory_lengths is empty.")
 
     r_pick = reward
-    r_other = (1.0 - r_pick) / (NUM_AGENTS - 1)
+    r_other = (1.0 - r_pick) / (CFG_NUM_AGENTS - 1)
 
     # 1) For each T, compute returns across seeds and save per-agent distribution PNGs
     plots_dirs_by_T: dict[int, Path] = {}
@@ -574,8 +577,8 @@ def plot_return_std_vs_T(
                         rewards_by_agent = load_results(
                             kind=kind,
                             seed=seed,
-                            num_agents=NUM_AGENTS,
-                            width=W,
+                            num_agents=CFG_NUM_AGENTS,
+                            width=CFG_W,
                             reward=r_pick,
                             state=state,
                         )
@@ -629,8 +632,8 @@ def compare_by_reward(
     N = SEEDS  # number of independent samples used by gen_a / gen_b
 
     for state in states:
-        diff_means = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)
-        diff_cis = np.zeros((NUM_AGENTS, len(rewards_sorted)), dtype=float)  # 95% CI half-width
+        diff_means = np.zeros((CFG_NUM_AGENTS, len(rewards_sorted)), dtype=float)
+        diff_cis = np.zeros((CFG_NUM_AGENTS, len(rewards_sorted)), dtype=float)  # 95% CI half-width
 
         for r_idx, r in enumerate(rewards_sorted):
             a_mean, a_std = gen_a(r, state)
@@ -686,7 +689,7 @@ def compare_by_reward(
 
             plots_root = data_dir / "plots"
             plots_root.mkdir(parents=True, exist_ok=True)
-            exp_name = f"{label_a}_vs_{label_b}-{state}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{suffix}"
+            exp_name = f"{label_a}_vs_{label_b}-{state}-{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{suffix}"
             out_path = plots_root / f"{exp_name}.png"
 
             fig.savefig(out_path, dpi=300)
@@ -694,9 +697,9 @@ def compare_by_reward(
 
         if state == split_state:
             plot_agents([0], "agent0")
-            plot_agents(list(range(1, NUM_AGENTS)), "agents1-plus")
+            plot_agents(list(range(1, CFG_NUM_AGENTS)), "agents1-plus")
         else:
-            plot_agents(list(range(NUM_AGENTS)), "all_agents")
+            plot_agents(list(range(CFG_NUM_AGENTS)), "all_agents")
 
 
 def empirical_generator(kind: str, *, trajectory_length: int | None) -> ValueGenerator:
@@ -710,23 +713,23 @@ def empirical_generator(kind: str, *, trajectory_length: int | None) -> ValueGen
 
 def theoretical_generator(*, gamma: float) -> ValueGenerator:
     def gen(r_pick: float, state: State) -> tuple[np.ndarray, np.ndarray]:
-        r_other = (1.0 - r_pick) / (NUM_AGENTS - 1)  # adjust if your theory uses a different r_other
+        r_other = (1.0 - r_pick) / (CFG_NUM_AGENTS - 1)  # adjust if your theory uses a different r_other
         mean = np.array(
             [
                 theoretical_value(
                     r_pick=r_pick,
                     r_other=r_other,
                     p_apple=PROBABILITY_APPLE,
-                    num_agents=NUM_AGENTS,
+                    num_agents=CFG_NUM_AGENTS,
                     gamma=gamma,
                     state=state,
                     agent_id=i,
                 )
-                for i in range(NUM_AGENTS)
+                for i in range(CFG_NUM_AGENTS)
             ],
             dtype=float,
         )
-        std = np.zeros(NUM_AGENTS, dtype=float)  # deterministic “no sampling noise”
+        std = np.zeros(CFG_NUM_AGENTS, dtype=float)  # deterministic “no sampling noise”
         return mean, std
     return gen
 
@@ -761,7 +764,7 @@ def stitch_grid_from_existing_pngs(
     row = 0
     for state in states:
         for r_pick in rewards:
-            exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{r_pick}"
+            exp_name = f"{kind}-{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{r_pick}"
             plots_dir = data_dir / "plots" / state / kind / exp_name
 
             for col, agent_id in enumerate(agents):
@@ -781,18 +784,18 @@ def stitch_grid_from_existing_pngs(
 
 def process(reward, trajectory_length: int | None = None):
     for state in ["Y11"]:
-        mc_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
+        mc_vals = np.zeros((CFG_NUM_AGENTS, SEEDS), dtype=float)
         for seed in range(SEEDS):
-            mc_rewards = load_results("monte-carlo", seed, NUM_AGENTS, W, reward, state)
+            mc_rewards = load_results("monte-carlo", seed, CFG_NUM_AGENTS, CFG_W, reward, state)
             mc_vals[:, seed] = compute_value(mc_rewards, trajectory_length=trajectory_length)
 
-        # iid_vals = np.zeros((NUM_AGENTS, SEEDS), dtype=float)
+        # iid_vals = np.zeros((CFG_NUM_AGENTS, SEEDS), dtype=float)
         # for seed in range(SEEDS):
-        #     iid_rewards = load_results("iid", seed, NUM_AGENTS, W, reward, state)
+        #     iid_rewards = load_results("iid", seed, CFG_NUM_AGENTS, CFG_W, reward, state)
         #     iid_vals[:, seed] = compute_value(iid_rewards, trajectory_length=trajectory_length)
 
         r_pick = reward
-        r_other = (1 - r_pick) / (NUM_AGENTS - 1)
+        r_other = (1 - r_pick) / (CFG_NUM_AGENTS - 1)
 
         plot_distributions(mc_vals, kind="MC", r_pick=r_pick, r_other=r_other, state=state)
         # plot_distributions(iid_vals, kind="IID", r_pick=r_pick, r_other=r_other, state=state)

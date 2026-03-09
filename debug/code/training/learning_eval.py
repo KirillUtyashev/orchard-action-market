@@ -3,7 +3,6 @@ import random
 import numpy as np
 import torch
 
-from debug.code.core.enums import NUM_AGENTS
 from debug.code.training.helpers import eval_performance, set_all_seeds
 
 
@@ -18,6 +17,9 @@ class LearningEvalMixin:
                 reward_module=self.reward_module,
                 d_apple=self.env.d_apple,
                 p_apple=self.env.p_apple,
+                num_agents=self.num_agents,
+                width=self.width,
+                length=self.length,
                 max_apples=self.env.max_apples,
                 capture_greedy_positions=True,
             )
@@ -44,9 +46,9 @@ class LearningEvalMixin:
         }
 
     def evaluate_networks(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
-        errors_by_agent = {i: [] for i in range(NUM_AGENTS)}
-        ape_by_agent = {i: [] for i in range(NUM_AGENTS)}
-        in_ci_by_agent = {i: [] for i in range(NUM_AGENTS)}
+        errors_by_agent = {i: [] for i in range(self.num_agents)}
+        ape_by_agent = {i: [] for i in range(self.num_agents)}
+        in_ci_by_agent = {i: [] for i in range(self.num_agents)}
         eps = 1e-8
 
         for eval_state in self.evaluation_states:
@@ -60,7 +62,7 @@ class LearningEvalMixin:
                 eval_state["mode"],
             )
 
-            for i in range(NUM_AGENTS):
+            for i in range(self.num_agents):
                 encoded = self.encoder.encode(eval_state, i)
                 if not self.exp_config.algorithm.centralized:
                     pred = float(self.critic_networks[eval_state["actor_id"]].get_value_function(encoded))
@@ -79,7 +81,7 @@ class LearningEvalMixin:
         if store_last:
             self._last_eval_errors_by_agent = ape_by_agent
 
-        careful_pred_this_eval = np.full((NUM_AGENTS, len(self.careful_distances)), np.nan, dtype=float)
+        careful_pred_this_eval = np.full((self.num_agents, len(self.careful_distances)), np.nan, dtype=float)
 
         for j, d in enumerate(self.careful_distances):
             item = self.careful_actor_states[j]
@@ -89,7 +91,7 @@ class LearningEvalMixin:
             if st.get("actor_id", None) != 0:
                 raise RuntimeError(f"Expected actor_id=0, got {st.get('actor_id')} at distance {d}")
 
-            for eval_agent_id in range(NUM_AGENTS):
+            for eval_agent_id in range(self.num_agents):
                 encoded = self.encoder.encode(st, eval_agent_id)
                 if not self.exp_config.algorithm.centralized:
                     pred = float(self.critic_networks[eval_agent_id].get_value_function(encoded))
@@ -99,7 +101,7 @@ class LearningEvalMixin:
 
         if step is not None:
             self.careful_eval_steps.append(int(step))
-            for eval_agent_id in range(NUM_AGENTS):
+            for eval_agent_id in range(self.num_agents):
                 for j in range(len(self.careful_distances)):
                     self.careful_pred_history_actor0[eval_agent_id][j].append(
                         float(careful_pred_this_eval[eval_agent_id, j])
@@ -108,7 +110,7 @@ class LearningEvalMixin:
         return errors_by_agent
 
     def evaluate_networks_reward(self, *, step: int | None = None, plot: bool = False, store_last: bool = True):
-        errors_by_agent = {i: [] for i in range(NUM_AGENTS)}
+        errors_by_agent = {i: [] for i in range(self.num_agents)}
         abs_errors = []
         correct_flags = []
         tol = 0.10
@@ -138,7 +140,7 @@ class LearningEvalMixin:
                     abs_errors.append(abs(err))
                     correct_flags.append(1.0 if abs(err) <= tol else 0.0)
                 else:
-                    for agent_id in range(NUM_AGENTS):
+                    for agent_id in range(self.num_agents):
                         encoded = self.encoder.encode(eval_state, agent_id)
                         pred = float(self.critic_networks[agent_id].get_value_function(encoded))
                         true = float(true_rewards[agent_id])

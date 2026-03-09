@@ -6,7 +6,6 @@ from debug.code.nn.encoders import (
     DecEntityEncoder,
     DecGridEncoder,
 )
-from debug.code.core.enums import L, NUM_AGENTS, W
 from debug.code.env.environment import Orchard
 from debug.code.training.helpers import random_policy, teleport
 from debug.code.agents.simple_agent import SimpleAgent
@@ -20,17 +19,17 @@ class LearningSetupMixin:
 
         if cfg.algorithm.centralized:
             if cfg.network.CNN:
-                self.encoder = CenGridEncoder(W, W, NUM_AGENTS)
+                self.encoder = CenGridEncoder(self.width, self.length, self.num_agents)
             elif cfg.algorithm.concat:
-                dec = DecEntityEncoder(W, W, NUM_AGENTS, k)
+                dec = DecEntityEncoder(self.width, self.length, self.num_agents, k)
                 self.encoder = CenConcatEncoder(dec)
             else:
-                self.encoder = CenEntityEncoder(W, W, NUM_AGENTS, k)
+                self.encoder = CenEntityEncoder(self.width, self.length, self.num_agents, k)
         else:
             if cfg.network.CNN:
-                self.encoder = DecGridEncoder(W, W, NUM_AGENTS)
+                self.encoder = DecGridEncoder(self.width, self.length, self.num_agents)
             else:
-                self.encoder = DecEntityEncoder(W, W, NUM_AGENTS, k)
+                self.encoder = DecEntityEncoder(self.width, self.length, self.num_agents, k)
 
     def _init_critic_networks(self):
         cfg = self.exp_config
@@ -52,7 +51,7 @@ class LearningSetupMixin:
                 )
             )
         else:
-            for i in range(NUM_AGENTS):
+            for i in range(self.num_agents):
                 nn = VNetwork(
                     self.encoder,
                     1,
@@ -71,8 +70,11 @@ class LearningSetupMixin:
                 self.critic_networks.append(nn)
 
     def _init_agents_for_training(self):
-        policy_fn = teleport(W) if not self.exp_config.algorithm.random_policy else random_policy
-        for i in range(NUM_AGENTS):
+        if self.exp_config.algorithm.random_policy:
+            policy_fn = lambda agent_pos: random_policy(agent_pos, width=self.width, length=self.length)
+        else:
+            policy_fn = lambda _agent_pos: teleport(self.width, self.length)
+        for i in range(self.num_agents):
             net = self.critic_networks[0] if self.exp_config.algorithm.centralized else self.critic_networks[i]
             self.agents.append(SimpleAgent(policy_fn, i, net))
 
@@ -81,7 +83,7 @@ class LearningSetupMixin:
         self._init_critic_networks()
         self._init_agents_for_training()
 
-        p_apple = self.exp_config.algorithm.q_agent / (W**2)
+        p_apple = self.exp_config.algorithm.q_agent / float(self.width**2)
         d_apple = 1 / self.exp_config.env.apple_life
 
         if self.exp_config.algorithm.random_policy:
@@ -105,9 +107,9 @@ class LearningSetupMixin:
             )
 
         self.env = Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple,
             d_apple,

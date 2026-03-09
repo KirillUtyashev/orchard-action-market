@@ -4,14 +4,14 @@ from pathlib import Path
 
 import numpy as np
 
-from debug.code.core.enums import DISCOUNT_FACTOR, L, NUM_AGENTS, W, data_dir
+from debug.code.core.enums import DISCOUNT_FACTOR, data_dir
 from debug.code.env.environment import Orchard
 from debug.code.training.helpers import env_step, random_policy
 from debug.code.training.monte_carlo import generate_careful_distance_series, generate_initial_state_full
 
 
 def _worker_generate_state(args):
-    reward_module, run_id, seed, discount_factor, p_apple, d_apple, q_agent, tau = args
+    reward_module, run_id, seed, discount_factor, p_apple, d_apple, q_agent, tau, num_agents, width, length = args
     return generate_initial_state_full(
         reward_module=reward_module,
         run_id=run_id,
@@ -21,12 +21,15 @@ def _worker_generate_state(args):
         d_apple=d_apple,
         q_agent=q_agent,
         tau=tau,
+        num_agents=num_agents,
+        width=width,
+        length=length,
         save=True,
     )
 
 
 def _worker_generate_careful(arg):
-    reward_module, seed, discount_factor, p_apple, d_apple, agent_id, distance = arg
+    reward_module, seed, discount_factor, p_apple, d_apple, agent_id, distance, num_agents, width, length = arg
     return generate_careful_distance_series(
         reward_module=reward_module,
         seed=seed,
@@ -35,6 +38,9 @@ def _worker_generate_careful(arg):
         d_apple=d_apple,
         distances=(distance,),
         self_id=agent_id,
+        num_agents=num_agents,
+        width=width,
+        length=length,
     )
 
 
@@ -80,6 +86,9 @@ class LearningStateGenerationMixin:
                         d_apple,
                         self.exp_config.algorithm.q_agent,
                         self.exp_config.env.apple_life,
+                        self.num_agents,
+                        self.width,
+                        self.length,
                     )
                 )
 
@@ -99,10 +108,10 @@ class LearningStateGenerationMixin:
 
         distances = self.careful_distances
         careful_seed = 42069
-        self.careful_evals = [[] for _ in range(NUM_AGENTS)]
+        self.careful_evals = [[] for _ in range(self.num_agents)]
         missing_args, missing_keys = [], []
 
-        for agent_id in range(NUM_AGENTS):
+        for agent_id in range(self.num_agents):
             for d in distances:
                 path = _careful_state_path(agent_id, careful_seed, d)
                 if path.exists():
@@ -119,6 +128,9 @@ class LearningStateGenerationMixin:
                             d_apple,
                             agent_id,
                             d,
+                            self.num_agents,
+                            self.width,
+                            self.length,
                         )
                     )
 
@@ -136,14 +148,14 @@ class LearningStateGenerationMixin:
         print(f"Generated/loaded {num} eval states in {time.time() - start:.3f}s")
 
     def _generate_evaluation_states_reward_learning(self) -> None:
-        p_apple = self.exp_config.algorithm.q_agent / (W**2)
+        p_apple = self.exp_config.algorithm.q_agent / float(self.width**2)
         d_apple = 1 / self.exp_config.env.apple_life
-        burnin = max(100, NUM_AGENTS * 10)
+        burnin = max(100, self.num_agents * 10)
 
         eval_env = Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple=p_apple,
             d_apple=d_apple,
@@ -157,9 +169,13 @@ class LearningStateGenerationMixin:
         total_steps = burnin + self.reward_eval_num_states
 
         for t in range(total_steps):
-            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
+            new_pos = random_policy(
+                curr_state["agent_positions"][actor_idx],
+                width=self.width,
+                length=self.length,
+            )
             s_moved, s_next, pick_rewards, _, next_actor_idx = env_step(
-                eval_env, actor_idx, new_pos, NUM_AGENTS
+                eval_env, actor_idx, new_pos, self.num_agents
             )
 
             if t >= burnin:

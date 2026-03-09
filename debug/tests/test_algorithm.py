@@ -24,13 +24,21 @@ pytestmark = pytest.mark.skipif(
 if TORCH_AVAILABLE:
     import debug.code.training.learning as learning_mod
     from debug.code.core.config import load_config
-    from debug.code.core.enums import L, NUM_AGENTS, W
     from debug.code.env.environment import MoveAction, Orchard
     from debug.code.training.helpers import set_all_seeds
     from debug.code.training.learning import Learning
 
 
 BASE_CONFIG = Path(__file__).resolve().parents[1] / "code" / "configs" / "base.yaml"
+if TORCH_AVAILABLE:
+    BASE_CFG = load_config(BASE_CONFIG)
+    NUM_AGENTS = int(BASE_CFG.env.num_agents)
+    W = int(BASE_CFG.env.width)
+    L = int(BASE_CFG.env.length)
+else:
+    NUM_AGENTS = 2
+    W = 6
+    L = 6
 
 
 def _write_test_yaml(path: Path, output_dir: Path) -> None:
@@ -77,6 +85,7 @@ eval:
   value_track_num_states: 10
 
 env:
+  num_agents: 2
   length: 6
   width: 6
   apple_life: 10.0
@@ -137,6 +146,7 @@ eval:
   value_track_num_states: 0
 
 env:
+  num_agents: 2
   length: 6
   width: 6
   apple_life: 10.0

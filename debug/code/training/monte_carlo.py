@@ -8,19 +8,24 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import Literal
 from typing import Optional, Union
 import copy
+from pathlib import Path
 from debug.code.core.enums import (
-    DISCOUNT_FACTOR, NUM_AGENTS,
-    W,
-    L,
+    DISCOUNT_FACTOR,
     PROBABILITY_APPLE,
     data_dir,
 )
+from debug.code.core.config import load_config
 
 import numpy as np
 
 from debug.code.env.environment import Orchard
 from debug.code.training.helpers import make_env, random_policy, set_all_seeds, teleport
 from debug.code.env.reward import Reward
+
+_DEFAULT_CONFIG = load_config(Path(__file__).resolve().parents[1] / "configs" / "base.yaml")
+CFG_NUM_AGENTS = int(_DEFAULT_CONFIG.env.num_agents)
+CFG_W = int(_DEFAULT_CONFIG.env.width)
+CFG_L = int(_DEFAULT_CONFIG.env.length)
 
 
 # ---------------------------------------------------------------------
@@ -42,8 +47,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------
 def save_results(kind: str, seed: int, rewards_by_agent: np.ndarray, trajectory_length: int, reward: int, state) -> None:
     """Save rewards and metadata to an .npz file."""
-    # folder name: function_name-{PROBABILITY_APPLE}-{NUM_AGENTS}-{W}
-    folder_name = f"{PROBABILITY_APPLE:.2f}-{NUM_AGENTS}-{W}-{reward}"
+    # folder name: function_name-{PROBABILITY_APPLE}-{CFG_NUM_AGENTS}-{CFG_W}
+    folder_name = f"{PROBABILITY_APPLE:.2f}-{CFG_NUM_AGENTS}-{CFG_W}-{reward}"
     out_dir = (data_dir / state / kind)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_dir = out_dir / folder_name
@@ -53,9 +58,9 @@ def save_results(kind: str, seed: int, rewards_by_agent: np.ndarray, trajectory_
     metadata = np.array(
         {
             "seed": seed,
-            "num_agents": NUM_AGENTS,
-            "width": W,
-            "length": L,
+            "num_agents": CFG_NUM_AGENTS,
+            "width": CFG_W,
+            "length": CFG_L,
             "trajectory_length": trajectory_length,
             "timestamp": datetime.now().isoformat(),
             "kind": kind,
@@ -83,14 +88,14 @@ def init_state(reward_module: Reward, state_type: StateType, trajectory_length):
     agent_positions = npz["extra"]
     # init_reward = npz["reward_vector"]
     #
-    # reward_vector = np.zeros((NUM_AGENTS, trajectory_length), dtype=float)
+    # reward_vector = np.zeros((CFG_NUM_AGENTS, trajectory_length), dtype=float)
     #
     # reward_vector[:, 0] = init_reward
 
     orchard = Orchard(
-        W,
-        L,
-        NUM_AGENTS,
+        CFG_L,
+        CFG_W,
+        CFG_NUM_AGENTS,
         reward_module,
         PROBABILITY_APPLE,
         start_agents_map=initial_state["agents"],
@@ -107,7 +112,7 @@ def generate_initial_state(
         max_attempts: int = 1000,
         actor_id=0
 ) -> None:
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, PROBABILITY_APPLE)
+    orchard = Orchard(CFG_L, CFG_W, CFG_NUM_AGENTS, reward_module, PROBABILITY_APPLE)
 
     def satisfies(state: dict, agent_positions: np.ndarray) -> bool:
         apples = state["apples"]
@@ -180,7 +185,7 @@ def generate_initial_state_supervised(
         Y00 : mode=1, actor=other, no apple under actor
     """
 
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, PROBABILITY_APPLE)
+    orchard = Orchard(CFG_L, CFG_W, CFG_NUM_AGENTS, reward_module, PROBABILITY_APPLE)
 
     VALID_STATES = {"Z1", "Z0", "Y11", "Y10", "Y01", "Y00"}
     if state_type not in VALID_STATES:
@@ -249,7 +254,7 @@ def generate_initial_state_supervised(
             state["actor_id"] = actor_id
         else:
             # pick some other agent
-            other = (actor_id + 1) % NUM_AGENTS
+            other = (actor_id + 1) % CFG_NUM_AGENTS
             state["actor_id"] = other
 
         agent_positions = np.asarray(orchard.agent_positions)
@@ -296,15 +301,15 @@ def monte_carlo(seed: int = 42069, trajectory_length=100000, reward=-1, state: S
     set_all_seeds(seed)
     # logger.info(
     #     f"[mc] Starting Monte Carlo simulation with seed={seed} | "
-    #     f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
+    #     f"CFG_NUM_AGENTS={CFG_NUM_AGENTS}, CFG_W={CFG_W}, CFG_L={CFG_L}, T={trajectory_length}"
     # )
 
-    reward_module = Reward(reward, NUM_AGENTS)
+    reward_module = Reward(reward, CFG_NUM_AGENTS)
     orchard, rewards_by_agent = init_state(reward_module, state, trajectory_length)
 
     for step in range(1, trajectory_length):
-        actor_idx = random.randint(0, NUM_AGENTS - 1)
-        res = orchard.process_action(actor_idx, teleport(W), mode=1)  # always act
+        actor_idx = random.randint(0, CFG_NUM_AGENTS - 1)
+        res = orchard.process_action(actor_idx, teleport(CFG_W, CFG_L), mode=1)  # always act
         rewards_by_agent[:, step] = res.reward_vector
 
     total_reward = rewards_by_agent.sum()
@@ -334,9 +339,9 @@ def _orchard_from_payload(reward_module: Reward, payload: InitPayload):
         init_mode = int(state_dict.get("mode", 1))
 
     orchard = Orchard(
-        W,
-        L,
-        NUM_AGENTS,
+        CFG_L,
+        CFG_W,
+        CFG_NUM_AGENTS,
         reward_module,
         PROBABILITY_APPLE,
         start_agents_map=state_dict["agents"].copy(),
@@ -363,7 +368,7 @@ def monte_carlo_full(
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
 
-    T = trajectory_length * NUM_AGENTS * 2
+    T = trajectory_length * CFG_NUM_AGENTS * 2
     gamma = float(discount_factor)
 
     d = np.tile(np.array([gamma, 1.0], dtype=float), T // 2 + 1)[:T]
@@ -377,7 +382,7 @@ def monte_carlo_full(
 
     # Collect ALL rollout returns as samples for mean/std/SE
     n_total = int(num_trajectories * num_rollouts)
-    all_returns = np.zeros((NUM_AGENTS, n_total), dtype=float)
+    all_returns = np.zeros((CFG_NUM_AGENTS, n_total), dtype=float)
 
     k = 0
     for i in range(num_trajectories):
@@ -393,16 +398,29 @@ def monte_carlo_full(
                 curr_state["apples"],
                 curr_state["agents"].copy(),
                 curr_state["agent_positions"].copy(),
+                num_agents=init_env.num_agents,
+                width=init_env.width,
+                length=init_env.length,
             )
 
             actor_idx = curr_state["actor_id"]
 
-            rewards_by_agent = np.zeros((NUM_AGENTS, T), dtype=float)
+            rewards_by_agent = np.zeros((CFG_NUM_AGENTS, T), dtype=float)
             t = 0
 
             for _ in range(trajectory_length):
-                for step in range(NUM_AGENTS):
-                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx, random_policy(curr_state["agent_positions"][actor_idx]))
+                for step in range(CFG_NUM_AGENTS):
+                    curr_state, _, res, actor_idx = transition(
+                        step,
+                        curr_state,
+                        env,
+                        actor_idx,
+                        random_policy(
+                            curr_state["agent_positions"][actor_idx],
+                            width=env.width,
+                            length=env.length,
+                        ),
+                    )
                     rewards_by_agent[:, t] = 0.0
                     t += 1
                     rewards_by_agent[:, t] = res.reward_vector
@@ -428,10 +446,10 @@ def monte_carlo_full(
     ci_high = mc_mean + 1.96 * mc_se
 
     return {
-        "mc_mean": mc_mean,     # shape (NUM_AGENTS,)
-        "mc_se": mc_se,         # shape (NUM_AGENTS,)
-        "ci95_low": ci_low,     # shape (NUM_AGENTS,)
-        "ci95_high": ci_high,   # shape (NUM_AGENTS,)
+        "mc_mean": mc_mean,     # shape (CFG_NUM_AGENTS,)
+        "mc_se": mc_se,         # shape (CFG_NUM_AGENTS,)
+        "ci95_low": ci_low,     # shape (CFG_NUM_AGENTS,)
+        "ci95_high": ci_high,   # shape (CFG_NUM_AGENTS,)
         "n": n_total,
     }
 
@@ -445,6 +463,9 @@ def generate_initial_state_full(
         d_apple: float,
         q_agent: float,
         tau: float,
+        num_agents: int = CFG_NUM_AGENTS,
+        width: int = CFG_W,
+        length: int = CFG_L,
         save=True
 ):
     """
@@ -459,11 +480,18 @@ def generate_initial_state_full(
         Y00 : mode=1, actor=other, no apple under actor
     """
 
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=(q_agent * NUM_AGENTS * tau) / (W ** 2), d_apple=d_apple)
+    orchard = Orchard(
+        length,
+        width,
+        num_agents,
+        reward_module,
+        p_apple=(q_agent * num_agents * tau) / (width ** 2),
+        d_apple=d_apple,
+    )
     orchard.p_apple = p_apple
     orchard.set_positions()
     state = dict(orchard.get_state())
-    state["actor_id"] = random.randint(0, NUM_AGENTS - 1)
+    state["actor_id"] = random.randint(0, num_agents - 1)
     state["mode"] = 0
 
     res = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
@@ -539,8 +567,10 @@ def generate_careful_distance_series(
         d_apple: float,
         distances=(3, 2, 1, 0),
         self_id: int = 0,
+        num_agents: int = CFG_NUM_AGENTS,
+        width: int = CFG_W,
+        length: int = CFG_L,
 ):
-    width, length = W, L
     center = (width // 2 - 1, length // 2 - 1)
 
     # Fixed diamond apples around center
@@ -571,16 +601,16 @@ def generate_careful_distance_series(
     # Sample a base placement for other agents, avoiding the apple and any potential self cells
     reserved = {center} | set(self_positions)
     other_positions = _sample_other_agents_positions(
-        rng, width, length, NUM_AGENTS - 1, reserved=reserved
+        rng, width, length, num_agents - 1, reserved=reserved
     )
 
     for d, self_pos in zip(distances, self_positions):
-        # Build full agent_positions (NUM_AGENTS,2)
-        agent_positions = np.zeros((NUM_AGENTS, 2), dtype=int)
+        # Build full agent_positions (CFG_NUM_AGENTS,2)
+        agent_positions = np.zeros((num_agents, 2), dtype=int)
         agent_positions[self_id] = np.array(self_pos, dtype=int)
 
         k = 0
-        for a in range(NUM_AGENTS):
+        for a in range(num_agents):
             if a == self_id:
                 continue
             agent_positions[a] = other_positions[k]
@@ -602,7 +632,7 @@ def generate_careful_distance_series(
             return Orchard(
                 length=length,
                 width=width,
-                num_agents=NUM_AGENTS,
+                num_agents=num_agents,
                 reward=reward_module,
                 p_apple=p_apple,
                 d_apple=d_apple,
@@ -646,8 +676,8 @@ def monte_carlo_supervised(
 ) -> float:
     set_all_seeds(seed)
 
-    reward_module = Reward(reward, NUM_AGENTS)
-    rewards_by_agent = np.zeros((NUM_AGENTS, trajectory_length), dtype=float)
+    reward_module = Reward(reward, CFG_NUM_AGENTS)
+    rewards_by_agent = np.zeros((CFG_NUM_AGENTS, trajectory_length), dtype=float)
 
     if init_payload is None:
         orchard, init_actor, init_mode = init_state(reward_module, state, trajectory_length)
@@ -655,7 +685,7 @@ def monte_carlo_supervised(
         orchard, init_actor, init_mode = _orchard_from_payload(reward_module, init_payload)
 
     if init_mode == 0:
-        res = orchard.process_action(init_actor, teleport(W), mode=0)
+        res = orchard.process_action(init_actor, teleport(CFG_W, CFG_L), mode=0)
         rewards_by_agent[:, 0] = res.reward_vector
         res = orchard.process_action(init_actor, None, mode=1)
         rewards_by_agent[:, 1] = res.reward_vector
@@ -666,9 +696,9 @@ def monte_carlo_supervised(
         start, end = 1, trajectory_length
 
     for step in range(start, end, 2):
-        actor_idx = random.randint(0, NUM_AGENTS - 1)
+        actor_idx = random.randint(0, CFG_NUM_AGENTS - 1)
 
-        res = orchard.process_action(actor_idx, teleport(W), mode=0)
+        res = orchard.process_action(actor_idx, teleport(CFG_W, CFG_L), mode=0)
         rewards_by_agent[:, step] = res.reward_vector
 
         if step + 1 < end:
@@ -692,18 +722,18 @@ def iid_supervised(
 ) -> np.ndarray:
     set_all_seeds(seed)
 
-    reward_other = (1 - reward) / (NUM_AGENTS - 1)
+    reward_other = (1 - reward) / (CFG_NUM_AGENTS - 1)
 
     # Init (kept for parity with your setup; orchard isn't otherwise used in IID)
     if init_payload is None:
-        orchard, actor_id, init_mode = init_state(Reward(reward, NUM_AGENTS), state, trajectory_length)
+        orchard, actor_id, init_mode = init_state(Reward(reward, CFG_NUM_AGENTS), state, trajectory_length)
     else:
-        orchard, actor_id, init_mode = _orchard_from_payload(Reward(reward, NUM_AGENTS), init_payload)
+        orchard, actor_id, init_mode = _orchard_from_payload(Reward(reward, CFG_NUM_AGENTS), init_payload)
 
-    values_by_agent = np.zeros(NUM_AGENTS, dtype=np.float64)
+    values_by_agent = np.zeros(CFG_NUM_AGENTS, dtype=np.float64)
 
     # Preallocate once; reuse to avoid per-step allocations
-    rewards_vec = np.empty(NUM_AGENTS, dtype=np.float64)
+    rewards_vec = np.empty(CFG_NUM_AGENTS, dtype=np.float64)
 
     # Running discount for time t
     discount = 1.0
@@ -733,7 +763,7 @@ def iid_supervised(
 
     # Loop steps: only odd indices (step+1) can have rewards in your original logic
     for step in range(start, end, 2):
-        actor_id = random.randint(0, NUM_AGENTS - 1)
+        actor_id = random.randint(0, CFG_NUM_AGENTS - 1)
         # step itself has zero reward; just advance discount by one timestep
         discount *= DISCOUNT_FACTOR
 
@@ -751,20 +781,20 @@ def iid(seed: int, trajectory_length, reward=-1, state: StateType = "agent_on_ap
     set_all_seeds(seed)
     logger.info(
         f"[iid] Starting IID simulation with seed={seed} | "
-        f"NUM_AGENTS={NUM_AGENTS}, W={W}, L={L}, T={trajectory_length}"
+        f"CFG_NUM_AGENTS={CFG_NUM_AGENTS}, CFG_W={CFG_W}, CFG_L={CFG_L}, T={trajectory_length}"
     )
 
-    orchard, actor_id, init_mode = init_state(Reward(reward, NUM_AGENTS), state, trajectory_length)
+    orchard, actor_id, init_mode = init_state(Reward(reward, CFG_NUM_AGENTS), state, trajectory_length)
 
-    reward_other = (1 - reward) / (NUM_AGENTS - 1)
+    reward_other = (1 - reward) / (CFG_NUM_AGENTS - 1)
 
     for step in range(1, trajectory_length):
-        actor_id = random.randint(0, NUM_AGENTS - 1)
+        actor_id = random.randint(0, CFG_NUM_AGENTS - 1)
 
         picker_reward = reward if random.random() < PROBABILITY_APPLE else 0.0
         if picker_reward != 0.0:
             # everyone gets updated this step
-            rewards = np.full(NUM_AGENTS, reward_other, dtype=float)
+            rewards = np.full(CFG_NUM_AGENTS, reward_other, dtype=float)
             rewards[actor_id] = reward
             rewards_by_agent[:, step] = rewards
 
@@ -836,9 +866,9 @@ def main():
     )
     args = parser.parse_args()  # parsed values land on `args.<name>` [web:1]
     if args.task == "generate":
-        generate_initial_state(Reward(int(args.reward), NUM_AGENTS), args.state)
+        generate_initial_state(Reward(int(args.reward), CFG_NUM_AGENTS), args.state)
     elif args.task == "generate_supervised":
-        generate_initial_state_supervised(Reward(int(args.reward), NUM_AGENTS), args.state)
+        generate_initial_state_supervised(Reward(int(args.reward), CFG_NUM_AGENTS), args.state)
     else:
         if args.fn == "monte_carlo":
             sim_fn = monte_carlo

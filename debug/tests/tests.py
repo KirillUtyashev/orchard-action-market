@@ -1,7 +1,7 @@
 import random
 
 from matplotlib import pyplot as plt
-from debug.code.core.enums import NUM_AGENTS, W, L
+from debug.code.core.config import load_config
 from debug.code.env.environment import Orchard
 from debug.code.env.reward import Reward
 from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy, \
@@ -9,6 +9,10 @@ from debug.code.training.helpers import env_step, nearest_apple_policy, random_p
 import numpy as np
 from pathlib import Path
 data_dir = Path(__file__).parent.parent / "data"
+_DEFAULT_CFG = load_config(Path(__file__).parent.parent / "code" / "configs" / "base.yaml")
+NUM_AGENTS = int(_DEFAULT_CFG.env.num_agents)
+W = int(_DEFAULT_CFG.env.width)
+L = int(_DEFAULT_CFG.env.length)
 
 REWARD = -1
 

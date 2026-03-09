@@ -8,8 +8,6 @@ import torch
 data_dir = Path(__file__).parent.parent / "data"
 runs_dir = Path(__file__).parent.parent / "runs"
 
-NUM_AGENTS = 2
-W, L = 6, 6
 PROBABILITY_APPLE = 0.4
 NUM_WORKERS = 8
 DISCOUNT_FACTOR = 0.99
@@ -77,6 +75,7 @@ class EvalConfig:
 
 @dataclass
 class EnvironmentConfig:
+    num_agents: int = 2
     length: int = 6
     width: int = 6
     apple_life: float = 8.0

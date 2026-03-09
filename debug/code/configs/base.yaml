@@ -41,6 +41,7 @@ eval:
   value_track_num_states: 10
 
 env:
+  num_agents: 2
   length: 6
   width: 6
   apple_life: 20.0

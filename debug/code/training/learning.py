@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from debug.code.core.enums import DISCOUNT_FACTOR, NUM_AGENTS, PROBABILITY_APPLE
+from debug.code.core.enums import DISCOUNT_FACTOR, PROBABILITY_APPLE
 from debug.code.training.helpers import eval_performance, random_policy
 from debug.code.training.learning_diagnostics import LearningDiagnosticsMixin
 from debug.code.training.learning_eval import LearningEvalMixin
@@ -37,15 +37,18 @@ class Learning(
         self.exp_config = exp_config
         self.trajectory_length = exp_config.train.timesteps
         self.discount_factor = DISCOUNT_FACTOR
+        self.num_agents = int(exp_config.env.num_agents)
+        self.width = int(exp_config.env.width)
+        self.length = int(exp_config.env.length)
 
         self.agents = []
         self.critic_networks = []
         self._networks_for_eval = []
 
-        self.reward_module = Reward(exp_config.reward.picker_r, NUM_AGENTS)
+        self.reward_module = Reward(exp_config.reward.picker_r, self.num_agents)
         self.theoretical_val = Value(
             exp_config.reward.picker_r,
-            NUM_AGENTS,
+            self.num_agents,
             DISCOUNT_FACTOR,
             PROBABILITY_APPLE,
             exp_config.eval.variance,
@@ -82,7 +85,7 @@ class Learning(
                     self.data_dir / f"action_probabilities_agent_{agent_id}.csv",
                     action_prob_fields,
                 )
-                for agent_id in range(NUM_AGENTS)
+                for agent_id in range(self.num_agents)
             }
 
         self.value_track_num_states = max(
@@ -98,7 +101,7 @@ class Learning(
                     self.data_dir / f"tracked_state_values_agent_{agent_id}.csv",
                     value_track_fields,
                 )
-                for agent_id in range(NUM_AGENTS)
+                for agent_id in range(self.num_agents)
             }
 
         self.weight_samples_enabled = bool(getattr(self.exp_config.logging, "weight_samples_enabled", True))
@@ -124,7 +127,7 @@ class Learning(
         self.careful_actor_states = [None for _ in range(len(self.careful_distances))]
         self.careful_eval_steps = []
         self.careful_pred_history_actor0 = [
-            [[] for _ in range(len(self.careful_distances))] for _ in range(NUM_AGENTS)
+            [[] for _ in range(len(self.careful_distances))] for _ in range(self.num_agents)
         ]
 
     def _load_weights_if_requested(self) -> None:
