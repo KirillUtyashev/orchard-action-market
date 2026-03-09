@@ -3,12 +3,25 @@ import torch
 import os
 import numpy as np
 
-from debug.code.config import NUM_AGENTS, W
+from debug.code.enums import NUM_AGENTS, W
 from debug.code.environment import Orchard
 
 same_cell_no_reward = 0
 count = 0
 UP, DOWN, LEFT, RIGHT, STAY = 0, 1, 2, 3, 4
+
+
+def ten(c: np.ndarray, device: torch.device) -> torch.Tensor:
+    """Convert numpy array to torch tensor on specified device.
+
+    Args:
+        c: Input numpy array.
+        device: Target device for the tensor.
+
+    Returns:
+        A torch tensor on the specified device.
+    """
+    return torch.from_numpy(c).to(device).float()
 
 
 def set_all_seeds(seed: int = 42, deterministic: bool = False) -> None:
@@ -77,42 +90,135 @@ def random_policy(agent_pos):
     return np.array([nr, nc])
 
 
-def transition(step, curr_state, env, actor_idx):
-    if step == -1:
-        # init-only: do NOT mutate env
-        if curr_state is None:
-            curr_state = dict(env.get_state())
-        if actor_idx is None:
-            actor_idx = random.randint(0, NUM_AGENTS - 1)
-        curr_state["actor_id"] = actor_idx
-        curr_state["mode"] = 0
-        return curr_state, None, None, actor_idx
+def nearest_apple_policy(agent_pos, apples_matrix):
+    """
+    Greedy 4-neighborhood step toward the nearest apple (by Manhattan distance).
+    If no apples exist, STAY (or you can fall back to random_policy).
+    Returns the new (r, c) position after one step.
+    """
+    r, c = int(agent_pos[0]), int(agent_pos[1])
+    H, W = apples_matrix.shape
 
-    env.process_action(
-        actor_idx,
-        random_policy(curr_state["agent_positions"][actor_idx]),
-        mode=0,
+    apple_rc = np.argwhere(apples_matrix > 0)
+    if apple_rc.size == 0:
+        return np.array([r, c])  # or: return random_policy(agent_pos)
+
+    rs = apple_rc[:, 0]
+    cs = apple_rc[:, 1]
+    d = np.abs(rs - r) + np.abs(cs - c)
+    min_d = d.min()
+
+    # Tie-break deterministically but stably: pick the first minimum
+    idx = int(np.flatnonzero(d == min_d)[0])
+    tr, tc = int(rs[idx]), int(cs[idx])
+
+    nr, nc = r, c
+
+    # Move to reduce Manhattan distance by 1 (one axis at a time)
+    if tr < r:
+        nr = r - 1
+    elif tr > r:
+        nr = r + 1
+    elif tc < c:
+        nc = c - 1
+    elif tc > c:
+        nc = c + 1
+    else:
+        # Already on an apple
+        nr, nc = r, c  # STAY
+
+    # Boundary check (same style as your random_policy)
+    if not (0 <= nr < H and 0 <= nc < W):
+        nr, nc = r, c
+
+    return np.array([nr, nc])
+
+
+def env_step(env, actor_idx, new_pos, num_agents):
+    s_moved = env.apply_action(actor_idx, new_pos)
+    on_apple = env.is_on_apple(s_moved, actor_idx)
+
+    if on_apple:
+        s_picked, pick_rewards = env.resolve_pick(actor_idx)
+    else:
+        pick_rewards = [0.0] * num_agents
+
+    s_next, next_actor_idx = env.advance_actor(actor_idx, num_agents)
+
+    return s_moved, s_next, pick_rewards, on_apple, next_actor_idx
+
+
+def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_positions=None, max_apples=9):
+    return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
+                   start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions, max_apples=max_apples)
+
+
+def _run_eval_loop(env, action_fn, timesteps, num_agents):
+    """Runs a single evaluation loop using action_fn(state, actor_idx) -> new_pos."""
+    reward = 0
+    actor_idx = 0
+
+    for sec in range(timesteps):
+        curr_state = dict(env.get_state())
+        new_pos = action_fn(curr_state, actor_idx)
+        _, _, _, on_apple, actor_idx = env_step(env, actor_idx, new_pos, num_agents)
+
+        if on_apple:
+            reward += 1
+
+        if sec % 1000 == 0:
+            print(sec)
+
+    return reward
+
+
+def eval_performance(
+        agent_controller,
+        reward_module,
+        p_apple,
+        d_apple,
+        timesteps=10000,
+        num_agents=NUM_AGENTS,
+        max_apples=9
+):
+    env = make_env(reward_module, p_apple, d_apple, max_apples=max_apples)
+    env.set_positions()
+
+    initial_state = env.get_state()
+    env_nearest = make_env(
+        reward_module, p_apple, d_apple,
+        apples=initial_state["apples"],
+        agents=initial_state["agents"],
+        agent_positions=initial_state["agent_positions"],
+        max_apples=max_apples
     )
 
-    semi_state = dict(env.get_state())
-    semi_state["actor_id"] = actor_idx
-    semi_state["mode"] = 1
+    reward = _run_eval_loop(
+        env,
+        action_fn=lambda state, idx: agent_controller.agent_get_action(env, idx),
+        timesteps=timesteps,
+        num_agents=num_agents,
+    )
+    assert env.total_picked == reward
 
-    res = env.process_action(actor_idx, None, mode=1)
+    reward_nearest = _run_eval_loop(
+        env_nearest,
+        action_fn=lambda state, idx: nearest_apple_policy(state["agent_positions"][idx], state["apples"]),
+        timesteps=timesteps,
+        num_agents=num_agents,
+    )
 
-    if step == NUM_AGENTS - 1:
-        env.despawn_apples()
-        env.spawn_apples()
+    print("Results")
+    print("Reward: ", reward)
+    print("Apples per agent:", reward / NUM_AGENTS)
+    print("Average Reward: ", reward / env.apples_spawned)
+    print("Total apples: ", env.apples_spawned)
 
-    final_state = dict(env.get_state())
-    actor_idx = random.randint(0, NUM_AGENTS - 1)
-    final_state["actor_id"] = actor_idx
-    final_state["mode"] = 0
-
-    # return final_state as the next curr_state
-    return final_state, semi_state, res, actor_idx
-
-
-def make_env(reward_module, p_apple, d_apple, apples, agents, agent_positions):
-    return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
-                   start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions)
+    return {
+        "greedy_pps": reward,
+        "total_apples": env.apples_spawned,
+        "greedy_ratio": reward / env.apples_spawned,
+        "nearest_pps": reward_nearest,
+        "nearest_ratio": reward_nearest / env_nearest.apples_spawned,
+        "nearest_total_apples": env_nearest.apples_spawned,
+    }

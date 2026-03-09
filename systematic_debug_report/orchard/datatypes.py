@@ -109,6 +109,7 @@ class ScheduleConfig:
     schedule: Schedule
     step_size: int = 0              # only for Schedule.STEP
     step_factor: float = 1.0        # only for Schedule.STEP
+    step_start: int = 0             # only for Schedule.STEP. When we start the stepping.
 
 
 @dataclass(frozen=True)

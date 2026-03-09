@@ -1,28 +1,25 @@
 import argparse
 import itertools
-import time
 import logging
+import time
 import random
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
-from pathlib import Path
 from typing import Literal
 from typing import Optional, Union
 import copy
-from config import (
+from debug.code.enums import (
     DISCOUNT_FACTOR, NUM_AGENTS,
     W,
     L,
     PROBABILITY_APPLE,
-    NUM_WORKERS,
-    SEEDS,
     data_dir,
 )
 
 import numpy as np
 
 from debug.code.environment import Orchard
-from debug.code.helpers import make_env, set_all_seeds, teleport, transition
+from debug.code.helpers import make_env, random_policy, set_all_seeds, teleport
 from debug.code.reward import Reward
 
 
@@ -356,29 +353,35 @@ def deep_copy_state(s: dict) -> dict:
 
 def monte_carlo_full(
         seed: int = 42069,
-        trajectory_length: int = 1000,
+        trajectory_length: int = 1,
         init_env=None,
         init_state: dict = None,
         discount_factor: float = 0.99,
-        num_trajectories: int = 5,      # how many times to repeat "1000 rollouts then average"
-        num_rollouts: int = 200,        # run 1000 trajectories per repeat
+        num_trajectories: int = 1,
+        num_rollouts: int = 1,
 ):
     assert init_env is not None, "Pass init_env (or refactor to pass make_env=...)"
     assert init_state is not None
 
-    # Total reward-vector slots per rollout (matches your t += 2 logic)
     T = trajectory_length * NUM_AGENTS * 2
-    discounts = discount_factor ** np.arange(T)
+    gamma = float(discount_factor)
+
+    d = np.tile(np.array([gamma, 1.0], dtype=float), T // 2 + 1)[:T]
+
+    weights = np.empty(T, dtype=float)
+    weights[0] = 1.0
+    if T > 1:
+        weights[1:] = np.cumprod(d[:-1])
 
     base_state = deep_copy_state(init_state)
 
-    stored_means = np.zeros((NUM_AGENTS, num_trajectories), dtype=float)
+    # Collect ALL rollout returns as samples for mean/std/SE
+    n_total = int(num_trajectories * num_rollouts)
+    all_returns = np.zeros((NUM_AGENTS, n_total), dtype=float)
 
+    k = 0
     for i in range(num_trajectories):
-        returns = np.zeros((NUM_AGENTS, num_rollouts), dtype=float)
-
         for j in range(num_rollouts):
-            # Seed ONCE per rollout (don’t reseed every step)
             set_all_seeds(seed + i * num_rollouts + j)
 
             curr_state = deep_copy_state(base_state)
@@ -387,8 +390,8 @@ def monte_carlo_full(
                 init_env.reward_module,
                 init_env.p_apple,
                 init_env.d_apple,
-                curr_state["agents"],
-                curr_state["apples"].copy(),
+                curr_state["apples"],
+                curr_state["agents"].copy(),
                 curr_state["agent_positions"].copy(),
             )
 
@@ -399,10 +402,7 @@ def monte_carlo_full(
 
             for _ in range(trajectory_length):
                 for step in range(NUM_AGENTS):
-                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx)
-
-                    # Your environment seems to have a "mode 0 then mode 1" structure,
-                    # so you store a 0 slot then the actual reward slot.
+                    curr_state, _, res, actor_idx = transition(step, curr_state, env, actor_idx, random_policy(curr_state["agent_positions"][actor_idx]))
                     rewards_by_agent[:, t] = 0.0
                     t += 1
                     rewards_by_agent[:, t] = res.reward_vector
@@ -410,15 +410,30 @@ def monte_carlo_full(
 
             assert t == T, f"Filled {t} reward slots, expected {T}"
 
-            # Discounted return for this rollout
-            returns[:, j] = rewards_by_agent @ discounts
+            # One return sample per agent
+            all_returns[:, k] = rewards_by_agent @ weights
+            k += 1
 
-        # Mean over 1000 rollouts; store it for repetition i
-        stored_means[:, i] = returns.mean(axis=1)
+    # Mean return per agent
+    mc_mean = all_returns.mean(axis=1)
 
-    # MC estimate of the mean = average of the stored means across repetitions
-    mc_estimate = stored_means.mean(axis=1)
-    return mc_estimate
+    # Std of returns across rollouts (sample std with ddof=1)
+    mc_std = all_returns.std(axis=1, ddof=1)
+
+    # Standard error of the MC mean: SE = std / sqrt(n) [web:49]
+    mc_se = mc_std / np.sqrt(n_total)
+
+    # 95% CI for the MC mean using normal approx: mean ± 1.96*SE [web:52]
+    ci_low = mc_mean - 1.96 * mc_se
+    ci_high = mc_mean + 1.96 * mc_se
+
+    return {
+        "mc_mean": mc_mean,     # shape (NUM_AGENTS,)
+        "mc_se": mc_se,         # shape (NUM_AGENTS,)
+        "ci95_low": ci_low,     # shape (NUM_AGENTS,)
+        "ci95_high": ci_high,   # shape (NUM_AGENTS,)
+        "n": n_total,
+    }
 
 
 def generate_initial_state_full(
@@ -428,6 +443,8 @@ def generate_initial_state_full(
         discount_factor: float,
         p_apple: float,
         d_apple: float,
+        q_agent: float,
+        tau: float,
         save=True
 ):
     """
@@ -442,16 +459,19 @@ def generate_initial_state_full(
         Y00 : mode=1, actor=other, no apple under actor
     """
 
-    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=0.2, d_apple=d_apple)
+    orchard = Orchard(W, L, NUM_AGENTS, reward_module, p_apple=(q_agent * NUM_AGENTS * tau) / (W ** 2), d_apple=d_apple)
     orchard.p_apple = p_apple
     orchard.set_positions()
     state = dict(orchard.get_state())
     state["actor_id"] = random.randint(0, NUM_AGENTS - 1)
     state["mode"] = 0
 
-    mc = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
+    res = monte_carlo_full(seed, init_env=orchard, init_state=state, discount_factor=discount_factor)
 
-    state["mc"] = mc
+    state["mc"] = res["mc_mean"]
+    state["std"] = res["mc_se"]
+    state["ci95_low"] = res["ci95_low"]
+    state["ci95_high"] = res["ci95_high"]
     if save:
         out_dir = data_dir / "states" / "full"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -517,32 +537,36 @@ def generate_careful_distance_series(
         discount_factor: float,
         p_apple: float,
         d_apple: float,
-        distances=(4, 3, 2, 1, 0),
+        distances=(3, 2, 1, 0),
         self_id: int = 0,
-        num_trajectories: int = 50,
-        trajectory_length: int = 1000,
 ):
-    # For a pure proximity test, strongly consider freezing apple dynamics:
-    # p_apple=0, d_apple=0 so the only apple is your fixed one. (No citation)
-
     width, length = W, L
-    center = (width // 2, length // 2)
+    center = (width // 2 - 1, length // 2 - 1)
 
-    # Fixed apples map: single apple in center
+    # Fixed diamond apples around center
     start_apples = np.zeros((width, length), dtype=int)
-    start_apples[center[0], center[1]] = 1
-    start_apples[center[0], center[1]] = 1
-    start_apples[center[0] - 2, center[1]] = 1
-    start_apples[center[0] - 1, center[1] + 1] = 1
-    start_apples[center[0] - 1, center[1] - 1] = 1
+    start_apples[center[0],     center[1]    ] = 1  # center
+    start_apples[center[0] - 2, center[1]    ] = 1  # top
+    start_apples[center[0] - 1, center[1] + 1] = 1  # top-right
+    start_apples[center[0] - 1, center[1] - 1] = 1  # top-left
+
+    # 6 hardcoded outskirt apples (fixed across all states)
+    outskirt_apples = [
+        (1,          1          ),  # top-left corner area
+        (1,          length - 2 ),  # top-right corner area
+        (width - 2,  1          ),  # bottom-left corner area
+        (width - 2,  length - 2 ),  # bottom-right corner area
+        (width // 2, 1          ),  # left edge midpoint
+        (width // 2, length - 2 ),  # right edge midpoint
+    ]
+    for (r, c) in outskirt_apples:
+        start_apples[r, c] = 1
 
     # Choose self positions at different Manhattan distances
     self_positions = _make_distance_positions(center, distances, width, length)
 
     # Fix other agents' positions ONCE (reused across all distances)
     rng = np.random.default_rng(seed)
-
-    results = []  # list of dicts: {distance, init_state, mc_value_vector}
 
     # Sample a base placement for other agents, avoiding the apple and any potential self cells
     reserved = {center} | set(self_positions)
@@ -587,17 +611,18 @@ def generate_careful_distance_series(
                 start_agent_positions=agent_positions,
             )
 
-        mc = monte_carlo_full(
+        res = monte_carlo_full(
             seed=seed,
-            trajectory_length=trajectory_length,
             init_env=init_env_factory(),
             init_state=init_state,
             discount_factor=discount_factor,
-            num_trajectories=num_trajectories,
         )
 
         init_state["distance"] = d
-        init_state["mc"] = mc
+        init_state["mc"] = res["mc_mean"]
+        init_state["std"] = res["mc_se"]
+        init_state["ci95_low"] = res["ci95_low"]
+        init_state["ci95_high"] = res["ci95_high"]
 
         out_dir = data_dir / "states" / "careful"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -608,8 +633,7 @@ def generate_careful_distance_series(
             out_path,
             dict=np.array(init_state, dtype=object),
         )
-        results.append(init_state)
-    return results
+    return init_state
 
 
 def monte_carlo_supervised(

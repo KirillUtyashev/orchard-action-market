@@ -1,4 +1,5 @@
 # mae_vs_nn_size_plotter.py
+from __future__ import annotations
 
 import json
 import re
@@ -127,41 +128,35 @@ def plot_mae_vs_nn_size_for_picker_r(
     return df_agg
 
 
-def _pick_error_path(base: Path, var: int | float, alpha: float, scheduled: bool) -> Path:
-    """Return the first existing path among known naming patterns."""
-    var_dir = base / str(var)
-
-    candidates = []
-    if scheduled:
-        candidates += [
-            var_dir / f"final_eval_errors_16_1000_{alpha}_True.json",
-            var_dir / f"final_eval_errors_16_1000_{alpha}_true.json",
-            var_dir / f"final_eval_errors_16_1000_{alpha}_{True}.json",
-<<<<<<< HEAD
-            ]
-=======
-        ]
->>>>>>> 7d9a105 (Plots)
-    else:
-        candidates += [
-            var_dir / f"final_eval_errors_16_1000_{alpha}.json",
-            var_dir / f"final_eval_errors_16_1000_{alpha}_False.json",
-            var_dir / f"final_eval_errors_16_1000_{alpha}_false.json",
-            var_dir / f"final_eval_errors_16_1000_{alpha}_{False}.json",
-<<<<<<< HEAD
-            ]
-=======
-        ]
->>>>>>> 7d9a105 (Plots)
-
-    for p in candidates:
-        if p.exists():  # Path.exists() checks if the filesystem path exists. [web:3]
-            return p
-
-    raise FileNotFoundError(
-        f"No eval error file found for var={var}, alpha={alpha}, scheduled={scheduled}. "
-        f"Tried: {[str(p) for p in candidates]}"
-    )
+# def _pick_error_path(base: Path, var: int | float, alpha: float, scheduled: bool) -> Path:
+#     """Return the first existing path among known naming patterns."""
+#     var_dir = base / str(var)
+#
+#     candidates = []
+#     if scheduled:
+#         candidates += [
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_True.json",
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_true.json",
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_{True}.json",
+#             ]
+#         ]
+#     else:
+#         candidates += [
+#             var_dir / f"final_eval_errors_16_1000_{alpha}.json",
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_False.json",
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_false.json",
+#             var_dir / f"final_eval_errors_16_1000_{alpha}_{False}.json",
+#             ]
+#         ]
+#
+#     for p in candidates:
+#         if p.exists():  # Path.exists() checks if the filesystem path exists. [web:3]
+#             return p
+#
+#     raise FileNotFoundError(
+#         f"No eval error file found for var={var}, alpha={alpha}, scheduled={scheduled}. "
+#         f"Tried: {[str(p) for p in candidates]}"
+#     )
 
 
 def plot_variance(data_dir, variances, alphas):
@@ -220,7 +215,6 @@ def plot_variance(data_dir, variances, alphas):
     plt.savefig(base / "main.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-<<<<<<< HEAD
 
 def _pick_error_path_nn(base: Path, var: int | float, nn_size: int, *, alpha: float = 0.001) -> Path:
     """Return the first existing path among known naming patterns for NN-size runs."""
@@ -362,7 +356,6 @@ def plot_mae_vs_lambda_by_method(
         scheduled: bool = True,
         on_missing: Literal["skip", "nan", "raise"] = "skip",
         output_png: Optional[Path] = None,
-        output_csv: Optional[Path] = None,
 ) -> pd.DataFrame:
     rows = []
 
@@ -438,8 +431,142 @@ def plot_mae_vs_lambda_by_method(
     plt.close(fig)
 
 
+def _load_mae_pct_overall_last(json_path: Path) -> float:
+    with open(json_path, "r") as f:
+        obj = json.load(f)
+
+    hist = obj["eval_history"]
+    if not hist:
+        raise ValueError(f"Empty eval_history in {json_path}")
+
+    return float(hist[-1]["mae_pct_overall"])
+
+
+def _pick_reward_learning_json_path(
+        base_dir: Path,
+        *,
+        hidden_dim: int,
+        steps: int,
+        alpha: float,
+        scheduled: bool,
+        noise: float,
+) -> Path:
+    # Example: mae_pct_history_4_1000_0.01_True_0.0.json
+    fname = f"mae_pct_history_{hidden_dim}_{steps}_{alpha}_{scheduled}_{noise}.json"
+    return base_dir / fname
+
+
+def plot_reward_learning_mae_vs_nn_size_by_input_dim(
+        data_dir: Path,
+        input_dims: Sequence[int],
+        hidden_dims: Sequence[int],
+        *,
+        reward_subdir: Sequence[str] = ("reward_learning", "-1"),
+        noise_dir: str = "0.0",
+        steps: int = 1000,
+        alpha: float = 0.01,
+        scheduled: bool = True,
+        on_missing: Literal["skip", "nan", "raise"] = "skip",
+        output_png: Optional[Path] = None,
+) -> pd.DataFrame:
+    """
+    For each input_dim in input_dims, read json files from:
+        data_dir / reward_learning / -1 / input_dim / 0.0 /
+    and plot last mae_pct_overall vs hidden_dim (NN size).
+    """
+    rows = []
+
+    for dim in input_dims:
+        base_dir = Path(data_dir)
+        for part in reward_subdir:
+            base_dir = base_dir / str(part)
+        base_dir = base_dir / str(dim) / str(noise_dir)
+
+        for h in hidden_dims:
+            try:
+                path = _pick_reward_learning_json_path(
+                    base_dir,
+                    hidden_dim=h,
+                    steps=steps,
+                    alpha=alpha,
+                    scheduled=scheduled,
+                    noise=float(noise_dir),
+                )
+                mae_pct = _load_mae_pct_overall_last(path)
+                rows.append({
+                    "input_dim": int(dim),
+                    "hidden_dim": int(h),
+                    "mae_pct_overall": mae_pct,
+                    "json_path": str(path),
+                })
+
+            except FileNotFoundError:
+                if on_missing == "raise":
+                    raise
+                if on_missing == "skip":
+                    continue
+                if on_missing == "nan":
+                    rows.append({
+                        "input_dim": int(dim),
+                        "hidden_dim": int(h),
+                        "mae_pct_overall": float("nan"),
+                        "json_path": None,
+                    })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        raise FileNotFoundError("No matching json files found (all missing or wrong directory structure).")
+
+    df = df.sort_values(["input_dim", "hidden_dim"])
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    for dim in input_dims:
+        sub = df[df["input_dim"] == int(dim)]
+        if sub.empty:
+            continue
+        ax.plot(
+            sub["hidden_dim"],
+            sub["mae_pct_overall"],
+            marker="o",
+            linewidth=2.2,
+            label=f"input_dim={dim}",
+        )
+
+    ax.set_xlabel("NN size (hidden dimension)")
+    ax.set_ylabel("MAE, % of True Value")
+    ax.set_title("Reward learning: MAE vs NN size")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=True)
+    fig.tight_layout()
+
+    if output_png is None:
+        output_png = Path(data_dir) / "reward_learning_mae_vs_nn_size_by_input_dim.png"
+    output_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_png, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    return df
+
+
 if __name__ == "__main__":
-    from config import data_dir
+    from enums import data_dir
     lambdas = ["0.5"]
 
-    plot_mae_vs_lambda_by_method(Path(data_dir), lambdas)
+    # plot_mae_vs_lambda_by_method(Path(data_dir), lambdas)
+    input_dims = [3, 19, 55, 326]
+
+    # X-axis: NN size (hidden dimension). You said you'll provide these.
+    hidden_dims = [4, 8, 16, 32, 64]
+
+    df = plot_reward_learning_mae_vs_nn_size_by_input_dim(
+        data_dir=data_dir,
+        input_dims=input_dims,
+        hidden_dims=hidden_dims,
+        steps=1000,
+        alpha=0.01,
+        scheduled=True,
+        noise_dir="0.0",
+        on_missing="skip",  # or "raise" to fail fast if any file is missing
+        output_png=data_dir / "reward_learning_mae_vs_nn_size.png",
+    )

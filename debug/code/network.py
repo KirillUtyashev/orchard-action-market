@@ -2,94 +2,98 @@ from abc import ABC, abstractmethod
 
 import torch
 from torch import optim
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LinearLR
 
-from debug.code.config import DEVICE
-from debug.code.main_net import MainNet
-
-
-def linear_decay_then_hold_factor(step: int, decay_steps: int, min_factor: float) -> float:
-    """
-    Returns a multiplicative factor f(step) such that:
-      lr(step) = base_lr * f(step)
-    Linearly decays from 1.0 to min_factor over `decay_steps`,
-    then stays at min_factor forever.
-    """
-    decay_steps = max(1, int(decay_steps))
-    step = max(0, int(step))
-
-    # Clamp min_factor into [0, 1] to avoid weird configs
-    min_factor = float(min_factor)
-    if min_factor < 0.0:
-        min_factor = 0.0
-    if min_factor > 1.0:
-        min_factor = 1.0
-
-    if step >= decay_steps:
-        return min_factor
-
-    t = step / decay_steps  # in [0, 1)
-    return 1.0 + t * (min_factor - 1.0)
+from debug.code.encoders import BaseEncoder, GridEncoder
+from debug.code.enums import DEVICE
+from debug.code.main_net import CNNMainNet, MainNet
 
 
 class NetworkWrapper(ABC):
     def __init__(
             self,
-            input_dim,
-            output_dim,
-            alpha,
-            discount,
-            hidden_dim=128,
-            num_layers=4,
-            # scheduler params
-            schedule=False,
-            decay_steps=1_000_000,     # linear decay duration
-            min_lr=1e-6,               # final LR after decay (then held)
+            encoder: BaseEncoder,
+            output_dim: int,
+            alpha: float,
+            discount: float,
+            mlp_dims: tuple[int, ...] = (128, 128),
+            schedule: bool = False,
+            decay_steps: int = 1_000_000,   # number of optimizer updates to reach end LR
+            min_lr: float = 1e-6,           # final LR after decay_steps
+            conv_channels: list[int] | None = None,
+            kernel_size: int = 3,
+            momentum: float = 0.0,
     ):
-        self.model = MainNet(input_dim, output_dim, hidden_dim, num_layers).to(DEVICE)
-        # self.optimizer = optim.AdamW(self.model.parameters(), lr=alpha, amsgrad=True)
-        self.optimizer = optim.SGD(self.model.parameters(), lr=alpha)
-        self.alpha = alpha
-        self.discount = discount
+        self.encoder = encoder
+        self._is_cnn = isinstance(encoder, GridEncoder)
+
+        if self._is_cnn:
+            self.model = CNNMainNet(
+                grid_shape=(encoder.grid_channels(), encoder.H, encoder.W),
+                scalar_dim=encoder.scalar_dim(),
+                output_dim=output_dim,
+                conv_channels=conv_channels or [32, 64],
+                kernel_size=kernel_size,
+                mlp_dims=mlp_dims,
+            ).to(DEVICE)
+        else:
+            self.model = MainNet(encoder.output_dim(), output_dim, mlp_dims).to(DEVICE)
+
+        self.model = self.model.float()
+
+        self.alpha = float(alpha)
+        self.discount = float(discount)
+        self.decay_steps = int(decay_steps)
+        self.min_lr = float(min_lr)
+
+        self.optimizer = optim.SGD(self.model.parameters(), lr=self.alpha, momentum=momentum)
 
         self.batch_states = []
         self.batch_new_states = []
 
-        self._input_dim = input_dim
-
-        self.decay_steps = int(decay_steps * 0.8)
-        self.hold_steps = int(decay_steps * 0.2)
-        self.min_lr = float(min_lr)
-
-        self._lr_step = 0
+        # Scheduler: linear decay from alpha -> min_lr over decay_steps optimizer steps.
+        self.scheduler = None
         if schedule:
-            # LambdaLR multiplies base_lr by lr_lambda(step)
-            min_factor = (self.min_lr / self.alpha) if self.alpha > 0 else 0.0
-            self.scheduler = LambdaLR(
-                self.optimizer,
-                lr_lambda=lambda s: linear_decay_then_hold_factor(s, self.decay_steps, min_factor),
-            )
-        else:
-            self.scheduler = None
+            # LinearLR uses multiplicative factors. Convert min_lr to a factor of alpha.
+            end_factor = (self.min_lr / self.alpha) if self.alpha > 0 else 0.0
+            end_factor = max(0.0, min(1.0, float(end_factor)))
 
-    def get_input_dim(self):
-        return self._input_dim
+            self.scheduler = LinearLR(
+                self.optimizer,
+                start_factor=1.0,
+                end_factor=end_factor,
+                total_iters=max(1, self.decay_steps),
+            )
+
+    # -----------------------------------------------------------------------
+    # Save / load
+    # -----------------------------------------------------------------------
 
     def export_net_state(self):
         return {
             "weights": self.model.state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "scheduler": (self.scheduler.state_dict() if self.scheduler else None),
         }
 
     def import_net_state(self, blob, device=DEVICE):
         self.model.load_state_dict(blob["weights"])
-        if blob.get("optimizer") is not None:
-            self.optimizer.load_state_dict(blob["optimizer"])
-            # move optimizer tensors to correct device
+
+        opt_state = blob.get("optimizer")
+        if opt_state is not None:
+            self.optimizer.load_state_dict(opt_state)
             for st in self.optimizer.state.values():
                 for k, v in st.items():
                     if torch.is_tensor(v):
                         st[k] = v.to(device)
+
+        sch_state = blob.get("scheduler")
+        if self.scheduler is not None and sch_state is not None:
+            self.scheduler.load_state_dict(sch_state)
+
+    # -----------------------------------------------------------------------
+    # Modes / LR
+    # -----------------------------------------------------------------------
 
     @abstractmethod
     def train(self):
@@ -101,7 +105,21 @@ class NetworkWrapper(ABC):
     def set_eval_mode(self) -> None:
         self.model.eval()
 
-    def _after_update(self):
-        self._lr_step += 1
-        if self.scheduler:
-            self.scheduler.step()  # call after optimizer.step() [web:52]
+    def get_lr(self) -> float:
+        return self.optimizer.param_groups[0]["lr"]
+
+    # -----------------------------------------------------------------------
+    # Call this *after* optimizer.step()
+    # -----------------------------------------------------------------------
+
+    def _after_update(self) -> None:
+        """
+        Use in training loop:
+
+            loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            self._after_update()
+        """
+        if self.scheduler is not None:
+            self.scheduler.step()

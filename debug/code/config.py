@@ -1,62 +1,100 @@
+from __future__ import annotations
+
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import fields
+from typing import Any
 
-import torch
-# ---------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------
-data_dir = Path(__file__).parent.parent / "data"
+import yaml
 
-NUM_AGENTS = 4
-W, L = 9, 9
-PROBABILITY_APPLE = 32.4 / (W * L)
-NUM_WORKERS = 8
-DISCOUNT_FACTOR = 0.99
-SEEDS = 1000
-
-DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+from debug.code.enums import AlgorithmConfig, EnvironmentConfig, EvalConfig, \
+    ExperimentConfig, \
+    LoggingConfig, NetworkConfig, \
+    RewardConfig, TrainingConfig
 
 
-@dataclass
-class TrainingConfig:
-    """Configuration for training parameters."""
-
-    alpha: float = 0.01
-    timesteps: int = 1000000
-    hidden_dimensions: int = 16
-    num_layers: int = 4
-    seed: int = 1234
-    num_eval_states: int = 0
-    picker_r: int = -5
-    supervised: bool = True
-    reward_learning: bool = False
-    input_dim: int = 0
-    forward: bool = False
-    eligibility: bool = False
-    monte_carlo: bool = False
-    num_seeds: int = 1000
-    variance: float = 0
-    schedule_lr: bool = False
-    lmda: float = 0.5
-    random_policy: bool = False
-    q_agent: float = 1
-    apple_life: float = 8
-    debug: bool = True
-    top_k_num_apples: int = 1
+# ---------------------------------------------------------------------------
+# Generic dataclass populator
+# ---------------------------------------------------------------------------
+def _populate_dataclass(cls, d: dict):
+    """Fill a dataclass from a dict, ignoring unknown keys, using defaults for missing."""
+    valid_fields = {f.name for f in fields(cls)}
+    kwargs = {k: v for k, v in d.items() if k in valid_fields}
+    return cls(**kwargs)
 
 
-@dataclass
-class EnvironmentConfig:
-    """Configuration for environment parameters."""
+# ---------------------------------------------------------------------------
+# Override helpers (generic, works for any config)
+# ---------------------------------------------------------------------------
+def _parse_override_value(s: str) -> Any:
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return []
+        parts, depth, current = [], 0, []
+        for ch in inner:
+            if ch == "[":
+                depth += 1
+                current.append(ch)
+            elif ch == "]":
+                depth -= 1
+                current.append(ch)
+            elif ch == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+        if current:
+            parts.append("".join(current).strip())
+        return [_parse_override_value(p) for p in parts]
 
-    length: int = L
-    width: int = W
+    if s.lower() == "true":
+        return True
+    if s.lower() == "false":
+        return False
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return s
 
 
-@dataclass
-class ExperimentConfig:
-    """Configuration for experiment parameters."""
+def _apply_overrides(raw: dict[str, Any], overrides: list[str]) -> dict[str, Any]:
+    """Apply dot-notation overrides, e.g. 'train.alpha=0.001'."""
+    for override in overrides:
+        if "=" not in override:
+            raise ValueError(f"Override must be key=value, got: '{override}'")
+        key, value_str = override.split("=", 1)
+        parts = key.strip().split(".")
+        d = raw
+        for part in parts[:-1]:
+            if part not in d:
+                d[part] = {}
+            d = d[part]
+        d[parts[-1]] = _parse_override_value(value_str.strip())
+    return raw
 
-    train_config: TrainingConfig = None
-    env_config: EnvironmentConfig = None
-    debug: bool = False
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+def load_config(path: str | Path, overrides: list[str] | None = None) -> ExperimentConfig:
+    """Load YAML config, apply overrides, return typed ExperimentConfig."""
+    with open(path) as f:
+        raw = yaml.safe_load(f)
+
+    if overrides:
+        raw = _apply_overrides(raw, overrides)
+
+    return ExperimentConfig(
+        network=_populate_dataclass(NetworkConfig,   raw.get("network",   {})),
+        train=_populate_dataclass(TrainingConfig,    raw.get("train",     {})),
+        algorithm=_populate_dataclass(AlgorithmConfig, raw.get("algorithm", {})),
+        reward=_populate_dataclass(RewardConfig,     raw.get("reward",    {})),
+        eval=_populate_dataclass(EvalConfig,         raw.get("eval",      {})),
+        env=_populate_dataclass(EnvironmentConfig,   raw.get("env",       {})),
+        logging=_populate_dataclass(LoggingConfig, raw.get("logging", {}))
+    )

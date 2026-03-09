@@ -206,7 +206,8 @@ class ValueNetwork(nn.Module):
 
         # 6. Get learning rate from schedule
         alpha = compute_schedule_value(self._lr_schedule, env_step, self._total_steps)
-
+        for pg in self.optimizer.param_groups:
+            pg["lr"] = alpha
         # 7. Manual SGD: θ += α * δ * z
         with torch.no_grad():
             for name, param in self.named_parameters():

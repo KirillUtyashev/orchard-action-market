@@ -19,7 +19,10 @@ def compute_schedule_value(
         fraction = min(step / total_steps, 1.0) if total_steps > 0 else 1.0
         return cfg.start + (cfg.end - cfg.start) * fraction
     elif cfg.schedule == Schedule.STEP:
-        n_decays = step // cfg.step_size if cfg.step_size > 0 else 0
+        if step < cfg.step_start:
+            return cfg.start
+        elapsed = step - cfg.step_start
+        n_decays = elapsed // cfg.step_size if cfg.step_size > 0 else 0
         return max(cfg.end, cfg.start * (cfg.step_factor ** n_decays))
     else:
         raise ValueError(f"Unknown schedule: {cfg.schedule}")

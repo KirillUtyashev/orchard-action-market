@@ -13,9 +13,10 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.config import load_config
-from orchard.enums import LearningType, StoppingCondition, TDTarget, TrainMode
+from orchard.enums import NUM_ACTIONS, LearningType, StoppingCondition, TDTarget, TrainMode
 from orchard.env import create_env
 from orchard.eval import (
+    Action,
     collect_after_state_test_states,
     collect_on_policy_test_states,
     evaluate_policy_learning,
@@ -31,13 +32,14 @@ from orchard.logging_ import (
 )
 from orchard.model import create_networks
 from orchard.policy import (
+    ACTION_PRIORITY,
     ValueNetwork,
     argmax_a_Q_team,
     epsilon_greedy,
     nearest_apple_action,
 )
 from orchard.schedule import compute_schedule_value
-from orchard.seed import set_all_seeds
+from orchard.seed import rng, rng, set_all_seeds
 from orchard.datatypes import EncoderOutput, ExperimentConfig, State
 
 def _train_all_agents(
@@ -142,6 +144,45 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
         ground_truth = precompute_ground_truth(test_states, env, cfg.eval, cfg.train.td_target)
 
     s_t = env.init_state()
+    
+    # --- Sample states for value diagnostics (policy_learning) ---
+    sample_states: list[State] | None = None
+    sample_logger: CSVLogger | None = None
+    if cfg.train.mode == TrainMode.POLICY_LEARNING:
+        n_sample = 100
+        sample_states = []
+        s_tmp = env.init_state()
+        for _ in range(n_sample * 3):
+            a_tmp = Action(rng.randint(0, NUM_ACTIONS - 1))
+
+            if cfg.train.td_target == TDTarget.AFTER_STATE:
+                s_moved = env.apply_action(s_tmp, a_tmp)
+                if s_moved.is_agent_on_apple(s_moved.actor):
+                    s_after, _ = env.resolve_pick(s_moved)
+                else:
+                    s_after = s_moved
+                if len(sample_states) < n_sample:
+                    sample_states.append(s_after)
+                s_picked, _ = env.resolve_pick(s_moved)
+                s_tmp = env.advance_actor(env.spawn_and_despawn(s_picked))
+            else:
+                if len(sample_states) < n_sample:
+                    sample_states.append(s_tmp)
+                s_moved = env.apply_action(s_tmp, a_tmp)
+                s_picked, _ = env.resolve_pick(s_moved)
+                s_tmp = env.advance_actor(env.spawn_and_despawn(s_picked))
+
+        set_all_seeds(cfg.train.seed)
+        s_t = env.init_state()
+
+        sample_fields = ["step", "wall_time",
+                         "value_mean", "value_std", "value_min", "value_max", "value_range"]
+        for act in ACTION_PRIORITY:
+            sample_fields.append(f"action_{act.name}")
+        for ni in range(n_networks):
+            for si in range(n_sample):
+                sample_fields.append(f"net{ni}_s{si}")
+        sample_logger = CSVLogger(run_dir / "sample_values.csv", sample_fields)
 
     # --- After-state TD bookkeeping (only used when td_target == AFTER_STATE) ---
     prev_after_enc: list[EncoderOutput] | None = None
@@ -368,6 +409,36 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     detail_row["value_pred_std"] = round(var ** 0.5, 6)
 
             detail_logger.log(detail_row)
+            # --- Sample value logging ---
+            if sample_states is not None and sample_logger is not None:
+                sample_row: dict[str, float | int | str] = {
+                    "step": t + 1,
+                    "wall_time": round(time.time() - start_time, 3),
+                }
+                all_vals: list[float] = []
+                action_counts: dict[str, int] = {f"action_{act.name}": 0 for act in ACTION_PRIORITY}
+
+                with torch.no_grad():
+                    for si, ss in enumerate(sample_states):
+                        for ni in range(n_networks):
+                            v = networks[ni](encoding.encode(ss, ni)).item()
+                            sample_row[f"net{ni}_s{si}"] = round(v, 6)
+                            all_vals.append(v)
+                        ga = argmax_a_Q_team(ss, networks, env)
+                        action_counts[f"action_{ga.name}"] += 1
+
+                sample_row["value_mean"] = round(sum(all_vals) / len(all_vals), 6)
+                mean = sum(all_vals) / len(all_vals)
+                var = sum((v - mean) ** 2 for v in all_vals) / len(all_vals)
+                sample_row["value_std"] = round(var ** 0.5, 6)
+                sample_row["value_min"] = round(min(all_vals), 6)
+                sample_row["value_max"] = round(max(all_vals), 6)
+                sample_row["value_range"] = round(max(all_vals) - min(all_vals), 6)
+                for k, cnt in action_counts.items():
+                    sample_row[k] = cnt / len(sample_states)
+
+                sample_logger.log(sample_row)
+            
 
         # --- Eval printout ---
         if cfg.eval.checkpoint_freq > 0 and (t + 1) % cfg.eval.checkpoint_freq == 0:
@@ -379,6 +450,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     # --- Cleanup ---
     main_logger.close()
     detail_logger.close()
+    if sample_logger is not None:
+        sample_logger.close()
     finalize_logging(run_dir, start_time)
     print(f"\nRun saved to: {run_dir}")
 

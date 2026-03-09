@@ -92,6 +92,7 @@ train:
                               #   none   — constant at start
                               #   linear — interpolate start→end over total_steps
                               #   step   — multiply by step_factor every step_size steps
+    step_start: 100000        # int — number of steps before starting step decay (only for schedule=step). If this value is x, and step_size is y, then lr decays at steps x+y, x+2y, ...
     step_size: 5000           # int — decay interval (only for schedule=step)
     step_factor: 0.5          # float — multiply lr by this at each decay (only for schedule=step)
 

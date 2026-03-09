@@ -1,7 +1,9 @@
 import numpy as np
 import torch
-from utils import ten
-from config import DEVICE
+
+from debug.code.encoders import BaseEncoder, EncoderOutput
+from debug.code.helpers import ten
+from debug.code.enums import DEVICE
 from debug.code.network import NetworkWrapper
 
 torch.set_default_dtype(torch.float64)
@@ -9,55 +11,172 @@ torch.set_default_dtype(torch.float64)
 
 class VNetwork(NetworkWrapper):
     def __init__(
-            self, input_dim, output_dim, alpha, discount, hidden_dim=128, num_layers=4, num_training_steps=10000, schedule=False
+            self,
+            encoder: BaseEncoder,
+            output_dim: int,
+            alpha: float,
+            discount: float,
+            lam: float = 0.9,  # <-- TD(lambda)
+            mlp_dims: tuple[int, ...] = (128, 128),
+            num_training_steps: int = 10_000,
+            schedule: bool = False,
+            conv_channels: list[int] = None,
+            kernel_size: int = 3,
     ):
-        super().__init__(input_dim, output_dim, alpha, discount, hidden_dim, num_layers, schedule, num_training_steps)
-        self.batch_rewards = []
+        super().__init__(
+            encoder, output_dim, alpha, discount,
+            mlp_dims=mlp_dims,
+            schedule=schedule,
+            decay_steps=num_training_steps,
+            conv_channels=conv_channels,
+            kernel_size=kernel_size,
+        )
 
+        self.lam = float(lam)
+
+        self.batch_rewards = []
+        self.batch_discounts = []
         self.theoretical_vals = []
 
-    def get_value_function(self, x):
-        res = ten(x, DEVICE)
-        res = res.view(1, -1)
+        # eligibility traces over parameters (initialized lazily or via reset_traces())
+        self._traces = None
+        self.reset_traces()
+
+    def reset_traces(self):
+        """Call at episode start (and when done=True), like Sutton & Barto Fig. 9.1."""
+        self._traces = {}
+        for p in self.model.parameters():
+            if p.requires_grad:
+                self._traces[p] = torch.zeros_like(p, memory_format=torch.preserve_format)
+
+    @torch.no_grad()
+    def _apply_td_lambda_update(self, delta: torch.Tensor):
+        """w <- w + alpha * delta * e  (expects e already updated)."""
+        a = float(self.alpha)
+        d = float(delta)
+        for p in self.model.parameters():
+            if not p.requires_grad:
+                continue
+            e = self._traces.get(p, None)
+            if e is None:
+                continue
+            p.add_(a * d * e)
+
+    def get_value_function(self, enc: EncoderOutput) -> float:
+        self.model.eval()
         with torch.no_grad():
-            val = self.model(res).cpu().numpy().item()
-        return val
+            out = self.model(enc)
+        self.model.train()
+        return float(out.squeeze())
 
-    def get_input_dim(self):
-        return self._input_dim
+    def td_lambda_update(self, state, next_state, reward, discount) -> float:
+        # 1. Compute V(s) with grad tracking
+        v = self.model(state).squeeze()
 
-    def train(self):
-        states = ten(np.stack(self.batch_states, axis=0).squeeze(), DEVICE)
-        states = states.view(states.size(0), -1)
-        approx = self.model(states)  # shape [B]
-        approx = approx.squeeze(1)
-        # 2) Build TD‐target: y = r + γ·V_target(s')
+        # 2. Compute V(s') without grad tracking
         with torch.no_grad():
-            next_states = ten(np.stack(self.batch_new_states, axis=0).squeeze(), DEVICE)
-            next_states = next_states.view(next_states.size(0), -1)
-            target = self.model(next_states)  # [B]
-            y = ten(
-                np.array(self.batch_rewards), DEVICE
-            ) + self.discount * target.squeeze(1)
+            v_next = self.model(next_state).squeeze()
+            delta = reward + discount * v_next - v.detach()
 
-        # 3) Compute MSE loss & backpropagate
-        criterion = torch.nn.MSELoss(reduction="mean")
-        self.optimizer.zero_grad()
-        loss = criterion(approx, y)
-        loss.backward()
+        # 3. Get grad_w V(s)
+        self.optimizer.zero_grad(set_to_none=True)
+        v.backward()
+
+        # 4. Update eligibility traces: e <- gamma*lambda*e + grad
+        with torch.no_grad():
+            gl = float(discount) * self.lam
+            for p in self.model.parameters():
+                if not p.requires_grad or p.grad is None:
+                    continue
+                self._traces[p].mul_(gl).add_(p.grad)
+
+            # 5. Replace gradients with TD(lambda) pseudo-gradients
+            for p in self.model.parameters():
+                if not p.requires_grad:
+                    continue
+                p.grad = (-delta * self._traces[p]).clone()
+
+        # 6. Let SGD apply the update
         self.optimizer.step()
+
+        return float(delta.item())
+
+    def train_lambda(self):
+        """
+        Drop-in replacement that consumes the stored batch sequentially.
+        IMPORTANT: TD(lambda) is order-dependent; do NOT shuffle this batch.
+        If your batch spans multiple episodes, you must also store `done` flags
+        and pass them into td_lambda_update(...) to reset traces correctly.
+        """
+        if len(self.batch_states) == 0:
+            return 0.0
+
+        # If your existing code calls train() once per episode, traces are already fine.
+        # If train() is called mid-episode, do NOT reset traces here.
+        total_abs_delta = 0.0
+
+        batch = list(zip(
+            self.batch_states,
+            self.batch_new_states,
+            self.batch_rewards,
+            self.batch_discounts,
+        ))
+
+        for state, next_state, reward, discount in batch:
+            # done=False here because your stored experience doesn't include terminals.
+            # If you have terminals, add self.batch_dones and pass done accordingly.
+            delta = self.td_lambda_update(state, next_state, reward, discount)
+            total_abs_delta += abs(delta)
+
         self._after_update()
 
-        # self.optimizer.zero_grad()
         self.batch_states = []
         self.batch_new_states = []
         self.batch_rewards = []
-        return loss.item()
+        self.batch_discounts = []
 
-    def add_experience(self, state, new_state, reward, theoretical_val=None):
+        return total_abs_delta / len(batch)
+
+    def train_td0(self):
+        if len(self.batch_states) == 0:
+            return 0.0
+
+        total_loss = 0.0
+        batch = list(zip(self.batch_states, self.batch_new_states, self.batch_rewards, self.batch_discounts))
+
+        for state, next_state, reward, discount in batch:
+            self.optimizer.zero_grad()
+
+            with torch.no_grad():
+                target = reward + discount * self.model(next_state).squeeze()
+
+            pred = self.model(state).squeeze()
+            loss = (pred - target) ** 2
+            total_loss += float(loss.item())
+
+            loss.backward()
+            self.optimizer.step()
+
+        self._after_update()
+
+        self.batch_states = []
+        self.batch_new_states = []
+        self.batch_rewards = []
+        self.batch_discounts = []
+
+        return total_loss / len(batch)
+
+    def train(self):
+        if self.lam == -1:
+            return self.train_td0()
+        else:
+            return self.train_lambda()
+
+    def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
         self.batch_states.append(state)
         self.batch_new_states.append(new_state)
         self.batch_rewards.append(reward)
+        self.batch_discounts.append(discount_factor)  # Store per-transition discount
         if theoretical_val:
             self.theoretical_vals.append(theoretical_val)
 
@@ -96,16 +215,12 @@ class VNetwork(NetworkWrapper):
         return loss.item()
 
     def train_reward_supervised(self):
-        # states: [B, obs_dim]
-        states = ten(np.stack(self.batch_states, 0).squeeze(), DEVICE)
-        states = states.view(states.size(0), -1)
-
-        # y: [B] (or [B,1] depending on your net output)
+        states = ten(np.stack(self.batch_states, 0), DEVICE)  # (B, 5, H, W)
         y = ten(np.array(self.batch_rewards), DEVICE).view(-1)
 
-        pred = self.model(states).squeeze(-1)  # make it [B]
+        pred = self.model(states).squeeze(-1)  # (B,)
 
-        loss = torch.nn.functional.mse_loss(pred, y)  # standard regression loss
+        loss = torch.nn.functional.mse_loss(pred, y)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()

@@ -113,6 +113,7 @@ def _parse_schedule(d: dict[str, Any], section_name: str) -> ScheduleConfig:
         schedule=schedule,
         step_size=int(d.get("step_size", 0)),
         step_factor=float(d.get("step_factor", 1.0)),
+        step_start=int(d.get("step_start", 0)),
     )
 
 

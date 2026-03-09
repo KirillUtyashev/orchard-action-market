@@ -1,4 +1,8 @@
+import torch
 import torch.nn as nn
+
+from debug.code.encoders import EncoderOutput
+from debug.code.enums import DEVICE
 
 
 class MainNet(nn.Module):
@@ -6,27 +10,18 @@ class MainNet(nn.Module):
             self,
             input_dim: int,
             output_dim: int,
-            hidden_dim: int = 128,
-            num_layers: int = 4,
+            mlp_dims: tuple[int, ...] = (128, 128),
             negative_slope: float = 0.01,
     ):
         super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be >= 1")
-
         layers: list[nn.Module] = []
-
-        if num_layers == 1:
-            layers.append(nn.Linear(input_dim, output_dim))
-        else:
-            layers += [nn.Linear(input_dim, hidden_dim), nn.LeakyReLU(negative_slope=negative_slope)]
-            for _ in range(num_layers - 2):
-                layers += [nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(negative_slope=negative_slope)]
-            layers.append(nn.Linear(hidden_dim, output_dim))
-
+        d = input_dim
+        for hd in mlp_dims:
+            layers += [nn.Linear(d, hd), nn.LeakyReLU(negative_slope=negative_slope)]
+            d = hd
+        layers.append(nn.Linear(d, output_dim))
         self.net = nn.Sequential(*layers)
 
-        # Xavier init (with gain for leaky_relu)
         gain = nn.init.calculate_gain("leaky_relu", param=negative_slope)
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
@@ -34,5 +29,69 @@ class MainNet(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0.0)
 
-    def forward(self, x):
+    def forward(self, enc: EncoderOutput) -> torch.Tensor:
+        x = enc.scalar.to(DEVICE).float()
+        if x.dim() == 1:
+            x = x.unsqueeze(0)      # (1, D)
         return self.net(x)
+
+
+class CNNMainNet(nn.Module):
+    def __init__(
+            self,
+            grid_shape: tuple[int, int, int],
+            scalar_dim: int,
+            output_dim: int,
+            conv_channels: list[int] = None,
+            kernel_size: int = 3,
+            mlp_dims: tuple[int, ...] = (128, 128),
+            negative_slope: float = 0.01,
+    ):
+        super().__init__()
+        C, H, W = grid_shape
+        conv_channels = conv_channels or [32, 64]
+
+        conv_layers: list[nn.Module] = []
+        in_ch = C
+        for out_ch in conv_channels:
+            conv_layers += [
+                nn.Conv2d(in_ch, out_ch, kernel_size=kernel_size, padding=kernel_size // 2),
+                nn.ReLU(),
+            ]
+            in_ch = out_ch
+        self.cnn = nn.Sequential(*conv_layers)
+
+        mlp_input_dim = in_ch * H * W + scalar_dim
+        mlp_layers: list[nn.Module] = []
+        d = mlp_input_dim
+        for hd in mlp_dims:
+            mlp_layers += [nn.Linear(d, hd), nn.LeakyReLU(negative_slope=negative_slope)]
+            d = hd
+        mlp_layers.append(nn.Linear(d, output_dim))
+        self.mlp = nn.Sequential(*mlp_layers)
+
+        gain = nn.init.calculate_gain("leaky_relu", param=negative_slope)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, gain=gain)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight, gain=nn.init.calculate_gain("relu"))
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, enc: EncoderOutput) -> torch.Tensor:
+        grid = enc.grid.to(DEVICE).float()
+        if grid.dim() == 3:
+            grid = grid.unsqueeze(0)            # (1, C, H, W)
+
+        flat = self.cnn(grid).flatten(start_dim=1)  # (B, in_ch*H*W)
+
+        if enc.scalar is not None:
+            scalar = enc.scalar.to(DEVICE).float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)    # (1, D)
+            flat = torch.cat([flat, scalar], dim=1)
+
+        return self.mlp(flat)
