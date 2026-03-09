@@ -23,6 +23,7 @@ pytestmark = pytest.mark.skipif(
 
 if TORCH_AVAILABLE:
     import debug.code.training.learning as learning_mod
+    import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
     from debug.code.env.environment import MoveAction, Orchard
     from debug.code.training.helpers import set_all_seeds
@@ -140,6 +141,71 @@ eval:
   variance: 0.0
   debug: true
   reward_eval_num_states: 1000
+  action_prob_num_states: 0
+  action_prob_burnin: 0
+  action_prob_stride: 1
+  value_track_num_states: 0
+
+env:
+  num_agents: 2
+  length: 6
+  width: 6
+  apple_life: 10.0
+  max_apples: 9
+
+logging:
+  output_dir: "{output_dir}"
+  main_csv_freq: 2
+  weight_samples_enabled: false
+  weight_samples_per_tensor: 16
+  weight_samples_freq: 0
+"""
+    path.write_text(yaml_text.strip() + "\n")
+
+
+def _write_supervised_learning_yaml(path: Path, output_dir: Path, weights_path: Path) -> None:
+    yaml_text = f"""
+network:
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+  CNN: false
+  input_dim: 0
+
+train:
+  alpha: 0.01
+  timesteps: 4
+  seed: 1234
+  epsilon: 0.05
+  lmda: -1.0
+  schedule_lr: false
+  load_weights: false
+
+algorithm:
+  random_policy: false
+  q_agent: 0.4
+  centralized: false
+  concat: false
+
+reward:
+  picker_r: -1
+  supervised: true
+  reward_learning: false
+  top_k_num_apples: 1
+
+supervised:
+  weights_path: "{weights_path}"
+  CNN: false
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+
+eval:
+  num_eval_states: 0
+  num_seeds: 10
+  variance: 0.0
+  debug: true
+  supervised_eval_num_states: 25
   action_prob_num_states: 0
   action_prob_burnin: 0
   action_prob_stride: 1
@@ -733,3 +799,104 @@ def test_reward_learning_training_path_uses_random_policy(reward_learning_learne
         learning_mod.random_policy = original_random_policy
 
     assert call_counter["n"] > 0
+
+
+def test_supervised_build_experiment_enforces_teacher_student_count_match(tmp_path, monkeypatch):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+
+    def fake_load(_path, map_location=None):
+        return {"critics": [{"blob": {}}]}  # 1 teacher only; students are per-agent (2)
+
+    monkeypatch.setattr(learning_setup_mod.torch, "load", fake_load)
+    with pytest.raises(ValueError, match="mismatch"):
+        learner.build_experiment()
+    _close_learning_loggers(learner)
+
+
+def test_supervised_state_generation_uses_configured_count(tmp_path):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+    learner._generate_evaluation_states_supervised()
+
+    assert isinstance(learner.supervised_evaluation_states, list)
+    assert len(learner.supervised_evaluation_states) == 25
+    for st in learner.supervised_evaluation_states[:5]:
+        assert "apples" in st and "agents" in st and "agent_positions" in st and "actor_id" in st
+    _close_learning_loggers(learner)
+
+
+def test_supervised_eval_performance_logs_both_policy_and_fit_metrics(tmp_path):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+
+    class DummyController:
+        epsilon = 0.05
+
+    class DummyCritic:
+        @staticmethod
+        def get_lr():
+            return 0.01
+
+    class DummyEnv:
+        d_apple = 0.1
+        p_apple = 0.1
+        max_apples = 9
+
+    learner.agent_controller = DummyController()
+    learner.critic_networks = [DummyCritic(), DummyCritic()]
+    learner.env = DummyEnv()
+
+    called = {"n": 0}
+
+    def fake_supervised_eval():
+        called["n"] += 1
+        return {"supervised_mae_mean": 0.25, "supervised_rmse_mean": 0.5}
+
+    learner.evaluate_networks_supervised = fake_supervised_eval
+    original_eval_performance = learning_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        return {
+            "greedy_pps": 10,
+            "total_apples": 20,
+            "greedy_ratio": 0.5,
+            "nearest_pps": 9,
+            "nearest_ratio": 0.45,
+            "nearest_total_apples": 20,
+            "greedy_agent_positions": np.zeros((2, NUM_AGENTS, 2), dtype=np.int16),
+        }
+
+    learning_mod.eval_performance = fake_eval_performance
+    try:
+        learner.eval_performance(step=11)
+    finally:
+        learning_mod.eval_performance = original_eval_performance
+
+    rows = _read_rows(learner.data_dir / "metrics.csv")
+    assert rows, "Expected metrics row for supervised eval."
+    row = rows[-1]
+    assert row["step"] == "11"
+    assert float(row["greedy_pps"]) == pytest.approx(10.0)
+    assert float(row["supervised_mae_mean"]) == pytest.approx(0.25)
+    assert float(row["supervised_rmse_mean"]) == pytest.approx(0.5)
+    assert called["n"] == 1
+    _close_learning_loggers(learner)

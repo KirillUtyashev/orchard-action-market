@@ -108,7 +108,7 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(*, reward_learning: bool) -> list[str]:
+def build_main_csv_fieldnames(*, reward_learning: bool, supervised: bool = False) -> list[str]:
     """Build column names for metrics.csv based on training mode."""
     fields = ["step", "current_lr"]
     if reward_learning:
@@ -125,6 +125,11 @@ def build_main_csv_fieldnames(*, reward_learning: bool) -> list[str]:
             "total_apples",
             "nearest_total_apples",
         ])
+        if supervised:
+            fields.extend([
+                "supervised_mae_mean",
+                "supervised_rmse_mean",
+            ])
     return fields
 
 
@@ -143,6 +148,31 @@ def build_value_track_csv_fieldnames(num_states: int) -> list[str]:
 def build_weight_sample_csv_fieldnames() -> list[str]:
     """Build column names for sampled weight trajectories."""
     return ["step", "wall_time", "tensor_name", "sample_id", "flat_index", "value"]
+
+
+def build_pipeline_profile_csv_fieldnames() -> list[str]:
+    """Build column names for stage-level pipeline timing snapshots."""
+    return [
+        "step",
+        "wall_time",
+        "steps_since_last",
+        "wall_since_last",
+        "steps_per_second",
+        "avg_step_seconds",
+        "action_select_s",
+        "env_step_s",
+        "train_update_s",
+        "diagnostics_s",
+        "eval_s",
+        "other_s",
+        "loop_total_s",
+        "action_select_pct",
+        "env_step_pct",
+        "train_update_pct",
+        "diagnostics_pct",
+        "eval_pct",
+        "other_pct",
+    ]
 
 
 def build_detail_csv_fieldnames(n_agents: int, networks: list[Any]) -> list[str]:

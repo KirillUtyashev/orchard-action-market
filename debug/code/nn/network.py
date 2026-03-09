@@ -23,6 +23,7 @@ class NetworkWrapper(ABC):
             conv_channels: list[int] | None = None,
             kernel_size: int = 3,
             momentum: float = 0.0,
+            use_mlp: bool = True,
     ):
         self.encoder = encoder
         self._is_cnn = isinstance(encoder, GridEncoder)
@@ -35,6 +36,7 @@ class NetworkWrapper(ABC):
                 conv_channels=conv_channels or [32, 64],
                 kernel_size=kernel_size,
                 mlp_dims=mlp_dims,
+                use_mlp=use_mlp,
             ).to(DEVICE)
         else:
             self.model = MainNet(encoder.output_dim(), output_dim, mlp_dims * 2).to(DEVICE)

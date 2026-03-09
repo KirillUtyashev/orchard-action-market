@@ -19,6 +19,7 @@ DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 @dataclass
 class NetworkConfig:
     CNN: bool = False
+    MLP: bool = True
     mlp_dims: tuple = (128, 128)
     conv_channels: list = None
     kernel_size: int = 3
@@ -41,9 +42,6 @@ class TrainingConfig:
 @dataclass
 class AlgorithmConfig:
     """TD/RL algorithm choices."""
-    forward: bool = False           # forward vs backward view
-    eligibility: bool = False       # eligibility traces
-    monte_carlo: bool = False
     random_policy: bool = False
     q_agent: float = 0.5
     centralized: bool = False
@@ -54,7 +52,7 @@ class AlgorithmConfig:
 class RewardConfig:
     """Reward shaping and environment interaction."""
     picker_r: int = -5
-    supervised: bool = True
+    supervised: bool = False
     reward_learning: bool = False
     top_k_num_apples: int = 1
 
@@ -67,6 +65,7 @@ class EvalConfig:
     variance: float = 0.0
     debug: bool = True
     reward_eval_num_states: int = 1000
+    supervised_eval_num_states: int = 1000
     action_prob_num_states: int = 100
     action_prob_burnin: int = 500
     action_prob_stride: int = 5
@@ -92,11 +91,32 @@ class LoggingConfig:
 
 
 @dataclass
+class ProfilingConfig:
+    enabled: bool = False
+    csv_freq: int = 0
+    include_eval: bool = True
+    cprofile: bool = False
+    cprofile_sort_by: str = "cumulative"
+    cprofile_top_n: int = 200
+
+
+@dataclass
+class SupervisedConfig:
+    weights_path: str = ""
+    CNN: bool = False
+    mlp_dims: tuple = (128, 128)
+    conv_channels: list = field(default_factory=lambda: [32, 32])
+    kernel_size: int = 3
+
+
+@dataclass
 class ExperimentConfig:
     network: NetworkConfig = None
     train: TrainingConfig = None
     algorithm: AlgorithmConfig = None
     reward: RewardConfig = None
+    supervised: SupervisedConfig = None
     eval: EvalConfig = None
     env: EnvironmentConfig = None
     logging: LoggingConfig = None
+    profiling: ProfilingConfig = None

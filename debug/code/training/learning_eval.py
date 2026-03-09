@@ -7,6 +7,62 @@ from debug.code.training.helpers import eval_performance, set_all_seeds
 
 
 class LearningEvalMixin:
+    def _ensure_supervised_eval_states(self) -> list[dict]:
+        if self.supervised_evaluation_states is None:
+            self._generate_evaluation_states_supervised()
+        return self.supervised_evaluation_states or []
+
+    def _attach_supervised_teacher_values(self, states: list[dict]) -> None:
+        if not self.supervised_networks:
+            raise RuntimeError("No supervised teacher networks were initialized.")
+
+        with torch.no_grad():
+            for state in states:
+                if "teacher_values" in state:
+                    continue
+                values = np.zeros(len(self.supervised_networks), dtype=np.float32)
+                for idx, teacher in enumerate(self.supervised_networks):
+                    enc = self.encoder.encode(state, 0 if self.exp_config.algorithm.centralized else idx)
+                    values[idx] = float(teacher.get_value_function(enc))
+                state["teacher_values"] = values
+
+    def evaluate_networks_supervised(self) -> dict[str, float | None]:
+        if not self.supervised_enabled:
+            return {}
+        if self.encoder is None or not self.critic_networks:
+            return {"supervised_mae_mean": None, "supervised_rmse_mean": None}
+
+        states = self._ensure_supervised_eval_states()
+        if not states:
+            return {"supervised_mae_mean": None, "supervised_rmse_mean": None}
+
+        if len(self.supervised_networks) != len(self.critic_networks):
+            raise RuntimeError(
+                f"Teacher/student count mismatch at evaluation time: "
+                f"{len(self.supervised_networks)} teachers vs {len(self.critic_networks)} students."
+            )
+
+        self._attach_supervised_teacher_values(states)
+
+        abs_errors = []
+        sq_errors = []
+        with torch.no_grad():
+            for state in states:
+                teacher_values = np.asarray(state["teacher_values"], dtype=np.float64)
+                for idx, student in enumerate(self.critic_networks):
+                    enc = self.encoder.encode(state, 0 if self.exp_config.algorithm.centralized else idx)
+                    pred = float(student.get_value_function(enc))
+                    err = pred - float(teacher_values[idx])
+                    abs_errors.append(abs(err))
+                    sq_errors.append(err * err)
+
+        mae = float(np.mean(abs_errors)) if abs_errors else None
+        rmse = float(np.sqrt(np.mean(sq_errors))) if sq_errors else None
+        return {
+            "supervised_mae_mean": mae,
+            "supervised_rmse_mean": rmse,
+        }
+
     def eval_performance(self, step):
         self.save_rng_state()
         set_all_seeds(42069)
@@ -26,6 +82,8 @@ class LearningEvalMixin:
         greedy_positions = results.pop("greedy_agent_positions", None)
         results["step"] = step
         results["current_lr"] = self.critic_networks[0].get_lr()
+        if self.supervised_enabled:
+            results.update(self.evaluate_networks_supervised())
         self.agent_controller.epsilon = self.exp_config.train.epsilon
         self.main_logger.log(results)
         if greedy_positions is not None:

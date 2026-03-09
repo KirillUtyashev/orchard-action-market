@@ -9,7 +9,7 @@ import yaml
 from debug.code.core.enums import AlgorithmConfig, EnvironmentConfig, EvalConfig, \
     ExperimentConfig, \
     LoggingConfig, NetworkConfig, \
-    RewardConfig, TrainingConfig
+    ProfilingConfig, RewardConfig, SupervisedConfig, TrainingConfig
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,9 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Experim
         train=_populate_dataclass(TrainingConfig,    raw.get("train",     {})),
         algorithm=_populate_dataclass(AlgorithmConfig, raw.get("algorithm", {})),
         reward=_populate_dataclass(RewardConfig,     raw.get("reward",    {})),
+        supervised=_populate_dataclass(SupervisedConfig, raw.get("supervised", {})),
         eval=_populate_dataclass(EvalConfig,         raw.get("eval",      {})),
         env=_populate_dataclass(EnvironmentConfig,   raw.get("env",       {})),
-        logging=_populate_dataclass(LoggingConfig, raw.get("logging", {}))
+        logging=_populate_dataclass(LoggingConfig, raw.get("logging", {})),
+        profiling=_populate_dataclass(ProfilingConfig, raw.get("profiling", {})),
     )

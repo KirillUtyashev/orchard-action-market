@@ -45,11 +45,13 @@ class CNNMainNet(nn.Module):
             conv_channels: list[int] = None,
             kernel_size: int = 3,
             mlp_dims: tuple[int, ...] = (128, 128),
+            use_mlp: bool = True,
             negative_slope: float = 0.01,
     ):
         super().__init__()
         C, H, W = grid_shape
         conv_channels = conv_channels or [32, 64]
+        self.use_mlp = bool(use_mlp)
 
         conv_layers: list[nn.Module] = []
         in_ch = C
@@ -61,14 +63,17 @@ class CNNMainNet(nn.Module):
             in_ch = out_ch
         self.cnn = nn.Sequential(*conv_layers)
 
-        mlp_input_dim = in_ch * H * W + scalar_dim
-        mlp_layers: list[nn.Module] = []
-        d = mlp_input_dim
-        for hd in mlp_dims:
-            mlp_layers += [nn.Linear(d, hd), nn.LeakyReLU(negative_slope=negative_slope)]
-            d = hd
-        mlp_layers.append(nn.Linear(d, output_dim))
-        self.mlp = nn.Sequential(*mlp_layers)
+        head_input_dim = in_ch * H * W + scalar_dim
+        if self.use_mlp:
+            mlp_layers: list[nn.Module] = []
+            d = head_input_dim
+            for hd in mlp_dims:
+                mlp_layers += [nn.Linear(d, hd), nn.LeakyReLU(negative_slope=negative_slope)]
+                d = hd
+            mlp_layers.append(nn.Linear(d, output_dim))
+            self.head = nn.Sequential(*mlp_layers)
+        else:
+            self.head = nn.Linear(head_input_dim, output_dim)
 
         gain = nn.init.calculate_gain("leaky_relu", param=negative_slope)
         for m in self.modules():
@@ -94,4 +99,4 @@ class CNNMainNet(nn.Module):
                 scalar = scalar.unsqueeze(0)    # (1, D)
             flat = torch.cat([flat, scalar], dim=1)
 
-        return self.mlp(flat)
+        return self.head(flat)

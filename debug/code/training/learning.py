@@ -14,6 +14,7 @@ from debug.code.core.log import (
     CSVLogger,
     build_action_prob_csv_fieldnames,
     build_main_csv_fieldnames,
+    build_pipeline_profile_csv_fieldnames,
     build_value_track_csv_fieldnames,
     setup_logging,
 )
@@ -40,6 +41,8 @@ class Learning(
         self.num_agents = int(exp_config.env.num_agents)
         self.width = int(exp_config.env.width)
         self.length = int(exp_config.env.length)
+        self.supervised_enabled = bool(exp_config.reward.supervised)
+        self.supervised_networks = []
 
         self.agents = []
         self.critic_networks = []
@@ -56,13 +59,45 @@ class Learning(
 
         self.num_eval_states = exp_config.eval.num_eval_states
         self.reward_eval_num_states = max(1, int(getattr(exp_config.eval, "reward_eval_num_states", 1000)))
+        self.supervised_eval_num_states = max(1, int(getattr(exp_config.eval, "supervised_eval_num_states", 1000)))
 
         self.train_start_time = None
         self._last_eval_errors_by_agent = None
+        self.pipeline_profile_enabled = bool(getattr(self.exp_config.profiling, "enabled", False))
+        self.pipeline_profile_include_eval = bool(getattr(self.exp_config.profiling, "include_eval", True))
+        self.pipeline_profile_freq = int(getattr(self.exp_config.profiling, "csv_freq", 0))
+        if self.pipeline_profile_freq <= 0:
+            self.pipeline_profile_freq = int(self.exp_config.logging.main_csv_freq)
+        self.pipeline_profile_stage_totals: dict[str, float] = {}
+        self.pipeline_profile_stage_snapshot: dict[str, float] = {}
+        self.pipeline_profile_last_step = 0
+        self.pipeline_profile_last_wall_time = 0.0
+        self.pipeline_profile_logger: CSVLogger | None = None
+        self.cprofile_enabled = bool(getattr(self.exp_config.profiling, "cprofile", False))
+        self.cprofile_sort_by = str(getattr(self.exp_config.profiling, "cprofile_sort_by", "cumulative"))
+        self.cprofile_top_n = max(1, int(getattr(self.exp_config.profiling, "cprofile_top_n", 200)))
 
+        self._validate_training_modes()
         self._init_logging_and_diagnostics()
         self._init_eval_buffers()
         self._load_weights_if_requested()
+
+    def _validate_training_modes(self) -> None:
+        if self.exp_config.reward.reward_learning and self.supervised_enabled:
+            raise ValueError("reward.reward_learning and reward.supervised cannot both be enabled.")
+        if self.supervised_enabled:
+            if not str(getattr(self.exp_config.supervised, "weights_path", "")).strip():
+                raise ValueError(
+                    "reward.supervised=true requires supervised.weights_path to be set in the config."
+                )
+            if not tuple(getattr(self.exp_config.supervised, "mlp_dims", ())):
+                raise ValueError("reward.supervised=true requires supervised.mlp_dims to be non-empty.")
+            if bool(getattr(self.exp_config.supervised, "CNN", False)) and not list(
+                getattr(self.exp_config.supervised, "conv_channels", [])
+            ):
+                raise ValueError(
+                    "reward.supervised=true with supervised.CNN=true requires supervised.conv_channels."
+                )
 
     def _init_logging_and_diagnostics(self) -> None:
         self.data_dir = setup_logging(self.exp_config)
@@ -73,7 +108,10 @@ class Learning(
 
         reward_learning_mode = bool(self.exp_config.reward.reward_learning)
 
-        main_fields = build_main_csv_fieldnames(reward_learning=reward_learning_mode)
+        main_fields = build_main_csv_fieldnames(
+            reward_learning=reward_learning_mode,
+            supervised=self.supervised_enabled,
+        )
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
 
         action_prob_fields = build_action_prob_csv_fieldnames()
@@ -112,6 +150,11 @@ class Learning(
         self.weight_samples_freq = int(getattr(self.exp_config.logging, "weight_samples_freq", 0))
         self.weight_sample_indices: dict[int, dict[str, np.ndarray]] = {}
         self.weight_sample_loggers: dict[int, CSVLogger] = {}
+        if self.pipeline_profile_enabled:
+            self.pipeline_profile_logger = CSVLogger(
+                self.data_dir / "pipeline_profile.csv",
+                build_pipeline_profile_csv_fieldnames(),
+            )
 
     def _init_eval_buffers(self) -> None:
         self.action_prob_num_states = max(0, int(getattr(self.exp_config.eval, "action_prob_num_states", 100)))
@@ -119,6 +162,7 @@ class Learning(
         self.action_prob_stride = max(1, int(getattr(self.exp_config.eval, "action_prob_stride", 5)))
         self.action_prob_seed = 42069
         self.action_prob_eval_states = None
+        self.supervised_evaluation_states = None
         self.value_track_states_by_agent = None
 
         self.careful_evals = []
