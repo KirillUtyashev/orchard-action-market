@@ -29,6 +29,10 @@ class BaseEncoder(ABC):
     def grid_channels(self) -> int:
         """Grid channel count. 0 means no grid output (MLP encoder)."""
         return 0
+    
+    def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+        """Batch-encode multiple after-states. Default: just calls encode() in a loop."""
+        raise NotImplementedError(f"{type(self).__name__} does not support encode_batch_for_actions")
 
 
 class GridEncoder(BaseEncoder):

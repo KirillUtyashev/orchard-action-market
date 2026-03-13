@@ -89,3 +89,36 @@ def epsilon_greedy(
     if rng.random() < epsilon:
         return Action(rng.randint(0, NUM_ACTIONS - 1))
     return argmax_a_Q_team(state, networks, env)
+
+def argmax_a_Q_team_batched(
+    state: State,
+    networks: list[ValueNetwork],
+    env: BaseEnv,
+) -> Action:
+    """Greedy action with batched encoding + forward passes."""
+    after_states = [env.apply_action(state, a) for a in ACTION_PRIORITY]
+    team_values = [0.0] * len(ACTION_PRIORITY)
+    with torch.no_grad():
+        for i, net in enumerate(networks):
+            batch_enc = encoding.encode_batch_for_actions(state, i, after_states)
+            vals = net(batch_enc)
+            for k in range(len(ACTION_PRIORITY)):
+                team_values[k] += vals[k].item()
+
+    best_idx = 0
+    for k in range(1, len(ACTION_PRIORITY)):
+        if team_values[k] > team_values[best_idx]:
+            best_idx = k
+    return ACTION_PRIORITY[best_idx]
+
+
+def epsilon_greedy_batched(
+    state: State,
+    networks: list[ValueNetwork],
+    env: BaseEnv,
+    epsilon: float,
+) -> Action:
+    """Batched version of epsilon_greedy."""
+    if rng.random() < epsilon:
+        return Action(rng.randint(0, NUM_ACTIONS - 1))
+    return argmax_a_Q_team_batched(state, networks, env)

@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 import orchard.encoding as encoding
-from orchard.enums import ModelType, TrainMethod
+from orchard.enums import Activation, ModelType, TrainMethod, WeightInit
 from orchard.schedule import compute_schedule_value
 from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, NStepTransition, ScheduleConfig
 
@@ -36,18 +36,23 @@ class ValueNetwork(nn.Module):
 
         if model_cfg.model_type == ModelType.MLP:
             input_dim = encoding.get_scalar_dim()
-            self.net = self._build_mlp(input_dim, model_cfg.mlp_dims)
+            self.net = self._build_mlp(input_dim, model_cfg.mlp_dims, model_cfg.activation)
         elif model_cfg.model_type == ModelType.CNN:
             channels = encoding.get_grid_channels()
             scalar_extra = encoding.get_scalar_dim()
             self.conv, conv_flat_dim = self._build_conv(
-                channels, model_cfg.conv_specs, env_cfg.height, env_cfg.width
+                channels, model_cfg.conv_specs, env_cfg.height, env_cfg.width, model_cfg.activation
             )
             self.flatten = nn.Flatten()
-            self.net = self._build_mlp(conv_flat_dim + scalar_extra, model_cfg.mlp_dims)
+            self.net = self._build_mlp(conv_flat_dim + scalar_extra, model_cfg.mlp_dims, model_cfg.activation)
         else:
             raise ValueError(f"Unknown model type: {model_cfg.model_type}")
         
+        if model_cfg.weight_init == WeightInit.ZERO_BIAS:
+            for m in self.modules():
+                if isinstance(m, (nn.Linear, nn.Conv2d)) and m.bias is not None:
+                    nn.init.zeros_(m.bias)
+                    
         # NOTE: for n-step adam converges a lot faster, so be careful here.
         self.optimizer = torch.optim.SGD(self.parameters(), lr=lr_schedule.start) #self.optimizer = torch.optim.Adam(self.parameters(), lr=lr_schedule.start)
         
@@ -69,13 +74,16 @@ class ValueNetwork(nn.Module):
         
 
     @staticmethod
-    def _build_mlp(input_dim: int, hidden_dims: tuple[int, ...]) -> nn.Sequential:
-        """Build MLP: input → [hidden+ReLU]* → Linear(1)."""
+    def _build_mlp(input_dim: int, hidden_dims: tuple[int, ...], activation: Activation = Activation.RELU) -> nn.Sequential:
         layers: list[nn.Module] = []
         d = input_dim
         for hd in hidden_dims:
             layers.append(nn.Linear(d, hd))
-            layers.append(nn.ReLU())
+            if activation == Activation.LEAKY_RELU:
+                layers.append(nn.LeakyReLU())
+            elif activation == Activation.RELU:
+                layers.append(nn.ReLU())
+            # else no activation for None
             d = hd
         layers.append(nn.Linear(d, 1))
         return nn.Sequential(*layers)
@@ -86,6 +94,7 @@ class ValueNetwork(nn.Module):
         conv_specs: tuple[tuple[int, int], ...] | None,
         height: int,
         width: int,
+        activation: Activation = Activation.RELU,
     ) -> tuple[nn.Sequential, int]:
         """Build conv layers. Returns (conv_sequential, flat_output_dim)."""
         if conv_specs is None:
@@ -97,7 +106,10 @@ class ValueNetwork(nn.Module):
         for out_c, ks in conv_specs:
             padding = ks // 2
             layers.append(nn.Conv2d(c, out_c, kernel_size=ks, padding=padding))
-            layers.append(nn.ReLU())
+            if activation == Activation.LEAKY_RELU:
+                layers.append(nn.LeakyReLU())
+            elif activation == Activation.RELU:
+                layers.append(nn.ReLU())
             h = (h + 2 * padding - ks) // 1 + 1
             w = (w + 2 * padding - ks) // 1 + 1
             c = out_c

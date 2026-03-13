@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from orchard.enums import (
+    Activation,
     DespawnMode,
     EncoderType,
     EnvType,
@@ -17,6 +18,7 @@ from orchard.enums import (
     TDTarget,
     TrainMethod,
     TrainMode,
+    WeightInit,
 )
 from orchard.datatypes import (
     EnvConfig,
@@ -149,12 +151,22 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         stochastic=stochastic_cfg,
     )
 
+_ACTIVATION_MAP: dict[str, Activation] = {
+    "relu": Activation.RELU,
+    "leaky_relu": Activation.LEAKY_RELU,
+    "none": Activation.NONE,
+}
+
+_WEIGHT_INIT_MAP: dict[str, WeightInit] = {
+    "default": WeightInit.DEFAULT,
+    "zero_bias": WeightInit.ZERO_BIAS,
+}
 
 def _parse_model(d: dict[str, Any]) -> ModelConfig:
     """Parse model config section."""
     input_type = _enum_lookup(d["input_type"], _ENCODER_TYPE_MAP, "model.input_type")
     model_type = _enum_lookup(d["model_type"], _MODEL_TYPE_MAP, "model.model_type")
-    k = d.get("k", None) # number of apples to consider fo k-nearest input.
+    k = d.get("k", None)
     if k is not None:
         k = int(k)
 
@@ -166,12 +178,17 @@ def _parse_model(d: dict[str, Any]) -> ModelConfig:
             (int(spec[0]), int(spec[1])) for spec in d["conv_specs"]
         )
 
+    activation = _enum_lookup(d.get("activation", "relu"), _ACTIVATION_MAP, "model.activation")
+    weight_init = _enum_lookup(d.get("weight_init", "default"), _WEIGHT_INIT_MAP, "model.weight_init")
+
     return ModelConfig(
         input_type=input_type,
         model_type=model_type,
         mlp_dims=mlp_dims,
         conv_specs=conv_specs,
         k_nearest=k,
+        activation=activation,
+        weight_init=weight_init,
     )
 
 
@@ -208,6 +225,7 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         patience_steps=int(d.get("patience_steps", 10000)),
         improvement_threshold=float(d.get("improvement_threshold", 0.01)),
         min_steps_before_stop=int(d.get("min_steps_before_stop", 0)),
+        batch_actions=bool(d.get("batch_actions", True)),
     )
 
 

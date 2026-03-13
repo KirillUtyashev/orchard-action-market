@@ -9,6 +9,7 @@ import torch
 
 from orchard.enums import (
     Action,
+    Activation,
     DespawnMode,
     EncoderType,
     EnvType,
@@ -19,6 +20,7 @@ from orchard.enums import (
     TDTarget,
     TrainMode,
     TrainMethod,
+    WeightInit,
 )
 
 
@@ -55,7 +57,7 @@ class State:
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class EncoderOutput:
-    """Output of an encoder. Exactly one of scalar/grid is non-None."""
+    """Output of an encoder. Note this supports batching across all after states for actions, so scalar may really be a list of scalars, and same for grid."""
     scalar: torch.Tensor | None = None     # shape: (D,)
     grid: torch.Tensor | None = None       # shape: (C, H, W)
 
@@ -139,6 +141,7 @@ class TrainConfig:
     patience_steps: int = 10000
     improvement_threshold: float = 0.01
     min_steps_before_stop: int = 0
+    batch_actions: bool = True
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,8 @@ class ModelConfig:
     mlp_dims: tuple[int, ...]
     conv_specs: tuple[tuple[int, int], ...] | None = None
     k_nearest: int | None = None  # only for relative_k encoder; ignored otherwise. If None, defaults to n_agents - 1.
+    activation: Activation = Activation.RELU
+    weight_init: WeightInit = WeightInit.DEFAULT 
 
 
 @dataclass(frozen=True)

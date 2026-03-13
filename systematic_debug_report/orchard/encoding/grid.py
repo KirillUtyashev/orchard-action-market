@@ -52,6 +52,55 @@ class BasicGridEncoder(GridEncoder):
 
         return EncoderOutput(grid=grid, scalar=scalar)
 
+    def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+        """Batch-encode after-states. Only actor position differs across them."""
+        h, w = self.env_cfg.height, self.env_cfg.width
+        n = len(after_states)
+        actor = state.actor
+        is_actor = (agent_idx == actor)
+
+        # Base grid: channels constant across all actions
+        base = torch.zeros(4, h, w, dtype=torch.float32)
+
+        # Ch0: apples (always constant)
+        for ap in state.apple_positions:
+            base[0, ap.row, ap.col] += 1.0
+
+        if is_actor:
+            # Ch1 (self=actor) varies per action → leave blank
+            # Ch2 (others): non-actor agents didn't move → constant
+            for j, pos in enumerate(state.agent_positions):
+                if j != agent_idx:
+                    base[2, pos.row, pos.col] += 1.0
+        else:
+            # Ch1 (self): didn't move → constant
+            r, c = state.agent_positions[agent_idx]
+            base[1, r, c] = 1.0
+            # Ch2 (others): all except self and actor are constant
+            for j, pos in enumerate(state.agent_positions):
+                if j != agent_idx and j != actor:
+                    base[2, pos.row, pos.col] += 1.0
+            # Actor's contribution to Ch2 varies → filled per action
+
+        # Ch3 (actor) always varies → leave blank
+
+        # Build per-action grids
+        grids = torch.zeros(n, 4, h, w, dtype=torch.float32)
+        for k, s_after in enumerate(after_states):
+            grids[k] = base
+            actor_pos = s_after.agent_positions[actor]
+            if is_actor:
+                grids[k, 1, actor_pos.row, actor_pos.col] = 1.0
+            else:
+                grids[k, 2, actor_pos.row, actor_pos.col] += 1.0
+            grids[k, 3, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalar (constant across actions)
+        scalar_val = 1.0 if is_actor else 0.0
+        scalars = torch.full((n, 1), scalar_val, dtype=torch.float32)
+
+        return EncoderOutput(grid=grids, scalar=scalars)
+    
 class GridMLPEncoder(BaseEncoder):
     """Flattened CNN grid as MLP input (no convolutions).
 
@@ -126,3 +175,31 @@ class CentralizedGridEncoder(GridEncoder):
         grid[2, actor_pos.row, actor_pos.col] = 1.0
 
         return EncoderOutput(grid=grid, scalar=None)
+
+    def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+        """Batch-encode after-states. Only actor position differs across them."""
+        h, w = self.env_cfg.height, self.env_cfg.width
+        n = len(after_states)
+        actor = state.actor
+
+        # Base grid
+        base = torch.zeros(3, h, w, dtype=torch.float32)
+
+        # Ch0: apples (constant)
+        for ap in state.apple_positions:
+            base[0, ap.row, ap.col] += 1.0
+
+        # Ch1: non-actor agents (constant part)
+        for j, pos in enumerate(state.agent_positions):
+            if j != actor:
+                base[1, pos.row, pos.col] += 1.0
+
+        # Per-action grids
+        grids = torch.zeros(n, 3, h, w, dtype=torch.float32)
+        for k, s_after in enumerate(after_states):
+            grids[k] = base
+            actor_pos = s_after.agent_positions[actor]
+            grids[k, 1, actor_pos.row, actor_pos.col] += 1.0
+            grids[k, 2, actor_pos.row, actor_pos.col] = 1.0
+
+        return EncoderOutput(grid=grids, scalar=None)

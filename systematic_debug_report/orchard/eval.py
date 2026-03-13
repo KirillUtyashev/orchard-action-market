@@ -10,7 +10,7 @@ import orchard.encoding as encoding
 from orchard.enums import Action, TDTarget, TrainMode
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
-from orchard.policy import argmax_a_Q_team, nearest_apple_action
+from orchard.policy import argmax_a_Q_team, argmax_a_Q_team_batched, nearest_apple_action
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, EvalConfig, State, Transition
 
@@ -284,11 +284,14 @@ def evaluate_policy_learning(
     networks: list[ValueNetwork],
     env: BaseEnv,
     eval_steps: int,
+    batch_actions: bool = False,
 ) -> dict[str, float]:
     """Evaluate greedy vs nearest-apple picks-per-step."""
     eval_start = env.init_state()
 
     def greedy_policy(s: State) -> Action:
+        if batch_actions:
+            return argmax_a_Q_team_batched(s, networks, env)
         return argmax_a_Q_team(s, networks, env)
 
     def nearest_policy(s: State) -> Action:

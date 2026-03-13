@@ -17,6 +17,7 @@ from orchard.enums import NUM_ACTIONS, LearningType, StoppingCondition, TDTarget
 from orchard.env import create_env
 from orchard.eval import (
     Action,
+    argmax_a_Q_team_batched,
     collect_after_state_test_states,
     collect_on_policy_test_states,
     evaluate_policy_learning,
@@ -36,6 +37,7 @@ from orchard.policy import (
     ValueNetwork,
     argmax_a_Q_team,
     epsilon_greedy,
+    epsilon_greedy_batched,
     nearest_apple_action,
 )
 from orchard.schedule import compute_schedule_value
@@ -105,6 +107,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     centralized = cfg.train.learning_type == LearningType.CENTRALIZED
     n_networks = 1 if centralized else n_agents
     
+    _cached_zero_rewards = tuple(0.0 for _ in range(n_networks))
     networks = create_networks(
             cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps,
             nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda,
@@ -126,6 +129,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
         print(f"  Checkpoint was at step {ckpt.get('step', '?')}. Training restarts from step 0.")
     
     run_dir = setup_logging(cfg)
+    _save_checkpoint(networks, 0, run_dir / "checkpoints" / "step_0.pt")
     # --- CSV loggers ---
     main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode, n_networks=n_networks)
     main_logger = CSVLogger(run_dir / "metrics.csv", main_fields)
@@ -150,6 +154,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     sample_logger: CSVLogger | None = None
     if cfg.train.mode == TrainMode.POLICY_LEARNING:
         n_sample = 100
+        set_all_seeds(9999) # so different runs use same sample states
         sample_states = []
         s_tmp = env.init_state()
         for _ in range(n_sample * 3):
@@ -206,7 +211,10 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             epsilon = compute_schedule_value(
                 cfg.train.policy_learning.epsilon, t, cfg.train.total_steps
             )
-            action = epsilon_greedy(s_t, networks, env, epsilon)
+            if cfg.train.batch_actions:
+                action = epsilon_greedy_batched(s_t, networks, env, epsilon)
+            else:
+                action = epsilon_greedy(s_t, networks, env, epsilon)
 
         # --- TD updates ---
         s_moved = env.apply_action(s_t, action)
@@ -319,7 +327,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
             # Policy learning metrics
             if cfg.train.mode == TrainMode.POLICY_LEARNING:
-                pol_metrics = evaluate_policy_learning(networks, env, cfg.eval.eval_steps)
+                pol_metrics = evaluate_policy_learning(networks, env, cfg.eval.eval_steps, batch_actions=cfg.train.batch_actions)
                 row.update(pol_metrics)
 
             # TD loss
@@ -424,7 +432,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                             v = networks[ni](encoding.encode(ss, ni)).item()
                             sample_row[f"net{ni}_s{si}"] = round(v, 6)
                             all_vals.append(v)
-                        ga = argmax_a_Q_team(ss, networks, env)
+                        ga = argmax_a_Q_team_batched(ss, networks, env) if cfg.train.batch_actions else argmax_a_Q_team(ss, networks, env)
                         action_counts[f"action_{ga.name}"] += 1
 
                 sample_row["value_mean"] = round(sum(all_vals) / len(all_vals), 6)

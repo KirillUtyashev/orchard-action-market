@@ -67,10 +67,12 @@ model:
                               #   only used when model_type=cnn
                               #   padding = kernel_size // 2 (same-padding)
                               #   default: [[32, 3], [64, 3]]
+  activation: relu            # relu | leaky_relu | none (so linear). this applies to mlp head and cnn.
 
 train:
   learning_type: centralized    # "centralized" — team reward, single shared network, centralized training
       # "decentralized" — individual reward, separate network per agent, decentralized training
+  batch_actions: true             # should always be true, as this is faster.
   stopping_condition: running_max_pps # running_max_pps | none. If running_max_pps, stop if greedy policy's picks-per-step doesn't improve by at least improvement_threshold for patience_steps steps.
   patience_steps: 100000
   improvement_threshold: 1e-4

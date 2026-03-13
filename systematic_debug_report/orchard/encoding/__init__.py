@@ -43,6 +43,11 @@ def encode(state: State, agent_idx: int) -> EncoderOutput:
     assert _encoder is not None, "Call init_encoder() first"
     return _encoder.encode(state, agent_idx)
 
+def encode_batch_for_actions(state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+    """Batch-encode multiple after-states for one agent. Uses the global encoder."""
+    assert _encoder is not None, "Call init_encoder() first"
+    return _encoder.encode_batch_for_actions(state, agent_idx, after_states)
+
 
 def get_scalar_dim() -> int:
     """Scalar feature dim (full input for MLP, extra scalars for CNN)."""

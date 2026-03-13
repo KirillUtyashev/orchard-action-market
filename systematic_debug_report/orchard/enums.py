@@ -54,6 +54,15 @@ class StoppingCondition(Enum):
     NONE = auto()
     RUNNING_MAX_PPS = auto()
 
+class Activation(Enum):
+    RELU = auto()
+    LEAKY_RELU = auto()
+    NONE = auto()
+
+class WeightInit(Enum):
+    DEFAULT = auto()
+    ZERO_BIAS = auto()
+
 class Action(Enum):
     UP = 0
     DOWN = 1
