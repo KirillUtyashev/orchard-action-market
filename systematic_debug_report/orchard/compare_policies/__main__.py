@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from orchard.compare_values.loader import load_run
-from orchard.compare_policies.compare import generate_states, run_comparison
+from orchard.compare_policies.compare import generate_states, run_comparison, add_nearest_policy
 from orchard.compare_policies.report import build_report
 from orchard.compare_values.compare import validate_env_compatibility, validate_td_target_compatibility
 
@@ -39,14 +39,18 @@ Examples:
                    help="DPI for state renderings (default: 100)")
     p.add_argument("--match-training", action="store_true",
                    help="Use same 100 random-action sample states as train.py (seed from config)")
+    p.add_argument("--nearest", action="store_true",
+                   help="Include nearest-apple heuristic policy as an extra comparison column")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    if len(args.runs) < 2:
-        print("Error: need at least 2 runs to compare")
+    min_runs = 1 if args.nearest else 2
+    if len(args.runs) < min_runs:
+        print(f"Error: need at least {min_runs} runs to compare"
+              + (" (or pass --nearest with 1 run)" if not args.nearest else ""))
         return
 
     if args.labels and len(args.labels) != len(args.runs):
@@ -102,6 +106,12 @@ def main() -> None:
     comparisons = run_comparison(loaded, states)
     elapsed = time.time() - t0
     print(f"  Done in {elapsed:.1f}s")
+
+    # --- Optionally add nearest-apple heuristic ---
+    if args.nearest:
+        print("Adding nearest-apple heuristic policy...")
+        add_nearest_policy(comparisons, ref.cfg.env)
+        labels.append("Nearest")
 
     # Summary
     n_agree = sum(1 for c in comparisons if c.agrees)

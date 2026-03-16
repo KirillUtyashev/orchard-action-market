@@ -301,3 +301,160 @@ def evaluate_policy_learning(
         "greedy_pps": picks_per_step(eval_start, greedy_policy, env, eval_steps),
         "nearest_pps": picks_per_step(eval_start, nearest_policy, env, eval_steps),
     }
+
+def collect_reward_test_states(
+    env: BaseEnv,
+    n_test_states: int,
+    n_collection_steps: int | None = None,
+) -> list[State]:
+    """Collect movement after-states under random policy for reward learning eval.
+    
+    Includes both on-apple and not-on-apple movement after-states.
+    Does NOT include pick after-states (trivially zero).
+    """
+    from orchard.enums import NUM_ACTIONS
+    
+    if n_collection_steps is None:
+        n_collection_steps = n_test_states * 20
+
+    seen: set = set()
+    states: list[State] = []
+    s = env.init_state()
+
+    for _ in range(n_collection_steps):
+        if len(states) >= n_test_states:
+            break
+
+        action = Action(rng.randint(0, NUM_ACTIONS - 1))
+        s_moved = env.apply_action(s, action)
+
+        key = (s_moved.agent_positions, s_moved.apple_positions, s_moved.actor)
+        if key not in seen:
+            seen.add(key)
+            states.append(s_moved)
+
+        # Advance env
+        on_apple = s_moved.is_agent_on_apple(s_moved.actor)
+        if on_apple:
+            s_picked, _ = env.resolve_pick(s_moved)
+            s = env.advance_actor(env.spawn_and_despawn(s_picked))
+        else:
+            s = env.advance_actor(env.spawn_and_despawn(s_moved))
+
+    return states
+
+def compute_reward_ground_truth(
+    test_states: list[State],
+    env_cfg: EnvConfig,
+    n_networks: int,
+    centralized: bool,
+) -> tuple[list[list[float]], list[list[str]]]:
+    """Deterministic reward ground truth for each (state, network).
+    
+    Returns:
+        ground_truth[k][i]: true reward value for network i at state k
+        categories[k][i]: "zero" | "picker" | "other" (dec) or "zero" | "pick" (cen)
+    """
+    r_picker = env_cfg.r_picker
+    n_agents = env_cfg.n_agents
+    r_other = (1.0 - r_picker) / (n_agents - 1) if n_agents > 1 else 0.0
+    r_sum = r_picker + r_other * (n_agents - 1)  # = 1.0 always
+
+    ground_truth: list[list[float]] = []
+    categories: list[list[str]] = []
+
+    for s in test_states:
+        actor = s.actor
+        on_apple = s.is_agent_on_apple(actor)
+        gt_row: list[float] = []
+        cat_row: list[str] = []
+
+        if centralized:
+            if on_apple:
+                gt_row.append(r_sum)
+                cat_row.append("pick")
+            else:
+                gt_row.append(0.0)
+                cat_row.append("zero")
+        else:
+            for i in range(n_networks):
+                if not on_apple:
+                    gt_row.append(0.0)
+                    cat_row.append("zero")
+                elif i == actor:
+                    gt_row.append(r_picker)
+                    cat_row.append("picker")
+                else:
+                    gt_row.append(r_other)
+                    cat_row.append("other")
+
+        ground_truth.append(gt_row)
+        categories.append(cat_row)
+
+    return ground_truth, categories
+
+def evaluate_reward_learning(
+    networks: list[ValueNetwork],
+    env_cfg: EnvConfig,
+    test_states: list[State],
+    ground_truth: list[list[float]],
+    categories: list[list[str]],
+    centralized: bool,
+) -> dict[str, float]:
+    """MAE per agent, per category, averaged."""
+    import orchard.encoding as encoding
+    
+    n_networks = len(networks)
+    
+    # Accumulators: per (network, category)
+    sum_ae: dict[tuple[int, str], float] = {}
+    counts: dict[tuple[int, str], int] = {}
+    # Also per-network total
+    total_ae: list[float] = [0.0] * n_networks
+    total_count: list[int] = [0] * n_networks
+    
+    for net in networks:
+        net.eval()
+    
+    with torch.no_grad():
+        for k, s in enumerate(test_states):
+            for i in range(n_networks):
+                pred = networks[i](encoding.encode(s, i)).item()
+                true_v = ground_truth[k][i]
+                cat = categories[k][i]
+                ae = abs(pred - true_v)
+                
+                total_ae[i] += ae
+                total_count[i] += 1
+                
+                key = (i, cat)
+                sum_ae[key] = sum_ae.get(key, 0.0) + ae
+                counts[key] = counts.get(key, 0) + 1
+    
+    for net in networks:
+        net.train()
+    
+    result: dict[str, float] = {}
+    
+    # Per-agent and average MAE
+    for i in range(n_networks):
+        result[f"mae_agent_{i}"] = total_ae[i] / max(total_count[i], 1)
+    result["mae_avg"] = sum(total_ae) / max(sum(total_count), 1)
+    
+    # Per-category per-agent and average
+    all_cats = ["zero", "pick"] if centralized else ["zero", "picker", "other"]
+    for cat in all_cats:
+        cat_ae_sum = 0.0
+        cat_count_sum = 0
+        for i in range(n_networks):
+            key = (i, cat)
+            c = counts.get(key, 0)
+            if c > 0:
+                result[f"mae_{cat}_agent_{i}"] = sum_ae[key] / c
+            else:
+                result[f"mae_{cat}_agent_{i}"] = 0.0
+            cat_ae_sum += sum_ae.get(key, 0.0)
+            cat_count_sum += c
+        result[f"mae_{cat}_avg"] = cat_ae_sum / max(cat_count_sum, 1)
+    
+    return result

@@ -39,6 +39,10 @@ python -m orchard.viz configs/2x2/your_config.yaml --show-after-states
 
 # Sample config included
 python -m orchard.viz orchard/viz/sample_configs/2x2_stoch.yaml --steps 50
+
+# Quick PPS sanity check (no rendering, fast)
+python -m orchard.viz configs/9x9/your_config.yaml \
+    --checkpoint runs/exp1/checkpoints/final.pt --compare --no-html --steps 1000
 ```
 
 ## Options
@@ -57,6 +61,7 @@ python -m orchard.viz orchard/viz/sample_configs/2x2_stoch.yaml --steps 50
 | `--decisions`         | Show Q-values per action (needs checkpoint)         | off        |
 | `--values`            | Show V_i(s) per agent (needs checkpoint)            | off        |
 | `--dpi N`             | PNG resolution                                      | 120        |
+| `--no-html`           | Skip rendering/HTML, just print PPS + write CSV/JSON | off        |
 
 ## Output
 

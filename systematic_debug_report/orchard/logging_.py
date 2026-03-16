@@ -113,7 +113,7 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | None = None) -> list[str]:
+def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | None = None, centralized: bool = False) -> list[str]:
     """Build column names for metrics.csv."""
     from orchard.enums import TrainMode
     if n_networks is None:
@@ -126,6 +126,17 @@ def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | 
             fields.append(f"{metric}_avg")
     elif mode == TrainMode.POLICY_LEARNING:
         fields.extend(["greedy_pps", "nearest_pps"])
+    elif mode == TrainMode.REWARD_LEARNING:
+        for metric in ("mae",):
+            for i in range(n_networks):
+                fields.append(f"{metric}_agent_{i}")
+            fields.append(f"{metric}_avg")
+        # Per-category MAE
+        categories = ["zero", "pick"] if centralized else ["zero", "picker", "other"]
+        for cat in categories:
+            for i in range(n_networks):
+                fields.append(f"mae_{cat}_agent_{i}")
+            fields.append(f"mae_{cat}_avg")
     fields.append("td_loss_avg")
     return fields
 

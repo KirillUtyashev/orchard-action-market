@@ -34,6 +34,7 @@ class ModelType(Enum):
 
 class TrainMode(Enum):
     VALUE_LEARNING = auto()
+    REWARD_LEARNING = auto()
     POLICY_LEARNING = auto()
 
 
@@ -53,6 +54,7 @@ class LearningType(Enum):
 class StoppingCondition(Enum):
     NONE = auto()
     RUNNING_MAX_PPS = auto()
+    RUNNING_MIN_MAE = auto()
 
 class Activation(Enum):
     RELU = auto()

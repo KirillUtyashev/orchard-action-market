@@ -20,7 +20,10 @@ from orchard.eval import (
     argmax_a_Q_team_batched,
     collect_after_state_test_states,
     collect_on_policy_test_states,
+    collect_reward_test_states,
+    compute_reward_ground_truth,
     evaluate_policy_learning,
+    evaluate_reward_learning,
     evaluate_value_learning,
     precompute_ground_truth,
 )
@@ -131,7 +134,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     run_dir = setup_logging(cfg)
     _save_checkpoint(networks, 0, run_dir / "checkpoints" / "step_0.pt")
     # --- CSV loggers ---
-    main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode, n_networks=n_networks)
+    main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode, n_networks=n_networks, centralized=centralized)
     main_logger = CSVLogger(run_dir / "metrics.csv", main_fields)
 
     detail_fields = build_detail_csv_fieldnames(n_agents, networks, n_networks=n_networks)
@@ -140,13 +143,18 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     # --- Test states + ground truth (value_learning) ---
     test_states: list | None = None
     ground_truth: list | None = None
+    reward_categories: list | None = None
     if cfg.train.mode == TrainMode.VALUE_LEARNING:
         if cfg.train.td_target == TDTarget.PRE_ACTION:
             test_states = collect_on_policy_test_states(env, cfg.eval.n_test_states)
         else:
             test_states = collect_after_state_test_states(env, cfg.eval.n_test_states)
         ground_truth = precompute_ground_truth(test_states, env, cfg.eval, cfg.train.td_target)
-
+    elif cfg.train.mode == TrainMode.REWARD_LEARNING:
+        test_states = collect_reward_test_states(env, cfg.eval.n_test_states)
+        ground_truth, reward_categories = compute_reward_ground_truth(
+            test_states, cfg.env, n_networks, centralized
+        )
     s_t = env.init_state()
     
     # --- Sample states for value diagnostics (policy_learning) ---
@@ -198,15 +206,16 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     td_loss_accum: float = 0.0
     td_loss_count: int = 0
     running_max_pps: float = float("-inf")
+    running_min_mae: float = float("inf")
     steps_since_improvement: int = 0
-
+    action: Action = Action.STAY  # dummy init
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
 
         # --- Action selection ---
         if cfg.train.mode == TrainMode.VALUE_LEARNING:
             action = nearest_apple_action(s_t, cfg.env)
-        else:
+        elif cfg.train.mode == TrainMode.POLICY_LEARNING:
             assert cfg.train.policy_learning is not None
             epsilon = compute_schedule_value(
                 cfg.train.policy_learning.epsilon, t, cfg.train.total_steps
@@ -215,7 +224,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 action = epsilon_greedy_batched(s_t, networks, env, epsilon)
             else:
                 action = epsilon_greedy(s_t, networks, env, epsilon)
-
+        elif cfg.train.mode == TrainMode.REWARD_LEARNING:
+            action = Action(rng.randint(0, NUM_ACTIONS - 1))
         # --- TD updates ---
         s_moved = env.apply_action(s_t, action)
         on_apple = s_moved.is_agent_on_apple(s_moved.actor)
@@ -268,7 +278,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 pick_after_enc = _encode_all(s_picked, n_networks, n_agents, centralized)
 
                 # Immediate update: movement after-state → pick after-state (discount=1.0)
-                loss, count = _train_all_agents(networks, move_after_enc, _team_rewards(pick_rewards, centralized), 1.0, pick_after_enc, t)
+                pick_discount = 0.0 if cfg.train.mode == TrainMode.REWARD_LEARNING else 1.0
+                loss, count = _train_all_agents(networks, move_after_enc, _team_rewards(pick_rewards, centralized), pick_discount, pick_after_enc, t)
                 td_loss_accum += loss
                 td_loss_count += count
 
@@ -319,7 +330,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             }
 
             # Value learning metrics
-            if test_states is not None and ground_truth is not None:
+            if cfg.train.mode == TrainMode.VALUE_LEARNING and test_states is not None and ground_truth is not None:
                 val_metrics = evaluate_value_learning(
                     networks, cfg.env, test_states, ground_truth
                 )
@@ -329,6 +340,14 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             if cfg.train.mode == TrainMode.POLICY_LEARNING:
                 pol_metrics = evaluate_policy_learning(networks, env, cfg.eval.eval_steps, batch_actions=cfg.train.batch_actions)
                 row.update(pol_metrics)
+            if cfg.train.mode == TrainMode.REWARD_LEARNING and test_states is not None:
+                assert ground_truth is not None
+                assert reward_categories is not None
+                reward_metrics = evaluate_reward_learning(
+                    networks, cfg.env, test_states, ground_truth,
+                    reward_categories, centralized
+                )
+                row.update(reward_metrics)
 
             # TD loss
             avg_loss = td_loss_accum / max(td_loss_count, 1)
@@ -353,15 +372,31 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     print(f"\nEarly stop at step {t+1}: running max PPS {running_max_pps:.4f} "
                           f"unchanged for {cfg.train.patience_steps} steps.")
                     break
-
+            if (
+                cfg.train.stopping_condition == StoppingCondition.RUNNING_MIN_MAE
+                and "mae_avg" in row
+            ):
+                mae = float(row["mae_avg"])
+                if mae < running_min_mae - cfg.train.improvement_threshold:
+                    running_min_mae = mae
+                    steps_since_improvement = 0
+                else:
+                    steps_since_improvement += cfg.logging.main_csv_freq
+                if steps_since_improvement >= cfg.train.patience_steps and (t + 1) >= cfg.train.min_steps_before_stop:
+                    print(f"\nEarly stop at step {t+1}: running min MAE {running_min_mae:.6f} "
+                        f"unchanged for {cfg.train.patience_steps} steps.")
+                    break
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
-            if "mae_avg" in row:
-                print(f"  MAE avg: {row['mae_avg']:.4f}  "
-                        f"Bias avg: {row['bias_avg']:.4f}  "
-                        f"MAPE avg: {row['mape_avg']:.4f}")
             if "greedy_pps" in row:
                 print(f"  Greedy PPS: {row['greedy_pps']:.4f}  "
-                        f"Nearest PPS: {row['nearest_pps']:.4f}")
+                    f"Nearest PPS: {row['nearest_pps']:.4f}")
+            if "mae_avg" in row:
+                msg = f"  MAE avg: {row['mae_avg']:.4f}"
+                if "bias_avg" in row:
+                    msg += f"  Bias avg: {row['bias_avg']:.4f}"
+                if "mape_avg" in row:
+                    msg += f"  MAPE avg: {row['mape_avg']:.4f}"
+                print(msg)
 
         # --- Detail CSV logging ---
         if (t + 1) % cfg.logging.detail_csv_freq == 0:

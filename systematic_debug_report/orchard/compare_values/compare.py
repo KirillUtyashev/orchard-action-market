@@ -1,4 +1,4 @@
-"""Generate states and compare two models' value predictions."""
+"""Generate states and compare N models' value predictions."""
 
 from __future__ import annotations
 
@@ -18,63 +18,67 @@ from orchard.seed import set_all_seeds
 
 @dataclass
 class StateComparison:
+    """Value predictions from N runs for a single state."""
     state_index: int
     state: State
 
-    # Model A
-    team_value_a: float
-    agent_values_a: dict[int, float]
+    # label -> team value
+    team_values: dict[str, float]
 
-    # Model B
-    team_value_b: float
-    agent_values_b: dict[int, float]
-
-    # Derived
-    team_diff: float        # A - B
-    team_abs_diff: float    # |A - B|
+    # label -> {agent_idx: value}
+    agent_values: dict[str, dict[int, float]]
 
 
-def validate_env_compatibility(env_a: EnvConfig, env_b: EnvConfig) -> None:
-    """Check that two env configs are compatible for comparison.
+def validate_env_compatibility(runs: list[LoadedRun]) -> None:
+    """Check that all runs have compatible env configs.
 
     Raises ValueError listing all mismatched fields.
     """
+    if len(runs) < 2:
+        return
+
+    ref = runs[0].cfg.env
     fields_to_check = [
-        "height", "width", "n_agents", "n_apples", "gamma",
-        "r_picker", "force_pick", "max_apples", "env_type",
+        "height", "width", "n_agents", "n_apples", "gamma", "force_pick", "max_apples", "env_type",
     ]
-    mismatches: list[str] = []
-    for field in fields_to_check:
-        va = getattr(env_a, field)
-        vb = getattr(env_b, field)
-        if va != vb:
-            mismatches.append(f"  {field}: {va} vs {vb}")
 
-    # Check stochastic config if both stochastic
-    if env_a.stochastic is not None and env_b.stochastic is not None:
-        for field in ["spawn_prob", "despawn_mode", "despawn_prob", "apple_lifetime"]:
-            va = getattr(env_a.stochastic, field)
-            vb = getattr(env_b.stochastic, field)
+    for run in runs[1:]:
+        mismatches: list[str] = []
+        other = run.cfg.env
+        for field in fields_to_check:
+            va = getattr(ref, field)
+            vb = getattr(other, field)
             if va != vb:
-                mismatches.append(f"  stochastic.{field}: {va} vs {vb}")
-    elif (env_a.stochastic is None) != (env_b.stochastic is None):
-        mismatches.append(f"  stochastic: {env_a.stochastic} vs {env_b.stochastic}")
+                mismatches.append(f"  {field}: {va} vs {vb}")
 
-    if mismatches:
-        raise ValueError(
-            "Env configs are not compatible for comparison:\n" + "\n".join(mismatches)
-        )
+        if ref.stochastic is not None and other.stochastic is not None:
+            for field in ["spawn_prob", "despawn_mode", "despawn_prob", "apple_lifetime"]:
+                va = getattr(ref.stochastic, field)
+                vb = getattr(other.stochastic, field)
+                if va != vb:
+                    mismatches.append(f"  stochastic.{field}: {va} vs {vb}")
+        elif (ref.stochastic is None) != (other.stochastic is None):
+            mismatches.append(f"  stochastic: {ref.stochastic} vs {other.stochastic}")
+
+        if mismatches:
+            raise ValueError(
+                f"Env config mismatch between '{runs[0].label}' and '{run.label}':\n"
+                + "\n".join(mismatches)
+            )
 
 
-def validate_td_target_compatibility(run_a: LoadedRun, run_b: LoadedRun) -> None:
-    """Require both runs to use the same td_target."""
-    tt_a = run_a.cfg.train.td_target
-    tt_b = run_b.cfg.train.td_target
-    if tt_a != tt_b:
-        raise ValueError(
-            f"td_target mismatch: run A uses {tt_a.name}, run B uses {tt_b.name}. "
-            f"Cannot compare models trained on different state types."
-        )
+def validate_td_target_compatibility(runs: list[LoadedRun]) -> None:
+    """Require all runs to use the same td_target."""
+    if len(runs) < 2:
+        return
+    ref_tt = runs[0].cfg.train.td_target
+    for run in runs[1:]:
+        if run.cfg.train.td_target != ref_tt:
+            raise ValueError(
+                f"td_target mismatch: '{runs[0].label}' uses {ref_tt.name}, "
+                f"'{run.label}' uses {run.cfg.train.td_target.name}. "
+                f"Cannot compare models trained on different state types."
+            )
 
 
 def generate_states(
@@ -122,32 +126,29 @@ def compute_team_value(
 
 
 def run_comparison(
-    run_a: LoadedRun,
-    run_b: LoadedRun,
+    runs: list[LoadedRun],
     states: list[State],
 ) -> list[StateComparison]:
-    """Compare two models on a list of states."""
+    """Compare N models on a list of states."""
     results: list[StateComparison] = []
-    n_agents = run_a.cfg.env.n_agents
+    n_agents = runs[0].cfg.env.n_agents
 
     for idx, state in enumerate(states):
-        tv_a, av_a = compute_team_value(
-            state, run_a.networks, run_a.encoder, run_a.is_centralized, n_agents
-        )
-        tv_b, av_b = compute_team_value(
-            state, run_b.networks, run_b.encoder, run_b.is_centralized, n_agents
-        )
+        team_values: dict[str, float] = {}
+        agent_values: dict[str, dict[int, float]] = {}
 
-        diff = tv_a - tv_b
+        for run in runs:
+            tv, av = compute_team_value(
+                state, run.networks, run.encoder, run.is_centralized, n_agents
+            )
+            team_values[run.label] = tv
+            agent_values[run.label] = av
+
         results.append(StateComparison(
             state_index=idx,
             state=state,
-            team_value_a=tv_a,
-            agent_values_a=av_a,
-            team_value_b=tv_b,
-            agent_values_b=av_b,
-            team_diff=diff,
-            team_abs_diff=abs(diff),
+            team_values=team_values,
+            agent_values=agent_values,
         ))
 
     return results

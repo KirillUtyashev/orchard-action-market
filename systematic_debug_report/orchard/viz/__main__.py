@@ -43,6 +43,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--decisions", action="store_true", help="Show Q-values for all actions (requires --checkpoint)")
     p.add_argument("--values", action="store_true", help="Show per-agent V_i(s) (requires --checkpoint)")
     p.add_argument("--dpi", type=int, default=120, help="PNG render DPI (default: 120)")
+    p.add_argument("--no-html", action="store_true",
+                   help="Skip rendering and HTML — just print PPS and write CSV/JSON (fast sanity check)")
     return p.parse_args()
 
 
@@ -239,18 +241,17 @@ def main() -> None:
         )
         print(f"  Generated {len(compare_frames)} compare transitions")
 
-    # --- Render PNGs ---
-    print("Rendering primary frames...")
-    t0 = time.time()
-    frame_pngs = render_all_frames(frames, args.show_after_states, args.dpi)
-    print(f"  Rendered in {time.time() - t0:.1f}s")
+    # --- PPS summary (always printed) ---
+    def _pps(frms: list[Frame]) -> float:
+        return frms[-1].total_picks / frms[-1].total_decisions if frms[-1].total_decisions > 0 else 0.0
 
-    compare_pngs: list[bytes] | None = None
+    pps_primary = _pps(frames)
+    print(f"\n  {policy_name} PPS: {pps_primary:.4f}  ({frames[-1].total_picks} picks / {frames[-1].total_decisions} decisions)")
     if compare_frames is not None:
-        print("Rendering compare frames...")
-        t0 = time.time()
-        compare_pngs = render_all_frames(compare_frames, args.show_after_states, args.dpi)
-        print(f"  Rendered in {time.time() - t0:.1f}s")
+        pps_compare = _pps(compare_frames)
+        print(f"  nearest  PPS: {pps_compare:.4f}  ({compare_frames[-1].total_picks} picks / {compare_frames[-1].total_decisions} decisions)")
+        print(f"  Δ (learned − nearest): {pps_primary - pps_compare:+.4f}")
+    print()
 
     # --- Write CSV and summary ---
     csv_path = out_dir / "trajectory.csv"
@@ -279,6 +280,23 @@ def main() -> None:
             seed=seed,
         )
         print(f"Wrote {summary_compare_path}")
+
+    if args.no_html:
+        print("Done (--no-html: skipped rendering and HTML).")
+        return
+
+    # --- Render PNGs ---
+    print("Rendering primary frames...")
+    t0 = time.time()
+    frame_pngs = render_all_frames(frames, args.show_after_states, args.dpi)
+    print(f"  Rendered in {time.time() - t0:.1f}s")
+
+    compare_pngs: list[bytes] | None = None
+    if compare_frames is not None:
+        print("Rendering compare frames...")
+        t0 = time.time()
+        compare_pngs = render_all_frames(compare_frames, args.show_after_states, args.dpi)
+        print(f"  Rendered in {time.time() - t0:.1f}s")
 
     # --- Build HTML ---
     html_path = out_dir / "trajectory.html"

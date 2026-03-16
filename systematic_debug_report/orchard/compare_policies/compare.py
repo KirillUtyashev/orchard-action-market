@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 import torch
 
@@ -35,11 +36,12 @@ class PolicyComparison:
     @property
     def q_gap(self) -> float:
         """Mean gap between best and second-best Q across runs.
-        Small gap = the disagreement is over near-ties."""
+        Small gap = the disagreement is over near-ties.
+        Skips entries with NaN Q-values (e.g. nearest-apple heuristic)."""
         gaps = []
         for qv in self.q_values:
             sorted_q = sorted(qv.values(), reverse=True)
-            if len(sorted_q) >= 2:
+            if len(sorted_q) >= 2 and not math.isnan(sorted_q[0]):
                 gaps.append(sorted_q[0] - sorted_q[1])
         return sum(gaps) / len(gaps) if gaps else 0.0
 
@@ -120,6 +122,23 @@ def generate_training_sample_states(
             s_tmp = env.advance_actor(env.spawn_and_despawn(s_picked))
 
     return states
+
+def add_nearest_policy(
+    comparisons: list[PolicyComparison],
+    env_cfg,
+) -> None:
+    """Append nearest-apple action to each comparison in-place.
+
+    Q-values are set to NaN (nearest is a heuristic, not Q-based).
+    """
+    from orchard.policy import nearest_apple_action
+
+    nan_q = {a: float("nan") for a in ACTION_PRIORITY}
+    for comp in comparisons:
+        a = nearest_apple_action(comp.state, env_cfg)
+        comp.actions.append(a)
+        comp.q_values.append(dict(nan_q))  # fresh copy each time
+
 
 def run_comparison(
     runs: list[LoadedRun],

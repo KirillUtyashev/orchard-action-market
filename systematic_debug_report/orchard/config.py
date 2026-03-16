@@ -72,6 +72,7 @@ _MODEL_TYPE_MAP: dict[str, ModelType] = {
 _TRAIN_MODE_MAP: dict[str, TrainMode] = {
     "value_learning": TrainMode.VALUE_LEARNING,
     "policy_learning": TrainMode.POLICY_LEARNING,
+    "reward_learning": TrainMode.REWARD_LEARNING,
 }
 
 _TD_TARGET_MAP: dict[str, TDTarget] = {
@@ -87,6 +88,7 @@ _SCHEDULE_MAP: dict[str, Schedule] = {
 _STOPPING_CONDITION_MAP: dict[str, StoppingCondition] = {
     "none": StoppingCondition.NONE,
     "running_max_pps": StoppingCondition.RUNNING_MAX_PPS,
+    "running_min_mae": StoppingCondition.RUNNING_MIN_MAE,
 }
 
 _TRAIN_METHOD_MAP: dict[str, TrainMethod] = {
@@ -178,8 +180,8 @@ def _parse_model(d: dict[str, Any]) -> ModelConfig:
             (int(spec[0]), int(spec[1])) for spec in d["conv_specs"]
         )
 
-    activation = _enum_lookup(d.get("activation", "relu"), _ACTIVATION_MAP, "model.activation")
-    weight_init = _enum_lookup(d.get("weight_init", "default"), _WEIGHT_INIT_MAP, "model.weight_init")
+    activation = _enum_lookup(d.get("activation", "leaky_relu"), _ACTIVATION_MAP, "model.activation")
+    weight_init = _enum_lookup(d.get("weight_init", "zero_bias"), _WEIGHT_INIT_MAP, "model.weight_init")
 
     return ModelConfig(
         input_type=input_type,

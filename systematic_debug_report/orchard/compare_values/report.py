@@ -1,9 +1,10 @@
-"""Build a self-contained HTML report from comparison results."""
+"""Build a self-contained HTML report comparing N runs."""
 
 from __future__ import annotations
 
 import base64
 import io
+from itertools import combinations
 from pathlib import Path
 
 import matplotlib
@@ -19,22 +20,14 @@ from orchard.viz.renderer import render_frame_png
 
 
 # ---------------------------------------------------------------------------
-# Grid rendering helpers
+# Image helpers
 # ---------------------------------------------------------------------------
 
 def _render_state_png(state: State, height: int, width: int, dpi: int = 100) -> bytes:
-    """Render a state as a PNG using the viz renderer."""
     return render_frame_png(
-        state=state,
-        state_after=None,
-        height=height,
-        width=width,
-        state_index=0,
-        actor=state.actor,
-        action=None,
-        rewards=None,
-        show_after_state=False,
-        dpi=dpi,
+        state=state, state_after=None, height=height, width=width,
+        state_index=0, actor=state.actor, action=None, rewards=None,
+        show_after_state=False, dpi=dpi,
     )
 
 
@@ -51,132 +44,132 @@ def _fig_to_data_uri(fig: plt.Figure) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Plot builders
+# Plots
 # ---------------------------------------------------------------------------
 
-def _build_scatter_plot(
+def _build_agreement_matrix(
     comparisons: list[StateComparison],
-    label_a: str,
-    label_b: str,
+    labels: list[str],
 ) -> str:
-    """V_team_A vs V_team_B scatter with diagonal."""
-    fig, ax = plt.subplots(figsize=(7, 7))
+    """NxN heatmap of mean |V_i - V_j| between each pair of runs."""
+    n = len(labels)
+    matrix = np.zeros((n, n))
 
-    xs = [c.team_value_a for c in comparisons]
-    ys = [c.team_value_b for c in comparisons]
-    abs_diffs = [c.team_abs_diff for c in comparisons]
+    for i, li in enumerate(labels):
+        for j, lj in enumerate(labels):
+            if i == j:
+                continue
+            diffs = [abs(c.team_values[li] - c.team_values[lj]) for c in comparisons]
+            matrix[i, j] = np.mean(diffs)
 
-    sc = ax.scatter(xs, ys, c=abs_diffs, cmap="RdYlGn_r", s=20, alpha=0.8, edgecolors="none")
-    fig.colorbar(sc, ax=ax, label="|V_A - V_B|")
+    fig, ax = plt.subplots(figsize=(max(6, n * 1.2), max(5, n * 1.0)))
+    im = ax.imshow(matrix, cmap="RdYlGn_r", interpolation="nearest")
+    fig.colorbar(im, ax=ax, label="Mean |V_team_i − V_team_j|", shrink=0.8)
 
-    all_vals = xs + ys
-    lo = min(all_vals) - 0.1
-    hi = max(all_vals) + 0.1
-    ax.plot([lo, hi], [lo, hi], "k--", alpha=0.4, linewidth=1)
-    ax.set_xlim(lo, hi)
-    ax.set_ylim(lo, hi)
-    ax.set_aspect("equal")
-    ax.set_xlabel(f"V_team — {label_a}")
-    ax.set_ylabel(f"V_team — {label_b}")
-    ax.set_title("Team Value: A vs B")
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(labels, fontsize=8, rotation=45, ha="right")
+    ax.set_yticklabels(labels, fontsize=8)
+
+    for i in range(n):
+        for j in range(n):
+            ax.text(j, i, f"{matrix[i, j]:.3f}", ha="center", va="center",
+                    fontsize=7, color="white" if matrix[i, j] > matrix.max() * 0.6 else "black")
+
+    ax.set_title("Pairwise Mean |Diff|")
     fig.tight_layout()
     return _fig_to_data_uri(fig)
 
 
-def _build_diff_histogram(comparisons: list[StateComparison]) -> str:
-    """Histogram of (V_team_A - V_team_B)."""
-    fig, ax = plt.subplots(figsize=(7, 4))
-    diffs = [c.team_diff for c in comparisons]
-    ax.hist(diffs, bins=min(50, max(10, len(diffs) // 5)), color="#4A90D9", edgecolor="white", alpha=0.85)
-    ax.axvline(0, color="black", linewidth=1, linestyle="--", alpha=0.5)
-    mean_diff = np.mean(diffs)
-    ax.axvline(mean_diff, color="red", linewidth=1.5, linestyle="-", alpha=0.7)
-    ax.set_xlabel("V_team_A - V_team_B")
-    ax.set_ylabel("Count")
-    ax.set_title(f"Difference Distribution (mean = {mean_diff:.4f})")
-    fig.tight_layout()
-    return _fig_to_data_uri(fig)
-
-
-def _build_sorted_diff_plot(comparisons: list[StateComparison]) -> str:
-    """States sorted by team_diff."""
-    fig, ax = plt.subplots(figsize=(10, 4))
-    sorted_comps = sorted(comparisons, key=lambda c: c.team_diff)
-    diffs = [c.team_diff for c in sorted_comps]
-    colors = ["#D9534F" if d > 0 else "#5CB85C" for d in diffs]
-    ax.bar(range(len(diffs)), diffs, color=colors, width=1.0, edgecolor="none")
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.set_xlabel("States (sorted by diff)")
-    ax.set_ylabel("V_team_A - V_team_B")
-    ax.set_title("Per-State Difference (sorted)")
-
-    red_patch = mpatches.Patch(color="#D9534F", label="A > B")
-    green_patch = mpatches.Patch(color="#5CB85C", label="B > A")
-    ax.legend(handles=[red_patch, green_patch], loc="upper left")
-    fig.tight_layout()
-    return _fig_to_data_uri(fig)
-
-
-def _build_per_agent_scatter(
+def _build_pairwise_scatters(
     comparisons: list[StateComparison],
-    label_a: str,
-    label_b: str,
-    n_agents: int,
-    both_decentralized: bool,
-) -> str | None:
-    """Per-agent V_i scatter plots. Only if both runs are decentralized."""
-    if not both_decentralized:
-        return None
+    labels: list[str],
+) -> str:
+    """Pairwise scatter grid of V_team for all run pairs."""
+    pairs = list(combinations(range(len(labels)), 2))
+    n_pairs = len(pairs)
+    ncols = min(3, n_pairs)
+    nrows = (n_pairs + ncols - 1) // ncols
 
-    fig, axes = plt.subplots(1, n_agents, figsize=(6 * n_agents, 5), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4.5 * nrows), squeeze=False)
 
-    for i in range(n_agents):
-        ax = axes[0, i]
-        xs = [c.agent_values_a[i] for c in comparisons]
-        ys = [c.agent_values_b[i] for c in comparisons]
-        ax.scatter(xs, ys, s=15, alpha=0.6, color=f"C{i}")
+    for idx, (i, j) in enumerate(pairs):
+        ax = axes[idx // ncols, idx % ncols]
+        li, lj = labels[i], labels[j]
+        xs = [c.team_values[li] for c in comparisons]
+        ys = [c.team_values[lj] for c in comparisons]
+        abs_diffs = [abs(x - y) for x, y in zip(xs, ys)]
 
-        all_v = xs + ys
-        lo = min(all_v) - 0.1
-        hi = max(all_v) + 0.1
+        sc = ax.scatter(xs, ys, c=abs_diffs, cmap="RdYlGn_r", s=15, alpha=0.7, edgecolors="none")
+
+        all_vals = xs + ys
+        lo = min(all_vals) - 0.1
+        hi = max(all_vals) + 0.1
         ax.plot([lo, hi], [lo, hi], "k--", alpha=0.4, linewidth=1)
         ax.set_xlim(lo, hi)
         ax.set_ylim(lo, hi)
         ax.set_aspect("equal")
-        ax.set_xlabel(label_a)
-        ax.set_ylabel(label_b)
-        ax.set_title(f"Agent {i}")
+        ax.set_xlabel(li, fontsize=7)
+        ax.set_ylabel(lj, fontsize=7)
+        ax.tick_params(labelsize=7)
 
-    fig.suptitle("Per-Agent Values: A vs B", fontsize=14)
+    # Hide unused axes
+    for idx in range(n_pairs, nrows * ncols):
+        axes[idx // ncols, idx % ncols].set_visible(False)
+
+    fig.suptitle("Pairwise V_team Scatter", fontsize=13)
+    fig.tight_layout()
+    return _fig_to_data_uri(fig)
+
+
+def _build_variance_histogram(comparisons: list[StateComparison], labels: list[str]) -> str:
+    """Histogram of per-state cross-model std dev."""
+    stds = []
+    for c in comparisons:
+        vals = [c.team_values[l] for l in labels]
+        stds.append(np.std(vals))
+
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.hist(stds, bins=min(50, max(10, len(stds) // 5)),
+            color="#4A90D9", edgecolor="white", alpha=0.85)
+    mean_std = np.mean(stds)
+    ax.axvline(mean_std, color="red", linewidth=1.5, linestyle="-", alpha=0.7,
+               label=f"mean = {mean_std:.4f}")
+    ax.set_xlabel("Cross-model Std Dev of V_team")
+    ax.set_ylabel("Count")
+    ax.set_title("Per-State Disagreement Distribution")
+    ax.legend()
     fig.tight_layout()
     return _fig_to_data_uri(fig)
 
 
 # ---------------------------------------------------------------------------
-# Extreme state renderings
+# Extreme states
 # ---------------------------------------------------------------------------
 
 def _render_extreme_states(
     comparisons: list[StateComparison],
+    labels: list[str],
     height: int,
     width: int,
     k: int = 5,
     dpi: int = 100,
 ) -> tuple[list[tuple[int, str, StateComparison]], list[tuple[int, str, StateComparison]]]:
-    """Render top-K worst and best agreement states.
+    """Top-K highest and lowest cross-model variance states."""
+    scored = []
+    for c in comparisons:
+        vals = [c.team_values[l] for l in labels]
+        scored.append((np.std(vals), c))
 
-    Returns: (worst_list, best_list) where each entry is
-        (state_index, data_uri, comparison).
-    """
-    sorted_by_abs = sorted(comparisons, key=lambda c: c.team_abs_diff, reverse=True)
+    scored.sort(key=lambda x: x[0], reverse=True)
 
     worst = []
-    for c in sorted_by_abs[:k]:
+    for _, c in scored[:k]:
         png = _render_state_png(c.state, height, width, dpi)
         worst.append((c.state_index, _png_to_data_uri(png), c))
 
     best = []
-    for c in sorted_by_abs[-k:]:
+    for _, c in scored[-k:]:
         png = _render_state_png(c.state, height, width, dpi)
         best.append((c.state_index, _png_to_data_uri(png), c))
 
@@ -189,63 +182,88 @@ def _render_extreme_states(
 
 def build_report(
     comparisons: list[StateComparison],
-    run_a: LoadedRun,
-    run_b: LoadedRun,
+    runs: list[LoadedRun],
     output_path: Path,
     dpi: int = 100,
 ) -> None:
-    """Build self-contained HTML comparison report."""
-    n_agents = run_a.cfg.env.n_agents
-    height = run_a.cfg.env.height
-    width = run_a.cfg.env.width
-    both_dec = (not run_a.is_centralized) and (not run_b.is_centralized)
+    """Build self-contained HTML report comparing N runs."""
+    labels = [r.label for r in runs]
+    n_runs = len(runs)
+    n_agents = runs[0].cfg.env.n_agents
+    height = runs[0].cfg.env.height
+    width = runs[0].cfg.env.width
 
     # --- Aggregate stats ---
-    diffs = [c.team_diff for c in comparisons]
-    abs_diffs = [c.team_abs_diff for c in comparisons]
-    mean_diff = float(np.mean(diffs))
-    mean_abs_diff = float(np.mean(abs_diffs))
-    max_abs_diff = float(np.max(abs_diffs))
-    std_diff = float(np.std(diffs))
-    mean_mag_a = float(np.mean([abs(c.team_value_a) for c in comparisons]))
-    mean_mag_b = float(np.mean([abs(c.team_value_b) for c in comparisons]))
-    mean_mag_avg = (mean_mag_a + mean_mag_b) / 2
-    pct_error = (mean_abs_diff / mean_mag_avg * 100) if mean_mag_avg > 1e-8 else float("inf")
+    # Pairwise mean |diff| summary
+    pair_stats = []
+    for i, j in combinations(range(n_runs), 2):
+        li, lj = labels[i], labels[j]
+        diffs = [abs(c.team_values[li] - c.team_values[lj]) for c in comparisons]
+        pair_stats.append((li, lj, float(np.mean(diffs)), float(np.max(diffs))))
+
+    # Per-model mean |V_team|
+    model_means = {}
+    for l in labels:
+        model_means[l] = float(np.mean([abs(c.team_values[l]) for c in comparisons]))
+
+    # Cross-model variance per state
+    per_state_stds = []
+    for c in comparisons:
+        vals = [c.team_values[l] for l in labels]
+        per_state_stds.append(np.std(vals))
+    mean_cross_std = float(np.mean(per_state_stds))
 
     # --- Plots ---
-    scatter_uri = _build_scatter_plot(comparisons, run_a.label, run_b.label)
-    hist_uri = _build_diff_histogram(comparisons)
-    sorted_uri = _build_sorted_diff_plot(comparisons)
-    agent_scatter_uri = _build_per_agent_scatter(
-        comparisons, run_a.label, run_b.label, n_agents, both_dec
-    )
+    matrix_uri = _build_agreement_matrix(comparisons, labels)
+    scatter_uri = _build_pairwise_scatters(comparisons, labels)
+    variance_uri = _build_variance_histogram(comparisons, labels)
 
     # --- Extreme states ---
     k = min(5, len(comparisons))
-    worst, best = _render_extreme_states(comparisons, height, width, k, dpi)
+    worst, best = _render_extreme_states(comparisons, labels, height, width, k, dpi)
 
-    # --- Build table rows ---
+    # --- Run info rows ---
+    run_info_rows = "".join(
+        f"<tr><td class='label'>Run {i}:</td><td>{l}</td></tr>"
+        for i, l in enumerate(labels)
+    )
+
+    # --- Stat boxes ---
+    stat_boxes = ""
+    for l in labels:
+        stat_boxes += (
+            f'<div class="stat-box"><div class="val">{model_means[l]:.4f}</div>'
+            f'<div class="lbl">Mean |V| {l}</div></div>\n'
+        )
+    stat_boxes += (
+        f'<div class="stat-box"><div class="val">{mean_cross_std:.4f}</div>'
+        f'<div class="lbl">Mean cross-model σ</div></div>\n'
+    )
+
+    # --- Table ---
+    header_cols = "".join(
+        f'<th data-col="{i + 1}" data-type="num">V_team {l}</th>' for i, l in enumerate(labels)
+    )
     table_rows = []
     for c in comparisons:
-        av_a_str = ", ".join(f"{i}: {v:.4f}" for i, v in sorted(c.agent_values_a.items()))
-        av_b_str = ", ".join(f"{i}: {v:.4f}" for i, v in sorted(c.agent_values_b.items()))
+        vals = [c.team_values[l] for l in labels]
+        std = np.std(vals)
+        val_cells = "".join(f"<td>{v:.4f}</td>" for v in vals)
         agents_str = str(c.state.agent_positions)
         apples_str = str(c.state.apple_positions)
         table_rows.append(
             f"<tr>"
             f"<td>{c.state_index}</td>"
-            f"<td>{c.team_value_a:.4f}</td>"
-            f"<td>{c.team_value_b:.4f}</td>"
-            f"<td class=\"{'neg' if c.team_diff < 0 else 'pos'}\">{c.team_diff:+.4f}</td>"
-            f"<td>{c.team_abs_diff:.4f}</td>"
-            f"<td class='detail'>{av_a_str}</td>"
-            f"<td class='detail'>{av_b_str}</td>"
+            f"{val_cells}"
+            f"<td>{std:.4f}</td>"
+            f"<td>{c.state.actor}</td>"
             f"<td class='detail'>{agents_str}</td>"
             f"<td class='detail'>{apples_str}</td>"
-            f"<td>{c.state.actor}</td>"
             f"</tr>"
         )
     table_html = "\n".join(table_rows)
+
+    n_data_cols = 1 + n_runs + 3  # index + N values + std + actor + positions
 
     # --- Extreme state HTML ---
     def _extreme_html(items: list[tuple[int, str, StateComparison]], title: str) -> str:
@@ -253,35 +271,33 @@ def build_report(
             return ""
         cards = []
         for idx, uri, c in items:
+            vals_str = "<br>".join(f"{l}: {c.team_values[l]:.4f}" for l in labels)
+            vals = [c.team_values[l] for l in labels]
             cards.append(
                 f'<div class="state-card">'
                 f'<img src="{uri}" />'
                 f'<div class="card-info">'
-                f'<b>State {idx}</b><br>'
-                f'V_A = {c.team_value_a:.4f}<br>'
-                f'V_B = {c.team_value_b:.4f}<br>'
-                f'Diff = {c.team_diff:+.4f}'
+                f'<b>State {idx}</b> (σ={np.std(vals):.4f})<br>'
+                f'{vals_str}'
                 f'</div></div>'
             )
         return f"<h2>{title}</h2><div class='state-gallery'>{''.join(cards)}</div>"
 
-    worst_html = _extreme_html(worst, f"Top {k} Largest Disagreements")
-    best_html = _extreme_html(best, f"Top {k} Closest Agreements")
+    worst_html = _extreme_html(worst, f"Top {k} Largest Disagreements (by σ)")
+    best_html = _extreme_html(best, f"Top {k} Closest Agreements (by σ)")
 
-    # --- Per-agent scatter section ---
-    agent_section = ""
-    if agent_scatter_uri:
-        agent_section = f"""
-        <h2>Per-Agent Values</h2>
-        <img src="{agent_scatter_uri}" class="plot" />
-        """
+    # --- Pairwise stats table ---
+    pair_rows = "".join(
+        f"<tr><td>{a}</td><td>{b}</td><td>{mean_d:.4f}</td><td>{max_d:.4f}</td></tr>"
+        for a, b, mean_d, max_d in pair_stats
+    )
 
     # --- Assemble HTML ---
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Value Comparison: {run_a.label} vs {run_b.label}</title>
+<title>Value Comparison: {n_runs} runs</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
@@ -300,11 +316,10 @@ def build_report(
   .stat-box .lbl {{ font-size: 0.85em; color: #666; margin-top: 4px; }}
   .plot {{ max-width: 100%; border-radius: 6px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
   .state-gallery {{ display: flex; flex-wrap: wrap; gap: 15px; }}
-  .state-card {{ background: white; border-radius: 6px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-                 text-align: center; }}
+  .state-card {{ background: white; border-radius: 6px; padding: 10px;
+                 box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; }}
   .state-card img {{ max-width: 200px; border-radius: 4px; }}
   .card-info {{ font-size: 0.85em; margin-top: 8px; line-height: 1.5; }}
-  /* Table */
   .table-wrap {{ overflow-x: auto; margin: 15px 0; }}
   table.data {{ border-collapse: collapse; width: 100%; background: white;
                 border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
@@ -314,46 +329,44 @@ def build_report(
   table.data th:hover {{ background: #e0e0e0; }}
   table.data td {{ padding: 6px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }}
   table.data tr:hover {{ background: #f8f8f8; }}
-  td.pos {{ color: #c0392b; }}
-  td.neg {{ color: #27ae60; }}
   td.detail {{ font-size: 0.8em; color: #666; }}
   .sort-arrow {{ font-size: 0.7em; margin-left: 4px; }}
+  table.pair {{ border-collapse: collapse; margin: 10px 0; }}
+  table.pair th, table.pair td {{ padding: 6px 14px; border: 1px solid #ddd; }}
+  table.pair th {{ background: #f0f0f0; }}
 </style>
 </head>
 <body>
 
-<h1>Value Comparison Report</h1>
+<h1>Value Comparison Report ({n_runs} runs)</h1>
 
 <div class="summary">
   <table>
-    <tr><td class="label">Run A:</td><td>{run_a.label}</td></tr>
-    <tr><td class="label">Run B:</td><td>{run_b.label}</td></tr>
-    <tr><td class="label">Env:</td><td>{height}&times;{width}, {n_agents} agents, &gamma;={run_a.cfg.env.gamma}</td></tr>
-    <tr><td class="label">TD target:</td><td>{run_a.cfg.train.td_target.name.lower()}</td></tr>
+    {run_info_rows}
+    <tr><td class="label">Env:</td><td>{height}&times;{width}, {n_agents} agents, &gamma;={runs[0].cfg.env.gamma}</td></tr>
+    <tr><td class="label">TD target:</td><td>{runs[0].cfg.train.td_target.name.lower()}</td></tr>
     <tr><td class="label">States compared:</td><td>{len(comparisons)}</td></tr>
   </table>
 
   <div class="stats">
-    <div class="stat-box"><div class="val">{mean_mag_a:.4f}</div><div class="lbl">Mean |V_team| A</div></div>
-    <div class="stat-box"><div class="val">{mean_mag_b:.4f}</div><div class="lbl">Mean |V_team| B</div></div>
-    <div class="stat-box"><div class="val">{mean_abs_diff:.4f}</div><div class="lbl">Mean |Diff|</div></div>
-    <div class="stat-box"><div class="val">{pct_error:.1f}%</div><div class="lbl">Mean |Diff| / Mean |V|</div></div>
-    <div class="stat-box"><div class="val">{mean_diff:+.4f}</div><div class="lbl">Mean Diff (A&minus;B)</div></div>
-    <div class="stat-box"><div class="val">{max_abs_diff:.4f}</div><div class="lbl">Max |Diff|</div></div>
-    <div class="stat-box"><div class="val">{std_diff:.4f}</div><div class="lbl">Std Dev of Diff</div></div>
+    {stat_boxes}
   </div>
 </div>
 
-<h2>Team Value: A vs B</h2>
+<h2>Agreement Matrix</h2>
+<img src="{matrix_uri}" class="plot" />
+
+<h2>Pairwise Statistics</h2>
+<table class="pair">
+<tr><th>Run A</th><th>Run B</th><th>Mean |Diff|</th><th>Max |Diff|</th></tr>
+{pair_rows}
+</table>
+
+<h2>Pairwise Scatter Plots</h2>
 <img src="{scatter_uri}" class="plot" />
 
-<h2>Difference Distribution</h2>
-<img src="{hist_uri}" class="plot" />
-
-<h2>Per-State Differences (sorted)</h2>
-<img src="{sorted_uri}" class="plot" />
-
-{agent_section}
+<h2>Per-State Disagreement</h2>
+<img src="{variance_uri}" class="plot" />
 
 {worst_html}
 {best_html}
@@ -363,15 +376,11 @@ def build_report(
 <table class="data" id="stateTable">
 <thead><tr>
   <th data-col="0" data-type="num">State #</th>
-  <th data-col="1" data-type="num">V_team A</th>
-  <th data-col="2" data-type="num">V_team B</th>
-  <th data-col="3" data-type="num">Diff (A&minus;B)</th>
-  <th data-col="4" data-type="num">|Diff|</th>
-  <th data-col="5" data-type="str">Agent Values A</th>
-  <th data-col="6" data-type="str">Agent Values B</th>
-  <th data-col="7" data-type="str">Agent Pos</th>
-  <th data-col="8" data-type="str">Apple Pos</th>
-  <th data-col="9" data-type="num">Actor</th>
+  {header_cols}
+  <th data-col="{n_runs + 1}" data-type="num">&sigma;</th>
+  <th data-col="{n_runs + 2}" data-type="num">Actor</th>
+  <th data-col="{n_runs + 3}" data-type="str">Agent Pos</th>
+  <th data-col="{n_runs + 4}" data-type="str">Apple Pos</th>
 </tr></thead>
 <tbody>
 {table_html}
@@ -380,7 +389,6 @@ def build_report(
 </div>
 
 <script>
-// Sortable table
 (function() {{
   const table = document.getElementById('stateTable');
   const headers = table.querySelectorAll('th');
@@ -392,7 +400,6 @@ def build_report(
       const isNum = th.dataset.type === 'num';
       if (sortCol === col) {{ sortAsc = !sortAsc; }} else {{ sortCol = col; sortAsc = true; }}
 
-      // Update arrows
       headers.forEach(h => {{
         let arrow = h.querySelector('.sort-arrow');
         if (arrow) arrow.remove();

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 from pathlib import Path
 
 import matplotlib
@@ -62,7 +63,10 @@ def _q_table_html(comp: PolicyComparison, labels: list[str]) -> str:
             q = comp.q_values[i][action]
             chosen = comp.actions[i] == action
             cls = "chosen" if chosen else ""
-            row += f'<td class="{cls}">{q:.6f}</td>'
+            if math.isnan(q):
+                row += f'<td class="{cls}">{"✓" if chosen else "—"}</td>'
+            else:
+                row += f'<td class="{cls}">{q:.6f}</td>'
         row += "</tr>"
         rows.append(row)
 
@@ -90,7 +94,7 @@ def _state_card_html(
     gaps = []
     for qv in comp.q_values:
         sorted_q = sorted(qv.values(), reverse=True)
-        if len(sorted_q) >= 2:
+        if len(sorted_q) >= 2 and not math.isnan(sorted_q[0]):
             gaps.append(sorted_q[0] - sorted_q[1])
     gap_strs = [f"{g:.6f}" for g in gaps]
     gap_line = "Q gap (best \u2212 2nd): " + ", ".join(gap_strs)
@@ -154,7 +158,8 @@ def build_report(
     pct_agree = n_agree / n_total * 100 if n_total > 0 else 0
 
     # Action distribution per model
-    action_counts: list[dict[Action, int]] = [{a: 0 for a in ACTION_PRIORITY} for _ in runs]
+    n_cols = len(labels)
+    action_counts: list[dict[Action, int]] = [{a: 0 for a in ACTION_PRIORITY} for _ in range(n_cols)]
     for c in comparisons:
         for i, a in enumerate(c.actions):
             action_counts[i][a] += 1
@@ -178,7 +183,7 @@ def build_report(
     for action in ACTION_PRIORITY:
         sym = _ACTION_SYMBOLS.get(action, action.name)
         row = f"<tr><td><b>{sym} {action.name}</b></td>"
-        for i in range(len(runs)):
+        for i in range(n_cols):
             cnt = action_counts[i][action]
             pct = cnt / n_total * 100 if n_total > 0 else 0
             row += f"<td>{cnt} ({pct:.1f}%)</td>"
@@ -191,6 +196,9 @@ def build_report(
     for i, (run, label) in enumerate(zip(runs, labels)):
         lt = "centralized" if run.is_centralized else "decentralized"
         run_info += f"<tr><td class='label'>{label}:</td><td>{lt}, step {run.checkpoint_step}, {run.run_dir}</td></tr>\n"
+    # Extra labels (e.g. "Nearest") that don't correspond to a LoadedRun
+    for label in labels[len(runs):]:
+        run_info += f"<tr><td class='label'>{label}:</td><td>heuristic policy</td></tr>\n"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">

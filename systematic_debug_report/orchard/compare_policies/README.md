@@ -19,6 +19,16 @@ python -m orchard.compare_policies \
     runs/dec64/2026-*/ runs/cen64/2026-*/ runs/dec8/2026-*/ runs/cen12/2026-*/ \
     --labels "DEC 64" "CEN 64" "DEC 8" "CEN 12" \
     --n-states 200 --seed 42
+
+# Compare against nearest-apple heuristic
+python -m orchard.compare_policies \
+    runs/B_cen_cnn64/2026-*/ \
+    --nearest --labels "CEN cnn64"
+
+# Cen + dec + nearest
+python -m orchard.compare_policies \
+    runs/dec64/2026-*/ runs/cen64/2026-*/ \
+    --nearest --labels "DEC 64" "CEN 64"
 ```
 
 ## Options
@@ -30,6 +40,7 @@ python -m orchard.compare_policies \
 | `--n-states` | 200 | Number of states to generate (ignored if `--match-training`) |
 | `--seed` | 42 | Seed for state generation (ignored if `--match-training`) |
 | `--match-training` | off | Use exact same 100 sample states as `train.py`, which uses random policy. Else uses nearest policy. |
+| `--nearest` | off | Include nearest-apple heuristic as an extra comparison column. Allows 1 run (vs normally 2+). |
 | `--output-dir` | `./compare_policies_output/` | Where to write the report |
 | `--dpi` | 100 | DPI for grid renderings |
 
@@ -41,6 +52,9 @@ python -m orchard.compare_policies \
   sample monitor (random actions, seed from config). The action distribution
   in the report should exactly match the final values in the `sample_values.csv`
   action fraction plots.
+- **`--nearest`**: appends a "Nearest" column that shows the nearest-apple
+  heuristic action for each state. Since it's a heuristic (no Q-values),
+  the Q-table shows ✓/— instead of numbers. Works with 1+ runs.
 ## Output
 
 `policy_comparison.html` — self-contained, open in any browser. Contains:

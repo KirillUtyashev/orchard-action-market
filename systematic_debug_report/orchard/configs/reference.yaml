@@ -77,9 +77,10 @@ train:
   patience_steps: 100000
   improvement_threshold: 1e-4
   min_steps_before_stop: 200000   # minimum number of steps to train before allowing stopping based on stopping_condition. This ensures we don't stop too early due to noise in the initial random policy.
-  mode: value_learning        # TrainMode: "value_learning" | "policy_learning". value_learning not supported for stochastic envs.
+  mode: value_learning        # TrainMode: "value_learning" | "policy_learning" | "reward_learning". value_learning not supported for stochastic envs.
                               #   value_learning  — fixed nearest-apple policy, learn V
                               #   policy_learning — epsilon-greedy over learned V, improve policy
+                              #   reward_learning — learn reward function
   td_target: pre_action       # TDTarget: "pre_action" | "after_state". full env with spawn and despawn (stochastic) must use after_state.
   total_steps: 10000          # int — total environment steps (one agent acts per step)
   train_method: backward_view   # or "nstep"
