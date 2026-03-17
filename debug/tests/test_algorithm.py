@@ -23,6 +23,7 @@ pytestmark = pytest.mark.skipif(
 
 if TORCH_AVAILABLE:
     import debug.code.training.learning as learning_mod
+    import debug.code.training.learning_loop as learning_loop_mod
     import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
     from debug.code.env.environment import MoveAction, Orchard
@@ -879,7 +880,7 @@ def test_reward_learning_eval_logs_mean_accuracy_to_csv(reward_learning_learner)
     assert float(row["reward_mae_mean"]) == pytest.approx(0.0, abs=1e-9)
 
 
-def test_reward_learning_training_path_uses_random_policy(reward_learning_learner):
+def test_reward_learning_training_path_uses_nearest_policy(reward_learning_learner):
     learner = reward_learning_learner
     learner.trajectory_length = 3
     learner.evaluation_states = []
@@ -922,16 +923,16 @@ def test_reward_learning_training_path_uses_random_policy(reward_learning_learne
 
     call_counter = {"n": 0}
 
-    def fake_random_policy(agent_pos):
+    def fake_nearest_policy(agent_pos, apples_matrix):
         call_counter["n"] += 1
         return np.array(agent_pos, copy=True)
 
-    original_random_policy = learning_mod.random_policy
-    learning_mod.random_policy = fake_random_policy
+    original_nearest_policy = learning_loop_mod.nearest_apple_policy
+    learning_loop_mod.nearest_apple_policy = fake_nearest_policy
     try:
         learner.step_and_collect_observation()
     finally:
-        learning_mod.random_policy = original_random_policy
+        learning_loop_mod.nearest_apple_policy = original_nearest_policy
 
     assert call_counter["n"] > 0
 

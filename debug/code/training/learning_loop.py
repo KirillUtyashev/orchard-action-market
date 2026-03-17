@@ -6,7 +6,7 @@ import pstats
 
 import torch
 
-from debug.code.training.helpers import env_step, random_policy
+from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy
 from debug.code.core.log import finalize_logging
 
 
@@ -132,7 +132,12 @@ class LearningLoopMixin:
         self._maybe_log_weight_samples(step=0)
 
     def _select_training_action(self, curr_state: dict, actor_idx: int):
-        if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
+        if self.exp_config.reward.reward_learning:
+            return nearest_apple_policy(
+                curr_state["agent_positions"][actor_idx],
+                curr_state["apples"],
+            )
+        if self.exp_config.algorithm.random_policy:
             return random_policy(
                 curr_state["agent_positions"][actor_idx],
                 width=self.width,

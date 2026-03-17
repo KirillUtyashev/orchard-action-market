@@ -1,7 +1,7 @@
 import numpy as np
 
 from debug.code.env.environment import Orchard
-from debug.code.training.helpers import env_step, random_policy
+from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy
 
 
 class LearningStateGenerationMixin:
@@ -111,10 +111,9 @@ class LearningStateGenerationMixin:
         max_steps = burnin + max(self.reward_eval_num_states * 500, 20_000)
 
         for t in range(max_steps):
-            new_pos = random_policy(
+            new_pos = nearest_apple_policy(
                 curr_state["agent_positions"][actor_idx],
-                width=self.width,
-                length=self.length,
+                curr_state["apples"],
             )
             s_moved, s_next, pick_rewards, _, next_actor_idx = env_step(
                 eval_env, actor_idx, new_pos, self.num_agents
