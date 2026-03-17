@@ -26,6 +26,7 @@ if TORCH_AVAILABLE:
     import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
     from debug.code.env.environment import MoveAction, Orchard
+    from debug.code.nn.encoders import DecCenteredGridEncoder
     from debug.code.training.helpers import set_all_seeds
     from debug.code.training.learning import Learning
 
@@ -141,6 +142,7 @@ eval:
   variance: 0.0
   debug: true
   reward_eval_num_states: 1000
+  reward_eval_zero_frac: 0.25
   action_prob_num_states: 0
   action_prob_burnin: 0
   action_prob_stride: 1
@@ -448,6 +450,48 @@ def test_weight_sampling_config_overrides_are_loaded(tmp_path):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_dec_centered_grid_encoder_centers_self_and_marks_outside():
+    encoder = DecCenteredGridEncoder(3, 4, 3)
+    state = {
+        "apples": np.zeros((3, 4), dtype=int),
+        "agents": np.zeros((3, 4), dtype=int),
+        "agent_positions": np.array([[0, 0], [1, 2], [2, 1]], dtype=int),
+        "actor_id": 2,
+    }
+    state["apples"][2, 3] = 1
+
+    encoded = encoder.encode(state, agent_idx=0)
+    grid = encoded.grid.numpy()
+
+    assert grid.shape == (3, 5, 7)
+    assert encoded.scalar.tolist() == pytest.approx([0.0])
+
+    assert np.all(grid[:, 0, 0] == -1.0)
+    assert np.all(grid[:, 2, 3] == 0.0)
+    assert grid[0, 4, 6] == pytest.approx(1.0)
+    assert grid[1, 3, 5] == pytest.approx(1.0)
+    assert grid[2, 4, 4] == pytest.approx(1.0)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_dec_centered_grid_encoder_marks_actor_at_center_when_self_is_actor():
+    encoder = DecCenteredGridEncoder(4, 4, 2)
+    state = {
+        "apples": np.zeros((4, 4), dtype=int),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 2], [0, 0]], dtype=int),
+        "actor_id": 0,
+    }
+
+    encoded = encoder.encode(state, agent_idx=0)
+    grid = encoded.grid.numpy()
+
+    assert encoded.scalar.tolist() == pytest.approx([1.0])
+    assert grid[2, encoder.center_r, encoder.center_c] == pytest.approx(1.0)
+    assert grid[1, encoder.center_r, encoder.center_c] == pytest.approx(0.0)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
 def test_weight_sample_indices_initialized_for_cnn_and_mlp(tmp_path):
     cfg = _make_cfg(
         tmp_path,
@@ -483,6 +527,42 @@ def test_weight_sample_indices_initialized_for_cnn_and_mlp(tmp_path):
         assert sample_indices.min() >= 0
         assert len(set(int(v) for v in sample_indices.tolist())) == sample_indices.size
     _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_grid_encoder_is_selected_for_decentralized_cnn(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "network.CNN=true",
+            "network.self_centered_grid=true",
+            "algorithm.centralized=false",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert isinstance(learning.encoder, DecCenteredGridEncoder)
+    assert learning.encoder.grid_channels() == 3
+    assert learning.encoder.H == (2 * learning.width - 1)
+    assert learning.encoder.W == (2 * learning.length - 1)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_grid_flag_requires_decentralized_cnn(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "network.CNN=false",
+            "network.self_centered_grid=true",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="self_centered_grid"):
+        Learning(cfg)
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
@@ -700,16 +780,71 @@ def test_reward_learning_generates_1000_labeled_states(reward_learning_learner):
 
     assert isinstance(learner.evaluation_states, list)
     assert len(learner.evaluation_states) == 1000
+    expected_zero = int(round(learner.reward_eval_num_states * learner.reward_eval_zero_frac))
+    zero_count = 0
 
-    for st in learner.evaluation_states[:20]:
+    for st in learner.evaluation_states:
         assert "actor_id" in st
         assert "true_rewards" in st
+        assert st["reward_eval_source"] in {"curr_state", "s_moved"}
         true_rewards = np.asarray(st["true_rewards"], dtype=float)
         assert true_rewards.shape == (NUM_AGENTS,)
         actor_id = int(st["actor_id"])
         actor_pos = st["agent_positions"][actor_id]
         expected = learner.reward_module.get_reward(st, actor_id, actor_pos, mode=1)
         assert np.allclose(true_rewards, expected)
+        if np.allclose(true_rewards, 0.0):
+            zero_count += 1
+            assert st["reward_eval_source"] == "curr_state"
+        else:
+            assert st["reward_eval_source"] == "s_moved"
+
+    assert zero_count == expected_zero
+
+
+def test_reward_learning_eval_state_uses_curr_state_for_zero_reward(reward_learning_learner):
+    learner = reward_learning_learner
+    curr_state = _build_interior_state()
+    s_moved = _clone_state(curr_state)
+    s_moved["agent_positions"][0] = np.array([1, 1], dtype=int)
+    s_moved["agents"] = np.zeros_like(curr_state["agents"])
+    for r, c in s_moved["agent_positions"]:
+        s_moved["agents"][r, c] += 1
+
+    eval_state = learner._make_reward_eval_state(
+        curr_state,
+        s_moved,
+        actor_id=0,
+        pick_rewards=np.zeros(NUM_AGENTS, dtype=np.float32),
+    )
+
+    assert eval_state["reward_eval_source"] == "curr_state"
+    assert np.array_equal(eval_state["agents"], curr_state["agents"])
+    assert np.array_equal(eval_state["agent_positions"], curr_state["agent_positions"])
+
+
+def test_reward_learning_eval_state_uses_s_moved_for_nonzero_reward(reward_learning_learner):
+    learner = reward_learning_learner
+    curr_state = _build_interior_state()
+    s_moved = _clone_state(curr_state)
+    s_moved["agent_positions"][0] = np.array([1, 1], dtype=int)
+    s_moved["agents"] = np.zeros_like(curr_state["agents"])
+    for r, c in s_moved["agent_positions"]:
+        s_moved["agents"][r, c] += 1
+
+    rewards = np.zeros(NUM_AGENTS, dtype=np.float32)
+    rewards[0] = 1.0
+
+    eval_state = learner._make_reward_eval_state(
+        curr_state,
+        s_moved,
+        actor_id=0,
+        pick_rewards=rewards,
+    )
+
+    assert eval_state["reward_eval_source"] == "s_moved"
+    assert np.array_equal(eval_state["agents"], s_moved["agents"])
+    assert np.array_equal(eval_state["agent_positions"], s_moved["agent_positions"])
 
 
 def test_reward_learning_eval_logs_mean_accuracy_to_csv(reward_learning_learner):

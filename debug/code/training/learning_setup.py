@@ -7,6 +7,7 @@ from debug.code.nn.encoders import (
     CenConcatEncoder,
     CenEntityEncoder,
     CenGridEncoder,
+    DecCenteredGridEncoder,
     DecEntityEncoder,
     DecGridEncoder,
 )
@@ -31,7 +32,10 @@ class LearningSetupMixin:
                 self.encoder = CenEntityEncoder(self.width, self.length, self.num_agents, k)
         else:
             if cfg.network.CNN:
-                self.encoder = DecGridEncoder(self.width, self.length, self.num_agents)
+                if bool(getattr(cfg.network, "self_centered_grid", False)):
+                    self.encoder = DecCenteredGridEncoder(self.width, self.length, self.num_agents)
+                else:
+                    self.encoder = DecGridEncoder(self.width, self.length, self.num_agents)
             else:
                 self.encoder = DecEntityEncoder(self.width, self.length, self.num_agents, k)
 

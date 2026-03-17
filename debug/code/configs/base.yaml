@@ -5,6 +5,7 @@ network:
   kernel_size: 3
   CNN: true
   input_dim: 0
+  self_centered_grid: false
 
 train:
   alpha: 0.01
@@ -40,6 +41,7 @@ eval:
   variance: 0.0
   debug: true
   reward_eval_num_states: 1000
+  reward_eval_zero_frac: 0.25
   supervised_eval_num_states: 1000
   action_prob_num_states: 100
   action_prob_burnin: 500
@@ -47,9 +49,9 @@ eval:
   value_track_num_states: 10
 
 env:
-  num_agents: 2
-  length: 6
-  width: 6
+  num_agents: 4
+  length: 9
+  width: 9
   apple_life: 20.0
 
 logging:

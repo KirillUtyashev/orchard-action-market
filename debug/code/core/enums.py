@@ -25,6 +25,7 @@ class NetworkConfig:
     kernel_size: int = 3
     input_dim: int = 0
     cnn_dim: int = 4
+    self_centered_grid: bool = False
 
 
 @dataclass
@@ -65,6 +66,7 @@ class EvalConfig:
     variance: float = 0.0
     debug: bool = True
     reward_eval_num_states: int = 1000
+    reward_eval_zero_frac: float = 0.25
     supervised_eval_num_states: int = 1000
     action_prob_num_states: int = 100
     action_prob_burnin: int = 500

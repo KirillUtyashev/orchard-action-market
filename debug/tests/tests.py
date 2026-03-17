@@ -219,7 +219,7 @@ class TestEnvironment:
         total_picked = 0
         total_spawned = int(self.env.apples.sum())  # count initial apples as "spawned"
 
-        seconds = 20_000
+        seconds = 10_000
         tracker.observe_grid(self.env.apples)
         num_apples = np.zeros(seconds + 1, dtype=int)
         num_apples[0] = self.env.get_sum_apples()
@@ -233,10 +233,11 @@ class TestEnvironment:
 
         for t in range(seconds):  # or timesteps, whichever your "simple" loop uses
             # pick action for the current actor based on the *current* state
-            new_pos = nearest_apple_policy(
-                curr_state["agent_positions"][actor_idx],
-                curr_state["apples"],
-            )
+            # new_pos = nearest_apple_policy(
+            #     curr_state["agent_positions"][actor_idx],
+            #     curr_state["apples"],
+            # )
+            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
 
             s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
                 self.env, actor_idx, new_pos, NUM_AGENTS

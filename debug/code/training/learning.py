@@ -59,6 +59,10 @@ class Learning(
 
         self.num_eval_states = exp_config.eval.num_eval_states
         self.reward_eval_num_states = max(1, int(getattr(exp_config.eval, "reward_eval_num_states", 1000)))
+        self.reward_eval_zero_frac = min(
+            1.0,
+            max(0.0, float(getattr(exp_config.eval, "reward_eval_zero_frac", 0.25))),
+        )
         self.supervised_eval_num_states = max(1, int(getattr(exp_config.eval, "supervised_eval_num_states", 1000)))
 
         self.train_start_time = None
@@ -83,6 +87,11 @@ class Learning(
         self._load_weights_if_requested()
 
     def _validate_training_modes(self) -> None:
+        if bool(getattr(self.exp_config.network, "self_centered_grid", False)):
+            if self.exp_config.algorithm.centralized or not self.exp_config.network.CNN:
+                raise ValueError(
+                    "network.self_centered_grid=true is only supported for decentralized CNN critics."
+                )
         if self.exp_config.reward.reward_learning and self.supervised_enabled:
             raise ValueError("reward.reward_learning and reward.supervised cannot both be enabled.")
         if self.supervised_enabled:
