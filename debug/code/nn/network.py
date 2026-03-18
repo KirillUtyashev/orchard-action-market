@@ -110,6 +110,13 @@ class NetworkWrapper(ABC):
     def get_lr(self) -> float:
         return self.optimizer.param_groups[0]["lr"]
 
+    def get_value_function_batch(self, enc):
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(enc)
+        self.model.train()
+        return out.reshape(-1).detach().cpu().numpy()
+
     # -----------------------------------------------------------------------
     # Call this *after* optimizer.step()
     # -----------------------------------------------------------------------

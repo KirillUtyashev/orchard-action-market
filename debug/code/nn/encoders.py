@@ -25,6 +25,19 @@ class EncoderOutput:
             raise ValueError("EncoderOutput must have at least one of grid or scalar")
 
 
+def stack_encoder_outputs(outputs: list[EncoderOutput]) -> EncoderOutput:
+    """Stack single-example encoder outputs into a batched EncoderOutput."""
+    if not outputs:
+        raise ValueError("Cannot stack an empty list of encoder outputs.")
+
+    grids = [out.grid for out in outputs if out.grid is not None]
+    scalars = [out.scalar for out in outputs if out.scalar is not None]
+
+    grid = torch.stack(grids, dim=0) if grids else None
+    scalar = torch.stack(scalars, dim=0) if scalars else None
+    return EncoderOutput(grid=grid, scalar=scalar)
+
+
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
@@ -107,6 +120,48 @@ class DecGridEncoder(GridEncoder):
 
         is_actor = 1.0 if agent_idx == actor_idx else 0.0
         return EncoderOutput(grid=grid, scalar=torch.tensor([is_actor]))
+
+    def encode_candidate_positions(
+        self,
+        state: dict,
+        agent_idx: int,
+        candidate_positions: np.ndarray,
+    ) -> EncoderOutput:
+        apples = state["apples"]
+        agent_pos = state["agent_positions"]
+        actor_idx = int(state["actor_id"])
+
+        cand = np.asarray(candidate_positions, dtype=np.int64)
+        if cand.ndim != 2 or cand.shape[1] != 2:
+            raise ValueError("candidate_positions must have shape (B, 2).")
+
+        batch_size = int(cand.shape[0])
+        grid = torch.zeros((batch_size, 4, self.H, self.W), dtype=torch.float32)
+        grid[:, 0] = torch.from_numpy((apples >= 1).astype(np.float32))
+
+        rr = torch.as_tensor(cand[:, 0], dtype=torch.long)
+        cc = torch.as_tensor(cand[:, 1], dtype=torch.long)
+        batch_idx = torch.arange(batch_size, dtype=torch.long)
+
+        sr, sc = map(int, agent_pos[agent_idx])
+        if agent_idx == actor_idx:
+            for i, (r, c) in enumerate(agent_pos):
+                if i != agent_idx:
+                    grid[:, 2, int(r), int(c)] += 1.0
+            grid[batch_idx, 1, rr, cc] = 1.0
+            grid[batch_idx, 3, rr, cc] = 1.0
+            is_actor = 1.0
+        else:
+            grid[:, 1, sr, sc] = 1.0
+            for i, (r, c) in enumerate(agent_pos):
+                if i != agent_idx and i != actor_idx:
+                    grid[:, 2, int(r), int(c)] += 1.0
+            grid[batch_idx, 2, rr, cc] += 1.0
+            grid[batch_idx, 3, rr, cc] = 1.0
+            is_actor = 0.0
+
+        scalar = torch.full((batch_size, 1), is_actor, dtype=torch.float32)
+        return EncoderOutput(grid=grid, scalar=scalar)
 
 
 class DecCenteredGridEncoder(GridEncoder):
@@ -284,6 +339,38 @@ class CenGridEncoder(GridEncoder):
 
         for i, (r, c) in enumerate(agent_pos):
             grid[2, r, c] += 1.0
+
+        return EncoderOutput(grid=grid)
+
+    def encode_candidate_positions(
+        self,
+        state: dict,
+        agent_idx: int,
+        candidate_positions: np.ndarray,
+    ) -> EncoderOutput:
+        del agent_idx
+
+        apples = state["apples"]
+        agent_pos = state["agent_positions"]
+        actor_idx = int(state["actor_id"])
+
+        cand = np.asarray(candidate_positions, dtype=np.int64)
+        if cand.ndim != 2 or cand.shape[1] != 2:
+            raise ValueError("candidate_positions must have shape (B, 2).")
+
+        batch_size = int(cand.shape[0])
+        grid = torch.zeros((batch_size, 3, self.H, self.W), dtype=torch.float32)
+        grid[:, 0] = torch.from_numpy((apples >= 1).astype(np.float32))
+
+        for i, (r, c) in enumerate(agent_pos):
+            if i != actor_idx:
+                grid[:, 2, int(r), int(c)] += 1.0
+
+        rr = torch.as_tensor(cand[:, 0], dtype=torch.long)
+        cc = torch.as_tensor(cand[:, 1], dtype=torch.long)
+        batch_idx = torch.arange(batch_size, dtype=torch.long)
+        grid[batch_idx, 1, rr, cc] = 1.0
+        grid[batch_idx, 2, rr, cc] += 1.0
 
         return EncoderOutput(grid=grid)
 

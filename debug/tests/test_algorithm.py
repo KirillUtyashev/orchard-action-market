@@ -22,12 +22,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 if TORCH_AVAILABLE:
+    from debug.code.agents.controllers import AgentControllerCentralized, AgentControllerDecentralized
     import debug.code.training.learning as learning_mod
     import debug.code.training.learning_loop as learning_loop_mod
     import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
     from debug.code.env.environment import MoveAction, Orchard
-    from debug.code.nn.encoders import DecCenteredGridEncoder
+    from debug.code.nn.encoders import CenGridEncoder, DecCenteredGridEncoder, DecGridEncoder
     from debug.code.training.helpers import set_all_seeds
     from debug.code.training.learning import Learning
 
@@ -276,6 +277,101 @@ class CyclingController:
         return env.agent_positions[agent_id] + action.vector
 
 
+class DummyEnvState:
+    def __init__(self, state: dict, width: int, length: int):
+        self._state = {
+            "agents": state["agents"].copy(),
+            "apples": state["apples"].copy(),
+            "agent_positions": state["agent_positions"].copy(),
+        }
+        self.width = int(width)
+        self.length = int(length)
+        self.agent_positions = self._state["agent_positions"].copy()
+
+    def get_state(self) -> dict:
+        return {
+            "agents": self._state["agents"].copy(),
+            "apples": self._state["apples"].copy(),
+            "agent_positions": self._state["agent_positions"].copy(),
+        }
+
+
+class DummyValueNet:
+    def __init__(self, grid_shape: tuple[int, int, int], scalar_dim: int):
+        size = int(np.prod(grid_shape))
+        self.grid_weights = torch.arange(1, size + 1, dtype=torch.float32).reshape(grid_shape) / float(max(size, 1))
+        self.scalar_weights = (
+            torch.arange(1, scalar_dim + 1, dtype=torch.float32) / float(max(scalar_dim, 1))
+            if scalar_dim > 0
+            else None
+        )
+
+    def get_value_function(self, enc):
+        value = torch.tensor(0.0, dtype=torch.float32)
+        if enc.grid is not None:
+            value = value + (enc.grid.float() * self.grid_weights).sum()
+        if enc.scalar is not None and self.scalar_weights is not None:
+            value = value + (enc.scalar.float() * self.scalar_weights).sum()
+        return float(value.item())
+
+    def get_value_function_batch(self, enc):
+        if enc.grid is not None:
+            grid = enc.grid.float()
+            if grid.dim() == 3:
+                grid = grid.unsqueeze(0)
+            values = (grid * self.grid_weights).sum(dim=(1, 2, 3))
+        else:
+            if enc.scalar is None:
+                raise ValueError("Expected grid or scalar inputs.")
+            scalar = enc.scalar.float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)
+            values = torch.zeros(scalar.shape[0], dtype=torch.float32)
+
+        if enc.scalar is not None and self.scalar_weights is not None:
+            scalar = enc.scalar.float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)
+            values = values + (scalar * self.scalar_weights).sum(dim=1)
+
+        return values.detach().cpu().numpy()
+
+
+class DummyPolicyAgent:
+    def __init__(self, value_net):
+        self.policy_value = value_net
+
+    def get_value_function(self, enc):
+        return self.policy_value.get_value_function(enc)
+
+
+def _manual_best_action(controller, env, actor_id: int):
+    best_action = env.agent_positions[actor_id].copy()
+    best_val = -1_000_000.0
+    position = env.agent_positions[actor_id].copy()
+
+    for act in MoveAction:
+        curr_state = env.get_state()
+        r, c = curr_state["agent_positions"][actor_id]
+        nr, nc = r + act.vector[0], c + act.vector[1]
+        if not (0 <= nr < env.width and 0 <= nc < env.length):
+            continue
+
+        new_pos = np.array([nr, nc], dtype=np.int64)
+        curr_state["agents"][tuple(new_pos)] += 1
+        curr_state["agents"][tuple(position)] -= 1
+        curr_state["agent_positions"][actor_id] = new_pos
+        curr_state["actor_id"] = actor_id
+
+        encoded_states = controller.get_all_agent_obs(curr_state)
+        val = controller.discount * controller.get_collective_value(encoded_states, actor_id)
+        if val > best_val:
+            best_action = new_pos
+            best_val = val
+
+    return best_action
+
+
 @pytest.fixture
 def learner_with_test_config(tmp_path):
     config_path = tmp_path / "test.yaml"
@@ -490,6 +586,96 @@ def test_dec_centered_grid_encoder_marks_actor_at_center_when_self_is_actor():
     assert encoded.scalar.tolist() == pytest.approx([1.0])
     assert grid[2, encoder.center_r, encoder.center_c] == pytest.approx(1.0)
     assert grid[1, encoder.center_r, encoder.center_c] == pytest.approx(0.0)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_decentralized_grid_controller_batched_action_selection_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [2, 2]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = DecGridEncoder(4, 4, 2)
+    agents = [
+        DummyPolicyAgent(DummyValueNet((4, 4, 4), 1)),
+        DummyPolicyAgent(DummyValueNet((4, 4, 4), 1)),
+    ]
+    controller = AgentControllerDecentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_centralized_grid_controller_batched_action_selection_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 0, 1, 0],
+                [1, 0, 0, 0],
+                [0, 0, 0, 1],
+                [0, 1, 0, 0],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [0, 3]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = CenGridEncoder(4, 4, 2)
+    agents = [DummyPolicyAgent(DummyValueNet((3, 4, 4), 0))]
+    controller = AgentControllerCentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_controller_batched_forward_fallback_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [1, 0, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [2, 3]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = DecCenteredGridEncoder(4, 4, 2)
+    agents = [
+        DummyPolicyAgent(DummyValueNet((3, encoder.H, encoder.W), 1)),
+        DummyPolicyAgent(DummyValueNet((3, encoder.H, encoder.W), 1)),
+    ]
+    controller = AgentControllerDecentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
