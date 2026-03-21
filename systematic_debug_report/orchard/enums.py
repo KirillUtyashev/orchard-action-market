@@ -25,6 +25,8 @@ class EncoderType(Enum):
     STABLE_ID = auto()     # SMAC-style: persistent apple IDs as slot indices
     CNN_GRID = auto()
     CENTRALIZED_CNN_GRID = auto()
+    EGOCENTRIC_CNN_GRID = auto()
+    NO_REDUNDANT_AGENT_GRID = auto()
 
 
 class ModelType(Enum):

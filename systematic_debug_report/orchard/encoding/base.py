@@ -30,6 +30,14 @@ class BaseEncoder(ABC):
         """Grid channel count. 0 means no grid output (MLP encoder)."""
         return 0
     
+    def grid_height(self) -> int:
+        """Spatial height of the grid tensor. Default: env height."""
+        return self.env_cfg.height
+
+    def grid_width(self) -> int:
+        """Spatial width of the grid tensor. Default: env width."""
+        return self.env_cfg.width
+    
     def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
         """Batch-encode multiple after-states. Default: just calls encode() in a loop."""
         raise NotImplementedError(f"{type(self).__name__} does not support encode_batch_for_actions")

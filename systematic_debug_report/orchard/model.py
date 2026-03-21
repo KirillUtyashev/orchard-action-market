@@ -41,7 +41,7 @@ class ValueNetwork(nn.Module):
             channels = encoding.get_grid_channels()
             scalar_extra = encoding.get_scalar_dim()
             self.conv, conv_flat_dim = self._build_conv(
-                channels, model_cfg.conv_specs, env_cfg.height, env_cfg.width, model_cfg.activation
+                channels, model_cfg.conv_specs, encoding.get_grid_height(), encoding.get_grid_width(), model_cfg.activation
             )
             self.flatten = nn.Flatten()
             self.net = self._build_mlp(conv_flat_dim + scalar_extra, model_cfg.mlp_dims, model_cfg.activation)

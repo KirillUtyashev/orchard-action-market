@@ -57,6 +57,8 @@ _ENCODER_TYPE_MAP: dict[str, EncoderType] = {
     "grid_mlp": EncoderType.GRID_MLP,
     "centralized_cnn_grid": EncoderType.CENTRALIZED_CNN_GRID,
     "cnn_grid": EncoderType.CNN_GRID,
+    "egocentric_cnn_grid": EncoderType.EGOCENTRIC_CNN_GRID,
+    "no_redundant_agent_grid": EncoderType.NO_REDUNDANT_AGENT_GRID,
 }
 
 _LEARNING_TYPE_MAP: dict[str, LearningType] = {
