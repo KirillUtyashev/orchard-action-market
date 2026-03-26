@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from debug.code.agents.actor_critic_agent import ACAgent
+from debug.code.agents.actor_critic_agent import ACAgent, ACAgentRates, ExternalInfluencer
 from debug.code.agents.controllers import AgentControllerActorCritic, AgentControllerCentralized, AgentControllerDecentralized
 from debug.code.nn.encoders import (
     CenConcatEncoder,
@@ -21,11 +21,59 @@ from debug.code.nn.value_function import VNetwork
 
 
 class LearningSetupMixin:
+    def _reset_optimizer_on_load(self) -> bool:
+        return bool(getattr(self.exp_config.train, "reset_optimizer_on_load", False))
+
+    def _following_rates_enabled(self) -> bool:
+        return bool(getattr(self.exp_config.algorithm, "following_rates", False))
+
+    def _influencer_enabled(self) -> bool:
+        return bool(getattr(self.exp_config.algorithm, "influencer", False))
+
+    def _following_rate_budget(self) -> float:
+        return float(getattr(self.exp_config.train, "following_rate_budget", 0.0))
+
+    def _influencer_budget(self) -> float:
+        return float(getattr(self.exp_config.train, "influencer_budget", 0.0))
+
+    def _initial_following_rate_vector(self, agent_id: int) -> np.ndarray:
+        rates = np.zeros(self.num_agents, dtype=float)
+        if self.num_agents <= 1:
+            return rates
+        budget = self._following_rate_budget()
+        if budget <= 0.0:
+            return rates
+        if self._influencer_enabled():
+            share = budget / float(self.num_agents)
+            for idx in range(self.num_agents):
+                if idx != int(agent_id):
+                    rates[idx] = share
+        else:
+            rates.fill(budget / float(self.num_agents - 1))
+            rates[int(agent_id)] = 0.0
+        return rates
+
+    def _initial_following_rate_to_influencer(self) -> float:
+        if not self._influencer_enabled():
+            return 0.0
+        budget = self._following_rate_budget()
+        if self.num_agents <= 0 or budget <= 0.0:
+            return 0.0
+        return budget / float(self.num_agents)
+
+    def _initial_influencer_outgoing_rates(self) -> np.ndarray:
+        rates = np.zeros(self.num_agents, dtype=float)
+        budget = self._influencer_budget()
+        if not self._influencer_enabled() or self.num_agents <= 0 or budget <= 0.0:
+            return rates
+        rates.fill(budget / float(self.num_agents))
+        return rates
+
     def _critic_network_cfg(self):
-        return getattr(self.exp_config, "critic_network", None) or self.exp_config.network
+        return self.exp_config.critic_network
 
     def _actor_network_cfg(self):
-        return getattr(self.exp_config, "actor_network", None) or self.exp_config.network
+        return self.exp_config.actor_network
 
     def _shared_network_cfg(self):
         critic_cfg = self._critic_network_cfg()
@@ -163,7 +211,10 @@ class LearningSetupMixin:
                     kernel_size=net_cfg.kernel_size,
                 )
             if self.crit_blobs:
-                net.import_net_state(self.crit_blobs[0]["blob"])
+                net.import_net_state(
+                    self.crit_blobs[0]["blob"],
+                    load_optimizer_state=not self._reset_optimizer_on_load(),
+                )
             if bool(getattr(cfg.train, "freeze_critics", False)):
                 net.set_eval_mode()
                 for param in net.model.parameters():
@@ -187,7 +238,10 @@ class LearningSetupMixin:
                     kernel_size=net_cfg.kernel_size,
                 )
                 if self.crit_blobs:
-                    nn.import_net_state(self.crit_blobs[i]["blob"])
+                    nn.import_net_state(
+                        self.crit_blobs[i]["blob"],
+                        load_optimizer_state=not self._reset_optimizer_on_load(),
+                    )
                 if bool(getattr(cfg.train, "freeze_critics", False)):
                     nn.set_eval_mode()
                     for param in nn.model.parameters():
@@ -209,7 +263,7 @@ class LearningSetupMixin:
         net_cfg = self._actor_network_cfg()
         actor_alpha = self._actor_alpha()
         expected = self.num_agents
-        if cfg.train.load_weights and self.actor_blobs and len(self.actor_blobs) != expected:
+        if self._should_load_policy_weights() and self.actor_blobs and len(self.actor_blobs) != expected:
             raise ValueError(
                 f"Expected {expected} actor blobs when loading actor-critic weights, got {len(self.actor_blobs)}."
             )
@@ -227,11 +281,14 @@ class LearningSetupMixin:
                 conv_channels=net_cfg.conv_channels,
                 kernel_size=net_cfg.kernel_size,
             )
-            if cfg.train.load_weights:
+            if self._should_load_policy_weights():
                 if not self.actor_blobs:
                     raise ValueError("Missing actor weights in checkpoint for actor-critic load.")
                 blob = self.actor_blobs[i]
-                net.import_net_state(blob["blob"] if isinstance(blob, dict) and "blob" in blob else blob)
+                net.import_net_state(
+                    blob["blob"] if isinstance(blob, dict) and "blob" in blob else blob,
+                    load_optimizer_state=not self._reset_optimizer_on_load(),
+                )
             self.policy_networks.append(net)
 
     def _init_agents_for_training(self):
@@ -239,20 +296,73 @@ class LearningSetupMixin:
             policy_fn = lambda agent_pos: random_policy(agent_pos, width=self.width, length=self.length)
         else:
             policy_fn = lambda _agent_pos: teleport(self.width, self.length)
+        expected = self.num_agents
+        if self.exp_config.train.load_weights and self.rate_blobs and len(self.rate_blobs) != expected:
+            raise ValueError(
+                f"Expected {expected} following-rate blobs when loading weights, got {len(self.rate_blobs)}."
+            )
         for i in range(self.num_agents):
             net = self.critic_networks[0] if self.exp_config.algorithm.centralized else self.critic_networks[i]
             if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
-                self.agents.append(
-                    ACAgent(
-                        policy_fn,
-                        i,
-                        net,
-                        self.policy_networks[i],
-                        np.zeros(self.num_agents, dtype=float),
+                init_alphas = np.zeros(self.num_agents, dtype=float)
+                if self._following_rates_enabled():
+                    init_following_rates = self._initial_following_rate_vector(i)
+                    init_following_rate_to_influencer = self._initial_following_rate_to_influencer()
+                    if self.exp_config.train.load_weights and self.rate_blobs:
+                        blob = self.rate_blobs[i]
+                        init_alphas = np.asarray(blob.get("agent_alphas", init_alphas), dtype=float)
+                        init_following_rates = np.asarray(
+                            blob.get("following_rates", init_following_rates),
+                            dtype=float,
+                        )
+                        init_following_rate_to_influencer = float(
+                            blob.get("following_rate_to_influencer", init_following_rate_to_influencer)
+                        )
+                    self.agents.append(
+                        ACAgentRates(
+                            policy_fn,
+                            i,
+                            net,
+                            self.policy_networks[i],
+                            init_alphas,
+                            self._following_rate_budget(),
+                            init_following_rates,
+                            init_following_rate_to_influencer,
+                        )
                     )
-                )
+                else:
+                    self.agents.append(
+                        ACAgent(
+                            policy_fn,
+                            i,
+                            net,
+                            self.policy_networks[i],
+                            init_alphas,
+                        )
+                    )
             else:
                 self.agents.append(SimpleAgent(policy_fn, i, net))
+
+    def _init_external_influencer(self) -> None:
+        self.external_influencer = None
+        if not self._influencer_enabled():
+            return
+
+        init_outgoing_rates = self._initial_influencer_outgoing_rates()
+        init_beta = np.zeros(self.num_agents, dtype=float)
+        if self.exp_config.train.load_weights and self.influencer_blob:
+            init_outgoing_rates = np.asarray(
+                self.influencer_blob.get("outgoing_rates", init_outgoing_rates),
+                dtype=float,
+            )
+            init_beta = np.asarray(self.influencer_blob.get("beta", init_beta), dtype=float)
+
+        self.external_influencer = ExternalInfluencer(
+            self._influencer_budget(),
+            self.num_agents,
+            init_outgoing_rates,
+            init_beta,
+        )
 
     def build_experiment(self):
         self._build_encoder()
@@ -260,6 +370,7 @@ class LearningSetupMixin:
         self._init_policy_networks()
         self._init_supervised_networks()
         self._init_agents_for_training()
+        self._init_external_influencer()
 
         p_apple = self.exp_config.algorithm.q_agent / float(self.width**2)
         d_apple = 1 / self.exp_config.env.apple_life
@@ -305,3 +416,6 @@ class LearningSetupMixin:
             self._generate_evaluation_states_supervised()
         self._networks_for_eval = self.policy_networks if self.policy_networks else self.critic_networks
         self._init_weight_sample_indices()
+        if self._following_rates_enabled():
+            self._refresh_follower_influencer_values()
+        self._refresh_following_rate_stats()

@@ -89,12 +89,9 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Experim
     if overrides:
         raw = _apply_overrides(raw, overrides)
 
-    base_network = raw.get("network", {})
-
     return ExperimentConfig(
-        network=_populate_dataclass(NetworkConfig, base_network),
-        critic_network=_populate_dataclass(NetworkConfig, {**base_network, **raw.get("critic_network", {})}),
-        actor_network=_populate_dataclass(NetworkConfig, {**base_network, **raw.get("actor_network", {})}),
+        critic_network=_populate_dataclass(NetworkConfig, raw.get("critic_network", {})),
+        actor_network=_populate_dataclass(NetworkConfig, raw.get("actor_network", {})),
         train=_populate_dataclass(TrainingConfig, raw.get("train", {})),
         algorithm=_populate_dataclass(AlgorithmConfig, raw.get("algorithm", {})),
         reward=_populate_dataclass(RewardConfig, raw.get("reward", {})),

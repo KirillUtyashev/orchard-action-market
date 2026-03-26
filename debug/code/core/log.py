@@ -113,6 +113,8 @@ def build_main_csv_fieldnames(
     reward_learning: bool,
     supervised: bool = False,
     actor_critic: bool = False,
+    following_rates: bool = False,
+    influencer: bool = False,
     critic_smoke: bool = False,
 ) -> list[str]:
     """Build column names for metrics.csv based on training mode."""
@@ -143,6 +145,17 @@ def build_main_csv_fieldnames(
                 "advantage_mean",
                 "policy_entropy_mean",
             ])
+        if following_rates:
+            fields.extend([
+                "alpha_mean",
+                "alpha_positive_frac",
+                "following_weight_mean",
+                "active_follow_edges_mean",
+                "beta_mean",
+                "influencer_weight_mean",
+                "follower_to_influencer_weight_mean",
+                "effective_follow_weight_mean",
+            ])
         if critic_smoke:
             fields.extend([
                 "loaded_critic_smoke_greedy_pps",
@@ -158,6 +171,33 @@ def build_main_csv_fieldnames(
 def build_action_prob_csv_fieldnames() -> list[str]:
     """Build column names for action_probabilities.csv."""
     return ["step", "wall_time", "left", "right", "up", "down", "stay"]
+
+
+def build_following_rate_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"alpha_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_{target_id}")
+    fields.extend([
+        "lambda_to_influencer",
+        "weight_to_influencer",
+        "influencer_value",
+    ])
+    return fields
+
+
+def build_influencer_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"beta_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_actor_{target_id}")
+    return fields
 
 
 def build_value_track_csv_fieldnames(num_states: int) -> list[str]:

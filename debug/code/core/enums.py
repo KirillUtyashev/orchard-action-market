@@ -23,8 +23,6 @@ class NetworkConfig:
     mlp_dims: tuple = (128, 128)
     conv_channels: list = None
     kernel_size: int = 3
-    input_dim: int = 0
-    cnn_dim: int = 4
     self_centered_grid: bool = False
 
 
@@ -33,6 +31,10 @@ class TrainingConfig:
     """Optimization and learning parameters."""
     alpha: float = 0.01
     actor_alpha: float | None = None
+    following_rate_budget: float = 1.0
+    influencer_budget: float = 1.0
+    following_rate_rho: float = 0.1
+    following_rate_reallocation_freq: int = 100
     timesteps: int = 1_000_000
     seed: int = 1234
     epsilon: float = 0.1
@@ -41,8 +43,11 @@ class TrainingConfig:
     critic_schedule_lr: bool | None = None
     actor_schedule_lr: bool | None = None
     load_weights: bool = False
+    load_policy_weights: bool = False
+    reset_optimizer_on_load: bool = False
     critic_weights_path: str = ""
     freeze_critics: bool = False
+    fixed_following_rates: bool = False
 
 
 @dataclass
@@ -50,6 +55,8 @@ class AlgorithmConfig:
     """TD/RL algorithm choices."""
     random_policy: bool = False
     actor_critic: bool = False
+    following_rates: bool = False
+    influencer: bool = False
     q_agent: float = 0.5
     centralized: bool = False
     concat: bool = False
@@ -119,7 +126,6 @@ class SupervisedConfig:
 
 @dataclass
 class ExperimentConfig:
-    network: NetworkConfig = None
     critic_network: NetworkConfig = None
     actor_network: NetworkConfig = None
     train: TrainingConfig = None

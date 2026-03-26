@@ -13,6 +13,8 @@ from debug.code.training.learning_stategen import LearningStateGenerationMixin
 from debug.code.core.log import (
     CSVLogger,
     build_action_prob_csv_fieldnames,
+    build_following_rate_csv_fieldnames,
+    build_influencer_csv_fieldnames,
     build_main_csv_fieldnames,
     build_pipeline_profile_csv_fieldnames,
     build_value_track_csv_fieldnames,
@@ -50,12 +52,25 @@ class Learning(
         self._networks_for_eval = []
         self.crit_blobs = []
         self.actor_blobs = []
+        self.rate_blobs = []
+        self.influencer_blob = None
         self.loaded_critic_checkpoint_path: Path | None = None
         self.loaded_critic_smoke_test_result = None
+        self.external_influencer = None
         self._last_actor_training_stats = {
             "actor_loss_mean": None,
             "advantage_mean": None,
             "policy_entropy_mean": None,
+        }
+        self._last_following_rate_stats = {
+            "alpha_mean": None,
+            "alpha_positive_frac": None,
+            "following_weight_mean": None,
+            "active_follow_edges_mean": None,
+            "beta_mean": None,
+            "influencer_weight_mean": None,
+            "follower_to_influencer_weight_mean": None,
+            "effective_follow_weight_mean": None,
         }
 
         self.reward_module = Reward(exp_config.reward.picker_r, self.num_agents)
@@ -101,15 +116,54 @@ class Learning(
         if bool(getattr(net_cfg, "self_centered_grid", False)):
             if self.exp_config.algorithm.centralized or not net_cfg.CNN:
                 raise ValueError(
-                    "network.self_centered_grid=true is only supported for decentralized CNN critics."
+                    "critic_network.self_centered_grid=true and actor_network.self_centered_grid=true "
+                    "are only supported for decentralized CNN runs."
                 )
         if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
             if bool(self.exp_config.algorithm.centralized):
                 raise ValueError("algorithm.actor_critic=true is only supported for decentralized training in v1.")
             if bool(self.exp_config.reward.reward_learning):
                 raise ValueError("algorithm.actor_critic=true is not supported with reward.reward_learning=true.")
+        if bool(getattr(self.exp_config.algorithm, "following_rates", False)):
+            if not bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+                raise ValueError("algorithm.following_rates=true requires algorithm.actor_critic=true.")
+            if bool(self.exp_config.algorithm.centralized):
+                raise ValueError("algorithm.following_rates=true is only supported for decentralized training.")
+            if self.num_agents < 2:
+                raise ValueError("algorithm.following_rates=true requires env.num_agents >= 2.")
+            budget = float(getattr(self.exp_config.train, "following_rate_budget", 0.0))
+            rho = float(getattr(self.exp_config.train, "following_rate_rho", 0.0))
+            realloc_freq = int(getattr(self.exp_config.train, "following_rate_reallocation_freq", 0))
+            if budget < 0.0:
+                raise ValueError("train.following_rate_budget must be >= 0.")
+            if not (0.0 < rho <= 1.0):
+                raise ValueError("train.following_rate_rho must be in (0, 1].")
+            if realloc_freq <= 0:
+                raise ValueError("train.following_rate_reallocation_freq must be >= 1.")
+            if bool(getattr(self.exp_config.algorithm, "influencer", False)):
+                influencer_budget = float(getattr(self.exp_config.train, "influencer_budget", 0.0))
+                if influencer_budget < 0.0:
+                    raise ValueError("train.influencer_budget must be >= 0.")
+        elif bool(getattr(self.exp_config.algorithm, "influencer", False)):
+            raise ValueError("algorithm.influencer=true requires algorithm.following_rates=true.")
+        elif bool(getattr(self.exp_config.train, "fixed_following_rates", False)):
+            raise ValueError("train.fixed_following_rates=true requires algorithm.following_rates=true.")
+        if bool(getattr(self.exp_config.train, "load_policy_weights", False)) and not bool(
+            getattr(self.exp_config.algorithm, "actor_critic", False)
+        ):
+            raise ValueError("train.load_policy_weights=true requires algorithm.actor_critic=true.")
+        if bool(getattr(self.exp_config.train, "load_policy_weights", False)) and not bool(
+            getattr(self.exp_config.train, "load_weights", False)
+        ):
+            if not str(getattr(self.exp_config.train, "critic_weights_path", "")).strip():
+                raise ValueError(
+                    "train.load_policy_weights=true requires train.critic_weights_path or train.load_weights=true."
+                )
         if bool(getattr(self.exp_config.train, "freeze_critics", False)) and not self._should_load_critics():
-            raise ValueError("train.freeze_critics=true requires train.critic_weights_path or train.load_weights=true.")
+            raise ValueError(
+                "train.freeze_critics=true requires train.critic_weights_path, train.load_weights=true, "
+                "or train.load_policy_weights=true."
+            )
         if self.exp_config.reward.reward_learning and self.supervised_enabled:
             raise ValueError("reward.reward_learning and reward.supervised cannot both be enabled.")
         if self.supervised_enabled:
@@ -139,6 +193,8 @@ class Learning(
             reward_learning=reward_learning_mode,
             supervised=self.supervised_enabled,
             actor_critic=bool(getattr(self.exp_config.algorithm, "actor_critic", False)),
+            following_rates=bool(getattr(self.exp_config.algorithm, "following_rates", False)),
+            influencer=bool(getattr(self.exp_config.algorithm, "influencer", False)),
             critic_smoke=bool(getattr(self.exp_config.train, "freeze_critics", False)) and self._should_load_critics(),
         )
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
@@ -154,6 +210,25 @@ class Learning(
                 )
                 for agent_id in range(self.num_agents)
             }
+
+        if reward_learning_mode or not bool(getattr(self.exp_config.algorithm, "following_rates", False)):
+            self.following_rate_loggers = {}
+        else:
+            follow_fields = build_following_rate_csv_fieldnames(self.num_agents)
+            self.following_rate_loggers = {
+                agent_id: CSVLogger(
+                    self.data_dir / f"following_rates_agent_{agent_id}.csv",
+                    follow_fields,
+                )
+                for agent_id in range(self.num_agents)
+            }
+        if reward_learning_mode or not bool(getattr(self.exp_config.algorithm, "influencer", False)):
+            self.influencer_logger = None
+        else:
+            self.influencer_logger = CSVLogger(
+                self.data_dir / "external_influencer.csv",
+                build_influencer_csv_fieldnames(self.num_agents),
+            )
 
         self.value_track_num_states = max(
             0,
@@ -204,8 +279,17 @@ class Learning(
         ]
 
     def _should_load_critics(self) -> bool:
-        return bool(getattr(self.exp_config.train, "load_weights", False)) or bool(
+        return (
+            bool(getattr(self.exp_config.train, "load_weights", False))
+            or bool(getattr(self.exp_config.train, "load_policy_weights", False))
+            or bool(
             str(getattr(self.exp_config.train, "critic_weights_path", "")).strip()
+            )
+        )
+
+    def _should_load_policy_weights(self) -> bool:
+        return bool(getattr(self.exp_config.train, "load_weights", False)) or bool(
+            getattr(self.exp_config.train, "load_policy_weights", False)
         )
 
     def _resolve_critic_checkpoint_path(self) -> Path:
@@ -227,5 +311,13 @@ class Learning(
             ckpt = torch.load(path, map_location="cpu")
             self.loaded_critic_checkpoint_path = path
             self.crit_blobs = ckpt.get("critics", [])
-            if bool(getattr(self.exp_config.train, "load_weights", False)):
+            if self._should_load_policy_weights():
                 self.actor_blobs = ckpt.get("actors", [])
+            else:
+                self.actor_blobs = []
+            if bool(getattr(self.exp_config.train, "load_weights", False)):
+                self.rate_blobs = ckpt.get("following_rate_agents", [])
+                self.influencer_blob = ckpt.get("external_influencer")
+            else:
+                self.rate_blobs = []
+                self.influencer_blob = None

@@ -6,6 +6,7 @@ import pstats
 
 import torch
 
+from debug.code.agents.actor_critic_agent import ACAgentRates
 from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy
 from debug.code.core.log import finalize_logging
 
@@ -119,6 +120,7 @@ class LearningLoopMixin:
         return float(pred.item())
 
     def _run_initial_evaluation(self) -> None:
+        self._refresh_following_rate_stats()
         if self.supervised_enabled:
             self.eval_performance(0)
         elif self.exp_config.algorithm.random_policy:
@@ -129,10 +131,64 @@ class LearningLoopMixin:
             self.eval_performance(0)
         self._maybe_log_action_probabilities(step=0)
         self._maybe_log_tracked_state_values(step=0)
+        self._maybe_log_following_rate_snapshots(step=0)
         self._maybe_log_weight_samples(step=0)
 
     def _critics_trainable(self) -> bool:
         return not bool(getattr(self.exp_config.train, "freeze_critics", False))
+
+    def _following_rate_rho(self) -> float:
+        return float(getattr(self.exp_config.train, "following_rate_rho", 0.0))
+
+    def _fixed_following_rates(self) -> bool:
+        return bool(getattr(self.exp_config.train, "fixed_following_rates", False))
+
+    def _should_reallocate_following_rates(self, step: int | None) -> bool:
+        if not self._following_rates_enabled() or self._fixed_following_rates() or step is None:
+            return False
+        freq = max(1, int(getattr(self.exp_config.train, "following_rate_reallocation_freq", 1)))
+        return (int(step) + 1) % freq == 0
+
+    def _rate_agents(self) -> list[ACAgentRates]:
+        return [agent for agent in self.agents if isinstance(agent, ACAgentRates)]
+
+    def _refresh_influencer_beta(self) -> None:
+        if not self._influencer_enabled() or self.external_influencer is None:
+            return
+        self.external_influencer.recompute_beta(self._rate_agents())
+
+    def _refresh_follower_influencer_values(self) -> None:
+        rate_agents = self._rate_agents()
+        if not self._influencer_enabled() or self.external_influencer is None:
+            for agent in rate_agents:
+                agent.set_influencer_value(0.0)
+            return
+
+        outgoing_weights = self.external_influencer.outgoing_weights
+        for agent in rate_agents:
+            agent.set_influencer_value(float((outgoing_weights * agent.agent_alphas).sum()))
+
+    def _effective_observer_weight(self, observer_id: int, actor_id: int) -> float:
+        agent = self.agents[observer_id]
+        if not isinstance(agent, ACAgentRates):
+            return 0.0
+        influencer = self.external_influencer if self._influencer_enabled() else None
+        return float(agent.get_effective_observing_probability(actor_id, influencer))
+
+    def _reallocate_following_rates(self) -> None:
+        rate_agents = self._rate_agents()
+        if self._influencer_enabled() and self.external_influencer is not None:
+            self._refresh_influencer_beta()
+            self.external_influencer.update_outgoing_rates()
+            self._refresh_follower_influencer_values()
+            for agent in rate_agents:
+                agent.update_following_rates(influencer_value=agent.influencer_value)
+            self._refresh_influencer_beta()
+            self._refresh_follower_influencer_values()
+            return
+
+        for agent in rate_agents:
+            agent.update_following_rates()
 
     def _select_training_action(self, curr_state: dict, actor_idx: int):
         if self.exp_config.reward.reward_learning:
@@ -235,6 +291,7 @@ class LearningLoopMixin:
         actor_idx: int,
         action_idx: int,
         legal_mask,
+        step: int | None = None,
     ):
         critic_losses = []
         enc_t_by_agent = []
@@ -250,13 +307,43 @@ class LearningLoopMixin:
             enc_next_by_agent.append(enc_next)
 
         with torch.no_grad():
+            v_t_by_agent = []
+            q_hat_by_agent = []
             v_soc = 0.0
             q_soc = 0.0
             for i, critic in enumerate(self.critic_networks):
                 reward_i = float(pick_rewards[i]) if on_apple else 0.0
-                v_soc += float(critic.get_value_function(enc_t_by_agent[i]))
-                q_soc += reward_i + self.discount_factor * float(critic.get_value_function(enc_next_by_agent[i]))
-        advantage = q_soc - v_soc
+                value_t = float(critic.get_value_function(enc_t_by_agent[i]))
+                q_hat = reward_i + self.discount_factor * float(critic.get_value_function(enc_next_by_agent[i]))
+                v_t_by_agent.append(value_t)
+                q_hat_by_agent.append(q_hat)
+                v_soc += value_t
+                q_soc += q_hat
+
+        if self._following_rates_enabled():
+            rho = self._following_rate_rho()
+            for observer_id, agent in enumerate(self.agents):
+                if not isinstance(agent, ACAgentRates) or observer_id == actor_idx:
+                    continue
+                agent.update_alpha(actor_idx, q_hat_by_agent[observer_id], rho)
+
+            self._refresh_influencer_beta()
+            self._refresh_follower_influencer_values()
+            if self._should_reallocate_following_rates(step):
+                self._reallocate_following_rates()
+
+            q_rate = float(q_hat_by_agent[actor_idx])
+            v_rate = float(v_t_by_agent[actor_idx])
+            for observer_id, agent in enumerate(self.agents):
+                if not isinstance(agent, ACAgentRates) or observer_id == actor_idx:
+                    continue
+                weight = self._effective_observer_weight(observer_id, actor_idx)
+                q_rate += weight * float(q_hat_by_agent[observer_id])
+                v_rate += weight * float(v_t_by_agent[observer_id])
+            advantage = q_rate - v_rate
+            self._refresh_following_rate_stats()
+        else:
+            advantage = q_soc - v_soc
 
         actor_state = self.encoder.encode(curr_state, actor_idx)
         self.policy_networks[actor_idx].add_experience(actor_state, legal_mask, action_idx, advantage)
@@ -311,6 +398,7 @@ class LearningLoopMixin:
 
     def _run_periodic_evaluation(self, step: int) -> None:
         print(f"Running evaluation at step {step}/{self.trajectory_length}")
+        self._refresh_following_rate_stats()
         if self.supervised_enabled:
             self.eval_performance(step)
         elif not self.exp_config.reward.reward_learning:
@@ -325,6 +413,7 @@ class LearningLoopMixin:
 
         self._maybe_log_action_probabilities(step=step)
         self._maybe_log_tracked_state_values(step=step)
+        self._maybe_log_following_rate_snapshots(step=step)
 
     def step_and_collect_observation(self) -> None:
         start = time.perf_counter()
@@ -371,6 +460,7 @@ class LearningLoopMixin:
                     actor_idx=actor_idx,
                     action_idx=action_idx,
                     legal_mask=legal_mask,
+                    step=sec,
                 )
             elif self.exp_config.algorithm.centralized:
                 self._train_centralized_transition(curr_state, s_moved, s_next, pick_rewards, on_apple)
@@ -406,6 +496,10 @@ class LearningLoopMixin:
         self.main_logger.close()
         for logger in self.action_prob_loggers.values():
             logger.close()
+        for logger in self.following_rate_loggers.values():
+            logger.close()
+        if getattr(self, "influencer_logger", None) is not None:
+            self.influencer_logger.close()
         for logger in self.value_track_loggers.values():
             logger.close()
         for logger in self.weight_sample_loggers.values():
@@ -471,6 +565,25 @@ class LearningLoopMixin:
             payload["actors"] = []
             for actor in self.policy_networks:
                 payload["actors"].append({"blob": actor.export_net_state()})
+        if any(isinstance(agent, ACAgentRates) for agent in self.agents):
+            payload["following_rate_agents"] = []
+            for agent in self.agents:
+                if not isinstance(agent, ACAgentRates):
+                    continue
+                payload["following_rate_agents"].append(
+                    {
+                        "agent_alphas": agent.agent_alphas.copy(),
+                        "following_rates": agent.following_rates.copy(),
+                        "following_rate_to_influencer": float(agent.following_rate_to_influencer),
+                        "influencer_observing_probability": float(agent.influencer_observing_probability),
+                    }
+                )
+        if self.external_influencer is not None:
+            payload["external_influencer"] = {
+                "outgoing_rates": self.external_influencer.outgoing_rates.copy(),
+                "outgoing_weights": self.external_influencer.outgoing_weights.copy(),
+                "beta": self.external_influencer.beta.copy(),
+            }
 
         dst = path / "weights.pt"
         torch.save(payload, dst)

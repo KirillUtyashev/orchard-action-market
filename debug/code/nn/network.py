@@ -78,11 +78,11 @@ class NetworkWrapper(ABC):
             "scheduler": (self.scheduler.state_dict() if self.scheduler else None),
         }
 
-    def import_net_state(self, blob, device=DEVICE):
+    def import_net_state(self, blob, device=DEVICE, *, load_optimizer_state: bool = True):
         self.model.load_state_dict(blob["weights"])
 
         opt_state = blob.get("optimizer")
-        if opt_state is not None:
+        if load_optimizer_state and opt_state is not None:
             self.optimizer.load_state_dict(opt_state)
             for st in self.optimizer.state.values():
                 for k, v in st.items():
@@ -90,7 +90,7 @@ class NetworkWrapper(ABC):
                         st[k] = v.to(device)
 
         sch_state = blob.get("scheduler")
-        if self.scheduler is not None and sch_state is not None:
+        if load_optimizer_state and self.scheduler is not None and sch_state is not None:
             self.scheduler.load_state_dict(sch_state)
 
     # -----------------------------------------------------------------------

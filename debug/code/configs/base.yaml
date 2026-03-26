@@ -1,19 +1,9 @@
-network:
-  MLP: false
-  mlp_dims: [0, 0]
-  conv_channels: [64, 64]
-  kernel_size: 3
-  CNN: true
-  input_dim: 0
-  self_centered_grid: false
-
 critic_network:
   MLP: false
   mlp_dims: [0, 0]
   conv_channels: [64]
   kernel_size: 3
   CNN: true
-  input_dim: 0
   self_centered_grid: false
 
 actor_network:
@@ -22,12 +12,15 @@ actor_network:
   conv_channels: [64, 64]
   kernel_size: 3
   CNN: true
-  input_dim: 0
   self_centered_grid: false
 
 train:
   alpha: 0.01
   actor_alpha: null
+  following_rate_budget: 1.0
+  influencer_budget: 1.0
+  following_rate_rho: 0.1
+  following_rate_reallocation_freq: 100
   timesteps: 1000
   seed: 1234
   epsilon: 0.1
@@ -36,12 +29,17 @@ train:
   critic_schedule_lr: null
   actor_schedule_lr: null
   load_weights: false
+  load_policy_weights: false
+  reset_optimizer_on_load: false
   critic_weights_path: ""
   freeze_critics: false
+  fixed_following_rates: false
 
 algorithm:
   random_policy: false
   actor_critic: true
+  following_rates: false
+  influencer: false
   q_agent: 1.44
   centralized: false
   concat: false

@@ -10,7 +10,7 @@ def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file.")
     parser.add_argument("--override", type=str, nargs="*", default=[],
-                        help="Dot-notation overrides, e.g. train.alpha=0.001 network.CNN=true")
+                        help="Dot-notation overrides, e.g. train.alpha=0.001 critic_network.CNN=true")
     return parser.parse_args(args)
 
 

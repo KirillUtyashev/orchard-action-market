@@ -134,6 +134,8 @@ class LearningEvalMixin:
         if bool(getattr(self.exp_config.algorithm, "actor_critic", False)) and self.policy_networks:
             results["actor_lr"] = self.policy_networks[0].get_lr()
             results.update(self._last_actor_training_stats)
+        if bool(getattr(self.exp_config.algorithm, "following_rates", False)):
+            results.update(self._last_following_rate_stats)
         smoke = self.loaded_critic_smoke_test_result
         if step == 0 and smoke is not None:
             results.update(
