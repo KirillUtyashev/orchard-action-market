@@ -594,6 +594,82 @@ def test_actor_and_critic_can_use_separate_lr_schedulers(tmp_path):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_separate_actor_and_critic_network_configs_are_loaded(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "network.CNN=true",
+            "network.MLP=false",
+            "network.conv_channels=[8]",
+            "critic_network.CNN=true",
+            "critic_network.MLP=false",
+            "critic_network.conv_channels=[4]",
+            "actor_network.CNN=true",
+            "actor_network.MLP=true",
+            "actor_network.conv_channels=[4,8]",
+            "actor_network.mlp_dims=[32]",
+        ],
+    )
+
+    assert list(cfg.critic_network.conv_channels) == [4]
+    assert bool(cfg.critic_network.MLP) is False
+    assert list(cfg.actor_network.conv_channels) == [4, 8]
+    assert bool(cfg.actor_network.MLP) is True
+    assert list(cfg.actor_network.mlp_dims) == [32]
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_networks_can_use_different_architectures(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "network.CNN=true",
+            "network.self_centered_grid=false",
+            "critic_network.CNN=true",
+            "critic_network.MLP=false",
+            "critic_network.conv_channels=[4]",
+            "critic_network.mlp_dims=[0]",
+            "actor_network.CNN=true",
+            "actor_network.MLP=true",
+            "actor_network.conv_channels=[4,8]",
+            "actor_network.mlp_dims=[32]",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    critic_model = learning.critic_networks[0].model
+    actor_model = learning.policy_networks[0].model
+
+    critic_conv_layers = [m for m in critic_model.cnn if isinstance(m, torch.nn.Conv2d)]
+    actor_conv_layers = [m for m in actor_model.cnn if isinstance(m, torch.nn.Conv2d)]
+
+    assert len(critic_conv_layers) == 1
+    assert len(actor_conv_layers) == 2
+    assert isinstance(critic_model.head, torch.nn.Linear)
+    assert isinstance(actor_model.head, torch.nn.Sequential)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_must_share_encoder_style(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "critic_network.CNN=true",
+            "actor_network.CNN=false",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="actor_network.CNN"):
+        Learning(cfg)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
 def test_dec_centered_grid_encoder_centers_self_and_marks_outside():
     encoder = DecCenteredGridEncoder(3, 4, 3)
     state = {

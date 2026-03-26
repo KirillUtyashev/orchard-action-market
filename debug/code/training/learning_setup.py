@@ -21,6 +21,25 @@ from debug.code.nn.value_function import VNetwork
 
 
 class LearningSetupMixin:
+    def _critic_network_cfg(self):
+        return getattr(self.exp_config, "critic_network", None) or self.exp_config.network
+
+    def _actor_network_cfg(self):
+        return getattr(self.exp_config, "actor_network", None) or self.exp_config.network
+
+    def _shared_network_cfg(self):
+        critic_cfg = self._critic_network_cfg()
+        actor_cfg = self._actor_network_cfg()
+        if bool(getattr(actor_cfg, "CNN", False)) != bool(getattr(critic_cfg, "CNN", False)):
+            raise ValueError("actor_network.CNN and critic_network.CNN must match in the current implementation.")
+        if bool(getattr(actor_cfg, "self_centered_grid", False)) != bool(
+            getattr(critic_cfg, "self_centered_grid", False)
+        ):
+            raise ValueError(
+                "actor_network.self_centered_grid and critic_network.self_centered_grid must match in the current implementation."
+            )
+        return critic_cfg
+
     def _critic_schedule_lr(self) -> bool:
         specific = getattr(self.exp_config.train, "critic_schedule_lr", None)
         if specific is None:
@@ -35,10 +54,11 @@ class LearningSetupMixin:
 
     def _build_encoder(self):
         cfg = self.exp_config
+        net_cfg = self._shared_network_cfg()
         k = cfg.reward.top_k_num_apples
 
         if cfg.algorithm.centralized:
-            if cfg.network.CNN:
+            if net_cfg.CNN:
                 self.encoder = CenGridEncoder(self.width, self.length, self.num_agents)
             elif cfg.algorithm.concat:
                 dec = DecEntityEncoder(self.width, self.length, self.num_agents, k)
@@ -46,8 +66,8 @@ class LearningSetupMixin:
             else:
                 self.encoder = CenEntityEncoder(self.width, self.length, self.num_agents, k)
         else:
-            if cfg.network.CNN:
-                if bool(getattr(cfg.network, "self_centered_grid", False)):
+            if net_cfg.CNN:
+                if bool(getattr(net_cfg, "self_centered_grid", False)):
                     self.encoder = DecCenteredGridEncoder(self.width, self.length, self.num_agents)
                 else:
                     self.encoder = DecGridEncoder(self.width, self.length, self.num_agents)
@@ -86,9 +106,9 @@ class LearningSetupMixin:
         if not self.supervised_enabled:
             return
 
-        if bool(self.exp_config.supervised.CNN) != bool(self.exp_config.network.CNN):
+        if bool(self.exp_config.supervised.CNN) != bool(self._critic_network_cfg().CNN):
             raise ValueError(
-                "supervised.CNN must match network.CNN so encoder/model input types are compatible."
+                "supervised.CNN must match critic_network.CNN so encoder/model input types are compatible."
             )
 
         teacher_blobs = self._load_supervised_teacher_blobs()
@@ -123,6 +143,7 @@ class LearningSetupMixin:
 
     def _init_critic_networks(self):
         cfg = self.exp_config
+        net_cfg = self._critic_network_cfg()
         critic_schedule_lr = self._critic_schedule_lr()
 
         if cfg.algorithm.centralized:
@@ -133,13 +154,13 @@ class LearningSetupMixin:
                     self.discount_factor,
                     reward_learning=cfg.reward.reward_learning,
                     supervised=self.supervised_enabled,
-                    mlp_dims=tuple(cfg.network.mlp_dims),
-                    use_mlp=bool(getattr(cfg.network, "MLP", True)),
+                    mlp_dims=tuple(net_cfg.mlp_dims),
+                    use_mlp=bool(getattr(net_cfg, "MLP", True)),
                     num_training_steps=self.trajectory_length,
                     lam=self.exp_config.train.lmda,
                     schedule=critic_schedule_lr,
-                    conv_channels=cfg.network.conv_channels,
-                    kernel_size=cfg.network.kernel_size,
+                    conv_channels=net_cfg.conv_channels,
+                    kernel_size=net_cfg.kernel_size,
                 )
             if self.crit_blobs:
                 net.import_net_state(self.crit_blobs[0]["blob"])
@@ -157,13 +178,13 @@ class LearningSetupMixin:
                     self.discount_factor,
                     reward_learning=cfg.reward.reward_learning,
                     supervised=self.supervised_enabled,
-                    mlp_dims=tuple(cfg.network.mlp_dims),
-                    use_mlp=bool(getattr(cfg.network, "MLP", True)),
+                    mlp_dims=tuple(net_cfg.mlp_dims),
+                    use_mlp=bool(getattr(net_cfg, "MLP", True)),
                     lam=self.exp_config.train.lmda,
                     num_training_steps=self.trajectory_length,
                     schedule=critic_schedule_lr,
-                    conv_channels=cfg.network.conv_channels,
-                    kernel_size=cfg.network.kernel_size,
+                    conv_channels=net_cfg.conv_channels,
+                    kernel_size=net_cfg.kernel_size,
                 )
                 if self.crit_blobs:
                     nn.import_net_state(self.crit_blobs[i]["blob"])
@@ -185,6 +206,7 @@ class LearningSetupMixin:
             return
 
         cfg = self.exp_config
+        net_cfg = self._actor_network_cfg()
         actor_alpha = self._actor_alpha()
         expected = self.num_agents
         if cfg.train.load_weights and self.actor_blobs and len(self.actor_blobs) != expected:
@@ -198,12 +220,12 @@ class LearningSetupMixin:
                 output_dim=5,
                 alpha=actor_alpha,
                 discount=self.discount_factor,
-                mlp_dims=tuple(cfg.network.mlp_dims),
-                use_mlp=bool(getattr(cfg.network, "MLP", True)),
+                mlp_dims=tuple(net_cfg.mlp_dims),
+                use_mlp=bool(getattr(net_cfg, "MLP", True)),
                 num_training_steps=self.trajectory_length,
                 schedule=self._actor_schedule_lr(),
-                conv_channels=cfg.network.conv_channels,
-                kernel_size=cfg.network.kernel_size,
+                conv_channels=net_cfg.conv_channels,
+                kernel_size=net_cfg.kernel_size,
             )
             if cfg.train.load_weights:
                 if not self.actor_blobs:

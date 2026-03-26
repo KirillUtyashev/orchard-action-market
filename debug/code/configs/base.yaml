@@ -7,6 +7,24 @@ network:
   input_dim: 0
   self_centered_grid: false
 
+critic_network:
+  MLP: false
+  mlp_dims: [0, 0]
+  conv_channels: [64]
+  kernel_size: 3
+  CNN: true
+  input_dim: 0
+  self_centered_grid: false
+
+actor_network:
+  MLP: true
+  mlp_dims: [64]
+  conv_channels: [64, 64]
+  kernel_size: 3
+  CNN: true
+  input_dim: 0
+  self_centered_grid: false
+
 train:
   alpha: 0.01
   actor_alpha: null

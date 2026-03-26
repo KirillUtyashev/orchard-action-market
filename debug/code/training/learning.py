@@ -97,8 +97,9 @@ class Learning(
         self._load_weights_if_requested()
 
     def _validate_training_modes(self) -> None:
-        if bool(getattr(self.exp_config.network, "self_centered_grid", False)):
-            if self.exp_config.algorithm.centralized or not self.exp_config.network.CNN:
+        net_cfg = self._shared_network_cfg()
+        if bool(getattr(net_cfg, "self_centered_grid", False)):
+            if self.exp_config.algorithm.centralized or not net_cfg.CNN:
                 raise ValueError(
                     "network.self_centered_grid=true is only supported for decentralized CNN critics."
                 )

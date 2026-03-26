@@ -120,6 +120,8 @@ class SupervisedConfig:
 @dataclass
 class ExperimentConfig:
     network: NetworkConfig = None
+    critic_network: NetworkConfig = None
+    actor_network: NetworkConfig = None
     train: TrainingConfig = None
     algorithm: AlgorithmConfig = None
     reward: RewardConfig = None

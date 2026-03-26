@@ -89,14 +89,18 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Experim
     if overrides:
         raw = _apply_overrides(raw, overrides)
 
+    base_network = raw.get("network", {})
+
     return ExperimentConfig(
-        network=_populate_dataclass(NetworkConfig,   raw.get("network",   {})),
-        train=_populate_dataclass(TrainingConfig,    raw.get("train",     {})),
+        network=_populate_dataclass(NetworkConfig, base_network),
+        critic_network=_populate_dataclass(NetworkConfig, {**base_network, **raw.get("critic_network", {})}),
+        actor_network=_populate_dataclass(NetworkConfig, {**base_network, **raw.get("actor_network", {})}),
+        train=_populate_dataclass(TrainingConfig, raw.get("train", {})),
         algorithm=_populate_dataclass(AlgorithmConfig, raw.get("algorithm", {})),
-        reward=_populate_dataclass(RewardConfig,     raw.get("reward",    {})),
+        reward=_populate_dataclass(RewardConfig, raw.get("reward", {})),
         supervised=_populate_dataclass(SupervisedConfig, raw.get("supervised", {})),
-        eval=_populate_dataclass(EvalConfig,         raw.get("eval",      {})),
-        env=_populate_dataclass(EnvironmentConfig,   raw.get("env",       {})),
+        eval=_populate_dataclass(EvalConfig, raw.get("eval", {})),
+        env=_populate_dataclass(EnvironmentConfig, raw.get("env", {})),
         logging=_populate_dataclass(LoggingConfig, raw.get("logging", {})),
         profiling=_populate_dataclass(ProfilingConfig, raw.get("profiling", {})),
     )
