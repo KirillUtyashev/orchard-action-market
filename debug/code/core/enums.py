@@ -33,6 +33,7 @@ class TrainingConfig:
     actor_alpha: float | None = None
     following_rate_budget: float = 1.0
     influencer_budget: float = 1.0
+    following_rate_solver: str = "closed_form"
     following_rate_rho: float = 0.1
     following_rate_reallocation_freq: int = 100
     timesteps: int = 1_000_000

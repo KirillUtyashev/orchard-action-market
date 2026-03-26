@@ -33,6 +33,9 @@ class LearningSetupMixin:
     def _following_rate_budget(self) -> float:
         return float(getattr(self.exp_config.train, "following_rate_budget", 0.0))
 
+    def _following_rate_solver(self) -> str:
+        return str(getattr(self.exp_config.train, "following_rate_solver", "closed_form")).strip().lower()
+
     def _influencer_budget(self) -> float:
         return float(getattr(self.exp_config.train, "influencer_budget", 0.0))
 
@@ -328,6 +331,7 @@ class LearningSetupMixin:
                             self._following_rate_budget(),
                             init_following_rates,
                             init_following_rate_to_influencer,
+                            self._following_rate_solver(),
                         )
                     )
                 else:
@@ -362,6 +366,7 @@ class LearningSetupMixin:
             self.num_agents,
             init_outgoing_rates,
             init_beta,
+            self._following_rate_solver(),
         )
 
     def build_experiment(self):

@@ -22,7 +22,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 if TORCH_AVAILABLE:
-    from debug.code.agents.actor_critic_agent import ACAgent, ACAgentRates, ExternalInfluencer, FollowingRateUpdater
+    from debug.code.agents.actor_critic_agent import (
+        ACAgent,
+        ACAgentRates,
+        ExternalInfluencer,
+    )
+    from debug.code.agents.rate_allocators import FollowingRateUpdater, is_scipy_rate_solver_available
     from debug.code.agents.controllers import (
         AgentControllerActorCritic,
         AgentControllerCentralized,
@@ -1321,6 +1326,23 @@ def test_following_rate_updater_keeps_previous_allocation_when_no_positive_alpha
     assert rates.sum() == pytest.approx(2.0)
     assert rates[1] == pytest.approx(1.5)
     assert rates[2] == pytest.approx(0.5)
+
+
+@pytest.mark.skipif(
+    (not TORCH_AVAILABLE) or (not is_scipy_rate_solver_available()),
+    reason="scipy rate solver is not available in this environment",
+)
+def test_scipy_rate_updater_matches_closed_form_solution():
+    alphas = np.array([0.0, 4.0, 2.0, -1.0], dtype=float)
+    prev = np.array([0.0, 0.8, 0.7, 0.0], dtype=float)
+
+    closed_form = FollowingRateUpdater(budget=1.5, solver_name="closed_form").solve(alphas, self_id=0, prev_rates=prev)
+    scipy_rates = FollowingRateUpdater(budget=1.5, solver_name="scipy").solve(alphas, self_id=0, prev_rates=prev)
+
+    assert scipy_rates.shape == closed_form.shape
+    assert scipy_rates.sum() == pytest.approx(1.5, abs=1e-6)
+    assert scipy_rates[0] == pytest.approx(0.0, abs=1e-8)
+    assert scipy_rates == pytest.approx(closed_form, abs=1e-5)
 
 
 def test_following_rates_build_experiment_initializes_rate_agents(following_rates_learner):

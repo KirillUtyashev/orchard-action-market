@@ -19,6 +19,7 @@ train:
   actor_alpha: null
   following_rate_budget: 1.0
   influencer_budget: 1.0
+  following_rate_solver: closed_form
   following_rate_rho: 0.1
   following_rate_reallocation_freq: 100
   timesteps: 1000
@@ -78,10 +79,10 @@ env:
 
 logging:
   output_dir: /Users/utya.kirill/Desktop/orchard-action-market/debug/data/runs
-  main_csv_freq: 10000
+  main_csv_freq: 20000
   weight_samples_enabled: true
   weight_samples_per_tensor: 4
-  weight_samples_freq: 10000
+  weight_samples_freq: 20000
 
 profiling:
   enabled: false

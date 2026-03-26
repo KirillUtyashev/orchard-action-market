@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from debug.code.agents.rate_allocators import get_supported_rate_solver_names, is_scipy_rate_solver_available
 from debug.code.core.enums import DISCOUNT_FACTOR, PROBABILITY_APPLE
 from debug.code.training.helpers import eval_performance, random_policy
 from debug.code.training.learning_diagnostics import LearningDiagnosticsMixin
@@ -132,10 +133,19 @@ class Learning(
             if self.num_agents < 2:
                 raise ValueError("algorithm.following_rates=true requires env.num_agents >= 2.")
             budget = float(getattr(self.exp_config.train, "following_rate_budget", 0.0))
+            solver_name = str(getattr(self.exp_config.train, "following_rate_solver", "closed_form")).strip().lower()
             rho = float(getattr(self.exp_config.train, "following_rate_rho", 0.0))
             realloc_freq = int(getattr(self.exp_config.train, "following_rate_reallocation_freq", 0))
             if budget < 0.0:
                 raise ValueError("train.following_rate_budget must be >= 0.")
+            if solver_name not in get_supported_rate_solver_names():
+                raise ValueError(
+                    f"train.following_rate_solver must be one of {get_supported_rate_solver_names()}."
+                )
+            if solver_name == "scipy" and not is_scipy_rate_solver_available():
+                raise ValueError(
+                    "train.following_rate_solver=scipy requires scipy to be installed in the active environment."
+                )
             if not (0.0 < rho <= 1.0):
                 raise ValueError("train.following_rate_rho must be in (0, 1].")
             if realloc_freq <= 0:

@@ -1,116 +1,7 @@
 import numpy as np
 
+from debug.code.agents.rate_allocators import FollowingRateUpdater, make_budget_allocator
 from debug.code.agents.simple_agent import SimpleAgent
-
-
-class CommunicationBudgetAllocator:
-    def __init__(self, budget: float):
-        self.budget = max(0.0, float(budget))
-
-    @staticmethod
-    def _sanitize_prev_rates(prev_rates, num_targets: int) -> np.ndarray | None:
-        if prev_rates is None:
-            return None
-        prev = np.asarray(prev_rates, dtype=float).reshape(-1)
-        if prev.shape != (num_targets,):
-            return None
-        prev = np.where(np.isfinite(prev), prev, 0.0)
-        return np.maximum(prev, 0.0)
-
-    @staticmethod
-    def _fallback_rates(
-        num_targets: int,
-        budget: float,
-        prev_rates=None,
-        excluded_indices=None,
-    ) -> np.ndarray:
-        rates = np.zeros(num_targets, dtype=float)
-        if num_targets <= 0 or budget <= 0.0:
-            return rates
-
-        excluded = np.zeros(num_targets, dtype=bool)
-        if excluded_indices is not None:
-            for idx in np.asarray(excluded_indices, dtype=int).reshape(-1):
-                if 0 <= int(idx) < num_targets:
-                    excluded[int(idx)] = True
-
-        allowed = ~excluded
-        allowed_count = int(np.count_nonzero(allowed))
-        if allowed_count <= 0:
-            return rates
-
-        prev = CommunicationBudgetAllocator._sanitize_prev_rates(prev_rates, num_targets)
-        if prev is not None:
-            rates = prev.copy()
-            rates[excluded] = 0.0
-            total = float(rates.sum())
-            if total > 0.0:
-                rates *= budget / total
-                rates[excluded] = 0.0
-                return rates
-
-        rates[allowed] = budget / float(allowed_count)
-        return rates
-
-    def solve(self, coefficients, prev_rates=None, excluded_indices=None) -> np.ndarray:
-        coeffs = np.asarray(coefficients, dtype=float).reshape(-1)
-        num_targets = int(coeffs.shape[0])
-        rates = np.zeros(num_targets, dtype=float)
-        if num_targets <= 0 or self.budget <= 0.0:
-            return rates
-
-        excluded = np.zeros(num_targets, dtype=bool)
-        if excluded_indices is not None:
-            for idx in np.asarray(excluded_indices, dtype=int).reshape(-1):
-                if 0 <= int(idx) < num_targets:
-                    excluded[int(idx)] = True
-
-        valid_targets = np.flatnonzero((~excluded) & (coeffs > 0.0))
-        if valid_targets.size == 0:
-            return self._fallback_rates(
-                num_targets,
-                self.budget,
-                prev_rates=prev_rates,
-                excluded_indices=excluded_indices,
-            )
-
-        target_coeffs = np.asarray(coeffs[valid_targets], dtype=float)
-        order = np.argsort(target_coeffs)[::-1]
-        sorted_targets = valid_targets[order]
-        sorted_coeffs = target_coeffs[order]
-        prefix_log_coeffs = np.cumsum(np.log(sorted_coeffs))
-
-        tol = 1e-12
-        active_count = int(sorted_coeffs.size)
-        for k in range(1, int(sorted_coeffs.size) + 1):
-            log_mu = (float(prefix_log_coeffs[k - 1]) - self.budget) / float(k)
-            mu = float(np.exp(log_mu))
-            smallest_active = float(sorted_coeffs[k - 1])
-            next_inactive = float(sorted_coeffs[k]) if k < int(sorted_coeffs.size) else None
-            if smallest_active > mu + tol and (next_inactive is None or next_inactive <= mu + tol):
-                active_count = k
-                break
-
-        active_targets = sorted_targets[:active_count]
-        active_coeffs = sorted_coeffs[:active_count]
-        log_mu = (float(np.log(active_coeffs).sum()) - self.budget) / float(active_count)
-        active_rates = np.maximum(0.0, np.log(active_coeffs) - log_mu)
-        rates[active_targets] = active_rates
-        rates[excluded] = 0.0
-
-        total = float(rates.sum())
-        if active_targets.size > 0 and total > 0.0:
-            rates[active_targets[-1]] = max(0.0, float(rates[active_targets[-1]]) + (self.budget - total))
-        return rates
-
-
-class FollowingRateUpdater:
-    def __init__(self, budget: float):
-        self._allocator = CommunicationBudgetAllocator(budget)
-
-    def solve(self, alpha_row, self_id: int, prev_rates=None) -> np.ndarray:
-        return self._allocator.solve(alpha_row, prev_rates=prev_rates, excluded_indices=[int(self_id)])
-
 
 class ACAgent(SimpleAgent):
     def __init__(self, policy, id_, value_network, policy_network, init_alphas):
@@ -130,10 +21,12 @@ class ACAgentRates(ACAgent):
         budget,
         init_following_rates,
         init_influencer_rate: float = 0.0,
+        rate_solver_name: str = "closed_form",
     ):
         super().__init__(policy, id_, value_network, policy_network, init_alphas)
         self.budget = float(budget)
-        self._rate_allocator = CommunicationBudgetAllocator(self.budget)
+        self.rate_solver_name = str(rate_solver_name)
+        self._rate_allocator = make_budget_allocator(self.rate_solver_name, self.budget)
         self.following_rates = np.zeros_like(self.agent_alphas, dtype=float)
         self.agent_observing_probabilities = np.zeros_like(self.agent_alphas, dtype=float)
         self.following_rate_to_influencer = 0.0
@@ -218,10 +111,18 @@ class ACAgentRates(ACAgent):
 
 
 class ExternalInfluencer:
-    def __init__(self, budget: float, num_agents: int, init_outgoing_rates=None, init_beta=None):
+    def __init__(
+        self,
+        budget: float,
+        num_agents: int,
+        init_outgoing_rates=None,
+        init_beta=None,
+        rate_solver_name: str = "closed_form",
+    ):
         self.budget = float(budget)
         self.num_agents = int(num_agents)
-        self._rate_allocator = CommunicationBudgetAllocator(self.budget)
+        self.rate_solver_name = str(rate_solver_name)
+        self._rate_allocator = make_budget_allocator(self.rate_solver_name, self.budget)
         self.outgoing_rates = np.zeros(self.num_agents, dtype=float)
         self.outgoing_weights = np.zeros(self.num_agents, dtype=float)
         self.beta = np.zeros(self.num_agents, dtype=float)
