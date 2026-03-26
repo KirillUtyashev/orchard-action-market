@@ -223,8 +223,7 @@ class DecCenteredGridEncoder(GridEncoder):
                 continue
             if i == actor_idx:
                 grid[2, rr, cc] = 1.0
-            else:
-                grid[1, rr, cc] = 1.0
+            grid[1, rr, cc] = 1.0
 
         if actor_idx == agent_idx:
             grid[2, self.center_r, self.center_c] = 1.0

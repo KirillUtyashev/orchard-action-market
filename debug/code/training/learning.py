@@ -46,7 +46,17 @@ class Learning(
 
         self.agents = []
         self.critic_networks = []
+        self.policy_networks = []
         self._networks_for_eval = []
+        self.crit_blobs = []
+        self.actor_blobs = []
+        self.loaded_critic_checkpoint_path: Path | None = None
+        self.loaded_critic_smoke_test_result = None
+        self._last_actor_training_stats = {
+            "actor_loss_mean": None,
+            "advantage_mean": None,
+            "policy_entropy_mean": None,
+        }
 
         self.reward_module = Reward(exp_config.reward.picker_r, self.num_agents)
         self.theoretical_val = Value(
@@ -92,6 +102,13 @@ class Learning(
                 raise ValueError(
                     "network.self_centered_grid=true is only supported for decentralized CNN critics."
                 )
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            if bool(self.exp_config.algorithm.centralized):
+                raise ValueError("algorithm.actor_critic=true is only supported for decentralized training in v1.")
+            if bool(self.exp_config.reward.reward_learning):
+                raise ValueError("algorithm.actor_critic=true is not supported with reward.reward_learning=true.")
+        if bool(getattr(self.exp_config.train, "freeze_critics", False)) and not self._should_load_critics():
+            raise ValueError("train.freeze_critics=true requires train.critic_weights_path or train.load_weights=true.")
         if self.exp_config.reward.reward_learning and self.supervised_enabled:
             raise ValueError("reward.reward_learning and reward.supervised cannot both be enabled.")
         if self.supervised_enabled:
@@ -120,6 +137,8 @@ class Learning(
         main_fields = build_main_csv_fieldnames(
             reward_learning=reward_learning_mode,
             supervised=self.supervised_enabled,
+            actor_critic=bool(getattr(self.exp_config.algorithm, "actor_critic", False)),
+            critic_smoke=bool(getattr(self.exp_config.train, "freeze_critics", False)) and self._should_load_critics(),
         )
         self.main_logger = CSVLogger(self.data_dir / "metrics.csv", main_fields)
 
@@ -183,8 +202,29 @@ class Learning(
             [[] for _ in range(len(self.careful_distances))] for _ in range(self.num_agents)
         ]
 
+    def _should_load_critics(self) -> bool:
+        return bool(getattr(self.exp_config.train, "load_weights", False)) or bool(
+            str(getattr(self.exp_config.train, "critic_weights_path", "")).strip()
+        )
+
+    def _resolve_critic_checkpoint_path(self) -> Path:
+        raw_path = str(getattr(self.exp_config.train, "critic_weights_path", "")).strip()
+        if raw_path:
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = (Path.cwd() / path).resolve()
+            if path.is_dir():
+                path = path / "weights.pt"
+            if not path.exists():
+                raise FileNotFoundError(f"Critic checkpoint not found: {path}")
+            return path
+        return self.data_dir / "weights" / "weights.pt"
+
     def _load_weights_if_requested(self) -> None:
-        if self.exp_config.train.load_weights:
-            path = self.data_dir / "weights" / "weights.pt"
+        if self._should_load_critics():
+            path = self._resolve_critic_checkpoint_path()
             ckpt = torch.load(path, map_location="cpu")
+            self.loaded_critic_checkpoint_path = path
             self.crit_blobs = ckpt.get("critics", [])
+            if bool(getattr(self.exp_config.train, "load_weights", False)):
+                self.actor_blobs = ckpt.get("actors", [])

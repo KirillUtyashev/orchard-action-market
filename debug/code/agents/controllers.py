@@ -4,6 +4,7 @@ import numpy as np
 import random
 import torch
 
+from debug.code.agents.actor_critic_agent import ACAgent
 from debug.code.nn.encoders import BaseEncoder, EncoderOutput, stack_encoder_outputs
 from debug.code.env.environment import MoveAction
 from debug.code.training.helpers import random_policy
@@ -187,3 +188,65 @@ class AgentControllerCentralized(AgentControllerValue):
             candidate_states=None,
         )
         return np.asarray(self.agents_list[0].policy_value.get_value_function_batch(batched_enc), dtype=np.float64)
+
+
+class AgentControllerActorCritic(AgentController):
+    def __init__(self, agents, encoder: BaseEncoder, discount: float, epsilon: float):
+        super().__init__(agents, encoder, discount, epsilon)
+
+    @staticmethod
+    def legal_action_mask_from_position(position: np.ndarray, width: int, length: int) -> np.ndarray:
+        r, c = map(int, position)
+        mask = np.zeros(len(MoveAction), dtype=bool)
+        for action in MoveAction:
+            nr = r + int(action.vector[0])
+            nc = c + int(action.vector[1])
+            if 0 <= nr < width and 0 <= nc < length:
+                mask[action.idx] = True
+        return mask
+
+    @staticmethod
+    def action_to_position(position: np.ndarray, action_idx: int) -> np.ndarray:
+        action = MoveAction.from_idx(int(action_idx))
+        return np.asarray(position, dtype=np.int64) + action.vector.astype(np.int64)
+
+    def _encode_actor_state(self, state: dict, agent_id: int) -> EncoderOutput:
+        state_with_actor = dict(state)
+        state_with_actor["actor_id"] = int(agent_id)
+        return self.encoder.encode(state_with_actor, agent_id)
+
+    def get_collective_value(self, encoded_states: list[EncoderOutput], agent_id: int) -> float:
+        total = 0.0
+        for agent, enc in zip(self.agents_list, encoded_states):
+            total += float(agent.policy_value.get_value_function(enc))
+        return total
+
+    def get_action_probabilities_from_state(self, state: dict, agent_id: int) -> np.ndarray:
+        agent = self.agents_list[agent_id]
+        if not isinstance(agent, ACAgent):
+            raise TypeError("Actor-critic controller requires ACAgent instances.")
+        position = np.asarray(state["agent_positions"][agent_id], dtype=np.int64)
+        mask = self.legal_action_mask_from_position(position, state["agents"].shape[0], state["agents"].shape[1])
+        encoded = self._encode_actor_state(state, agent_id)
+        return np.asarray(agent.policy_network.get_action_probabilities(encoded, mask), dtype=np.float64)
+
+    def sample_action(self, env, agent_id: int) -> tuple[np.ndarray, int, np.ndarray]:
+        agent = self.agents_list[agent_id]
+        if not isinstance(agent, ACAgent):
+            raise TypeError("Actor-critic controller requires ACAgent instances.")
+        state = env.get_state()
+        position = np.asarray(state["agent_positions"][agent_id], dtype=np.int64)
+        legal_mask = self.legal_action_mask_from_position(position, env.width, env.length)
+        encoded = self._encode_actor_state(state, agent_id)
+        action_idx, _ = agent.policy_network.sample_action(encoded, legal_mask)
+        new_pos = self.action_to_position(position, action_idx)
+        return new_pos, int(action_idx), legal_mask
+
+    def get_best_action(self, env, agent_id):
+        probs = self.get_action_probabilities_from_state(env.get_state(), agent_id)
+        position = np.asarray(env.agent_positions[agent_id], dtype=np.int64)
+        return self.action_to_position(position, int(np.argmax(probs)))
+
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        new_pos, _, _ = self.sample_action(env, agent_id)
+        return new_pos

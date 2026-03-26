@@ -108,7 +108,13 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(*, reward_learning: bool, supervised: bool = False) -> list[str]:
+def build_main_csv_fieldnames(
+    *,
+    reward_learning: bool,
+    supervised: bool = False,
+    actor_critic: bool = False,
+    critic_smoke: bool = False,
+) -> list[str]:
     """Build column names for metrics.csv based on training mode."""
     fields = ["step", "current_lr"]
     if reward_learning:
@@ -129,6 +135,22 @@ def build_main_csv_fieldnames(*, reward_learning: bool, supervised: bool = False
             fields.extend([
                 "supervised_mae_mean",
                 "supervised_rmse_mean",
+            ])
+        if actor_critic:
+            fields.extend([
+                "actor_lr",
+                "actor_loss_mean",
+                "advantage_mean",
+                "policy_entropy_mean",
+            ])
+        if critic_smoke:
+            fields.extend([
+                "loaded_critic_smoke_greedy_pps",
+                "loaded_critic_smoke_greedy_ratio",
+                "loaded_critic_smoke_nearest_pps",
+                "loaded_critic_smoke_nearest_ratio",
+                "loaded_critic_smoke_total_apples",
+                "loaded_critic_smoke_nearest_total_apples",
             ])
     return fields
 

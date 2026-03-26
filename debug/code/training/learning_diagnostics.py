@@ -341,6 +341,34 @@ class LearningDiagnosticsMixin:
         if not sampled_states:
             return
 
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            summed_probs_by_agent = {agent_id: np.zeros(len(MoveAction), dtype=np.float64) for agent_id in range(self.num_agents)}
+            with torch.no_grad():
+                for state in sampled_states:
+                    for agent_id in range(self.num_agents):
+                        probs = np.asarray(
+                            self.agent_controller.get_action_probabilities_from_state(state, agent_id),
+                            dtype=np.float64,
+                        )
+                        summed_probs_by_agent[agent_id] += probs
+
+            wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+            denom = float(len(sampled_states))
+            for agent_id in range(self.num_agents):
+                probs = summed_probs_by_agent[agent_id] / denom
+                self.action_prob_loggers[agent_id].log(
+                    {
+                        "step": int(step),
+                        "wall_time": wall_time,
+                        "left": probs[MoveAction.LEFT.idx],
+                        "right": probs[MoveAction.RIGHT.idx],
+                        "up": probs[MoveAction.UP.idx],
+                        "down": probs[MoveAction.DOWN.idx],
+                        "stay": probs[MoveAction.STAY.idx],
+                    }
+                )
+            return
+
         counts_by_agent = {agent_id: {name: 0 for name in ACTION_NAMES} for agent_id in range(self.num_agents)}
         decisions_by_agent = {agent_id: 0 for agent_id in range(self.num_agents)}
 

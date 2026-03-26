@@ -3,10 +3,59 @@ import random
 import numpy as np
 import torch
 
+from debug.code.agents.controllers import AgentControllerCentralized, AgentControllerDecentralized
 from debug.code.training.helpers import eval_performance, set_all_seeds
 
 
 class LearningEvalMixin:
+    def _build_loaded_critic_smoke_test_controller(self):
+        if self.exp_config.algorithm.centralized:
+            return AgentControllerCentralized(
+                self.agents,
+                self.encoder,
+                self.discount_factor,
+                epsilon=0.0,
+            )
+        return AgentControllerDecentralized(
+            self.agents,
+            self.encoder,
+            self.discount_factor,
+            epsilon=0.0,
+        )
+
+    def _maybe_run_loaded_critic_smoke_test(self):
+        if not bool(getattr(self.exp_config.train, "freeze_critics", False)):
+            return None
+        if self.loaded_critic_checkpoint_path is None:
+            return None
+        if self.encoder is None or not self.critic_networks or not self.agents or self.env is None:
+            return None
+
+        controller = self._build_loaded_critic_smoke_test_controller()
+        self.save_rng_state()
+        set_all_seeds(42069)
+        with torch.no_grad():
+            results = eval_performance(
+                agent_controller=controller,
+                reward_module=self.reward_module,
+                d_apple=self.env.d_apple,
+                p_apple=self.env.p_apple,
+                num_agents=self.num_agents,
+                width=self.width,
+                length=self.length,
+                max_apples=self.env.max_apples,
+                capture_greedy_positions=False,
+            )
+        self.restore_rng_state()
+        self.loaded_critic_smoke_test_result = dict(results)
+        print(
+            "Loaded critic smoke test:",
+            f"checkpoint={self.loaded_critic_checkpoint_path}",
+            f"greedy_pps={results.get('greedy_pps')}",
+            f"greedy_ratio={results.get('greedy_ratio')}",
+        )
+        return results
+
     def _ensure_supervised_eval_states(self) -> list[dict]:
         if self.supervised_evaluation_states is None:
             self._generate_evaluation_states_supervised()
@@ -82,6 +131,21 @@ class LearningEvalMixin:
         greedy_positions = results.pop("greedy_agent_positions", None)
         results["step"] = step
         results["current_lr"] = self.critic_networks[0].get_lr()
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)) and self.policy_networks:
+            results["actor_lr"] = self.policy_networks[0].get_lr()
+            results.update(self._last_actor_training_stats)
+        smoke = self.loaded_critic_smoke_test_result
+        if step == 0 and smoke is not None:
+            results.update(
+                {
+                    "loaded_critic_smoke_greedy_pps": smoke.get("greedy_pps"),
+                    "loaded_critic_smoke_greedy_ratio": smoke.get("greedy_ratio"),
+                    "loaded_critic_smoke_nearest_pps": smoke.get("nearest_pps"),
+                    "loaded_critic_smoke_nearest_ratio": smoke.get("nearest_ratio"),
+                    "loaded_critic_smoke_total_apples": smoke.get("total_apples"),
+                    "loaded_critic_smoke_nearest_total_apples": smoke.get("nearest_total_apples"),
+                }
+            )
         if self.supervised_enabled:
             results.update(self.evaluate_networks_supervised())
         self.agent_controller.epsilon = self.exp_config.train.epsilon

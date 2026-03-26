@@ -22,13 +22,20 @@ pytestmark = pytest.mark.skipif(
 )
 
 if TORCH_AVAILABLE:
-    from debug.code.agents.controllers import AgentControllerCentralized, AgentControllerDecentralized
+    from debug.code.agents.actor_critic_agent import ACAgent
+    from debug.code.agents.controllers import (
+        AgentControllerActorCritic,
+        AgentControllerCentralized,
+        AgentControllerDecentralized,
+    )
     import debug.code.training.learning as learning_mod
+    import debug.code.training.learning_eval as learning_eval_mod
     import debug.code.training.learning_loop as learning_loop_mod
     import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
     from debug.code.env.environment import MoveAction, Orchard
     from debug.code.nn.encoders import CenGridEncoder, DecCenteredGridEncoder, DecGridEncoder
+    from debug.code.nn.policy_network import PolicyNetwork
     from debug.code.training.helpers import set_all_seeds
     from debug.code.training.learning import Learning
 
@@ -547,6 +554,46 @@ def test_weight_sampling_config_overrides_are_loaded(tmp_path):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_separate_actor_and_critic_schedule_flags_are_loaded(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "train.schedule_lr=false",
+            "train.critic_schedule_lr=false",
+            "train.actor_schedule_lr=true",
+        ],
+    )
+
+    assert cfg.train.schedule_lr is False
+    assert cfg.train.critic_schedule_lr is False
+    assert cfg.train.actor_schedule_lr is True
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_can_use_separate_lr_schedulers(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "train.schedule_lr=false",
+            "train.critic_schedule_lr=false",
+            "train.actor_schedule_lr=true",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert learning.critic_networks
+    assert learning.policy_networks
+    assert all(net.scheduler is None for net in learning.critic_networks)
+    assert all(net.scheduler is not None for net in learning.policy_networks)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
 def test_dec_centered_grid_encoder_centers_self_and_marks_outside():
     encoder = DecCenteredGridEncoder(3, 4, 3)
     state = {
@@ -844,6 +891,447 @@ def reward_learning_learner(tmp_path):
         logger.close()
     for logger in learner.weight_sample_loggers.values():
         logger.close()
+
+
+@pytest.fixture
+def actor_critic_learner(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.centralized=false",
+            "train.actor_alpha=0.02",
+            "reward.reward_learning=false",
+        ],
+    )
+
+    set_all_seeds(seed=cfg.train.seed)
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    yield learner
+
+    _close_learning_loggers(learner)
+
+
+def test_policy_network_masks_illegal_actions_and_normalizes():
+    encoder = DecGridEncoder(4, 4, 2)
+    network = PolicyNetwork(
+        encoder,
+        output_dim=len(MoveAction),
+        alpha=0.01,
+        discount=0.99,
+        mlp_dims=(16,),
+        num_training_steps=10,
+    )
+    state = {
+        "apples": np.zeros((4, 4), dtype=int),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[0, 0], [2, 2]], dtype=int),
+        "actor_id": 0,
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    enc = encoder.encode(state, 0)
+    mask = AgentControllerActorCritic.legal_action_mask_from_position(state["agent_positions"][0], 4, 4)
+    probs = network.get_action_probabilities(enc, mask)
+
+    assert probs.shape == (len(MoveAction),)
+    assert probs.sum() == pytest.approx(1.0, abs=1e-9)
+    assert probs[MoveAction.LEFT.idx] == pytest.approx(0.0, abs=1e-12)
+    assert probs[MoveAction.UP.idx] == pytest.approx(0.0, abs=1e-12)
+    assert probs[MoveAction.RIGHT.idx] > 0.0
+    assert probs[MoveAction.DOWN.idx] > 0.0
+    assert probs[MoveAction.STAY.idx] > 0.0
+
+
+def test_actor_critic_controller_masks_corner_actions():
+    class DummyPolicy:
+        def __init__(self):
+            self.last_mask = None
+
+        def sample_action(self, enc, legal_mask):
+            self.last_mask = np.asarray(legal_mask, dtype=bool)
+            return MoveAction.RIGHT.idx, np.asarray(legal_mask, dtype=float)
+
+        def get_action_probabilities(self, enc, legal_mask):
+            probs = np.zeros(len(MoveAction), dtype=float)
+            probs[MoveAction.RIGHT.idx] = 1.0
+            return probs
+
+    class DummyValue:
+        @staticmethod
+        def get_value_function(enc):
+            return 0.0
+
+    encoder = DecGridEncoder(4, 4, 2)
+    actor = DummyPolicy()
+    agents = [
+        ACAgent(lambda pos: pos, 0, DummyValue(), actor, np.zeros(2, dtype=float)),
+        ACAgent(lambda pos: pos, 1, DummyValue(), DummyPolicy(), np.zeros(2, dtype=float)),
+    ]
+    controller = AgentControllerActorCritic(agents, encoder, discount=0.99, epsilon=0.0)
+
+    env = DummyEnvState(
+        {
+            "apples": np.zeros((4, 4), dtype=int),
+            "agents": np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=int),
+            "agent_positions": np.array([[0, 0], [1, 1]], dtype=int),
+        },
+        width=4,
+        length=4,
+    )
+
+    new_pos, action_idx, legal_mask = controller.sample_action(env, 0)
+
+    assert action_idx == MoveAction.RIGHT.idx
+    assert np.array_equal(new_pos, np.array([0, 1], dtype=np.int64))
+    assert not bool(legal_mask[MoveAction.LEFT.idx])
+    assert not bool(legal_mask[MoveAction.UP.idx])
+    assert bool(legal_mask[MoveAction.RIGHT.idx])
+    assert bool(legal_mask[MoveAction.DOWN.idx])
+    assert bool(legal_mask[MoveAction.STAY.idx])
+    assert np.array_equal(actor.last_mask, legal_mask)
+
+
+def test_actor_critic_build_experiment_initializes_actors(actor_critic_learner):
+    learner = actor_critic_learner
+    learner.build_experiment()
+
+    assert len(learner.policy_networks) == learner.num_agents
+    assert len(learner.agents) == learner.num_agents
+    assert all(isinstance(agent, ACAgent) for agent in learner.agents)
+    assert isinstance(learner.agent_controller, AgentControllerActorCritic)
+    assert learner._networks_for_eval == learner.policy_networks
+
+
+def test_actor_critic_transition_stores_social_advantage(actor_critic_learner):
+    learner = actor_critic_learner
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(
+                {
+                    "state": state,
+                    "legal_mask": np.asarray(legal_mask, dtype=bool),
+                    "action": int(action),
+                    "advantage": float(advantage),
+                }
+            )
+
+        def train(self):
+            return {"loss": 0.25, "advantage_mean": self.experiences[-1]["advantage"], "entropy_mean": 0.5}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+
+    curr_state = {"tag": "curr", "actor_id": 0}
+    s_moved = {"tag": "moved", "actor_id": 0}
+    s_next = {"tag": "next", "actor_id": 1}
+    legal_mask = np.array([False, True, True, False, True], dtype=bool)
+
+    learner._train_actor_critic_transition(
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=legal_mask,
+    )
+
+    expected_advantage = learner.discount_factor * (3.0 + 4.0) - (1.0 + 2.0)
+    assert len(learner.policy_networks[0].experiences) == 1
+    assert len(learner.policy_networks[1].experiences) == 0
+    assert learner.policy_networks[0].experiences[0]["action"] == MoveAction.RIGHT.idx
+    assert learner.policy_networks[0].experiences[0]["advantage"] == pytest.approx(expected_advantage)
+    assert np.array_equal(learner.policy_networks[0].experiences[0]["legal_mask"], legal_mask)
+    assert len(learner.critic_networks[0].experiences) == 1
+    assert len(learner.critic_networks[1].experiences) == 1
+    assert learner._last_actor_training_stats["actor_loss_mean"] == pytest.approx(0.25)
+    assert learner._last_actor_training_stats["advantage_mean"] == pytest.approx(expected_advantage)
+    assert learner._last_actor_training_stats["policy_entropy_mean"] == pytest.approx(0.5)
+
+
+def test_actor_critic_metrics_header_includes_actor_columns(actor_critic_learner):
+    learner = actor_critic_learner
+    header = _read_header(learner.data_dir / "metrics.csv")
+    assert "current_lr" in header
+    assert "actor_lr" in header
+    assert "actor_loss_mean" in header
+    assert "advantage_mean" in header
+    assert "policy_entropy_mean" in header
+
+
+def test_actor_critic_action_probability_logging_uses_policy_probs(actor_critic_learner):
+    learner = actor_critic_learner
+    learner.action_prob_eval_states = [_build_interior_state(), _build_interior_state()]
+    learner.action_prob_num_states = 2
+    learner.env = object()
+
+    class DummyActorController:
+        def get_action_probabilities_from_state(self, state, agent_id):
+            probs = np.zeros(len(MoveAction), dtype=float)
+            probs[MoveAction.RIGHT.idx] = 0.6
+            probs[MoveAction.STAY.idx] = 0.4
+            return probs
+
+    learner.agent_controller = DummyActorController()
+    learner.evaluate_action_probabilities(step=9)
+
+    for agent_id in range(NUM_AGENTS):
+        rows = _read_rows(learner.data_dir / f"action_probabilities_agent_{agent_id}.csv")
+        assert rows
+        row = rows[-1]
+        assert float(row["left"]) == pytest.approx(0.0)
+        assert float(row["right"]) == pytest.approx(0.6)
+        assert float(row["up"]) == pytest.approx(0.0)
+        assert float(row["down"]) == pytest.approx(0.0)
+        assert float(row["stay"]) == pytest.approx(0.4)
+
+
+def test_actor_critic_save_networks_includes_actor_payload(actor_critic_learner, tmp_path):
+    learner = actor_critic_learner
+
+    class ExportOnlyNet:
+        def __init__(self, tag):
+            self.tag = tag
+
+        def export_net_state(self):
+            return {"tag": self.tag}
+
+    learner.critic_networks = [ExportOnlyNet("critic-0"), ExportOnlyNet("critic-1")]
+    learner.policy_networks = [ExportOnlyNet("actor-0"), ExportOnlyNet("actor-1")]
+
+    out_dir = tmp_path / "weights"
+    learner.save_networks(out_dir)
+
+    payload = torch.load(out_dir / "weights.pt", map_location="cpu")
+    assert [item["blob"]["tag"] for item in payload["critics"]] == ["critic-0", "critic-1"]
+    assert [item["blob"]["tag"] for item in payload["actors"]] == ["actor-0", "actor-1"]
+
+
+def test_freeze_critics_requires_a_checkpoint_source(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+            "train.critic_weights_path=",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="freeze_critics"):
+        Learning(cfg)
+
+
+def test_frozen_critics_load_from_explicit_weights_folder_and_disable_gradients(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source",
+        [
+            "algorithm.actor_critic=true",
+            "train.actor_schedule_lr=false",
+            "train.critic_schedule_lr=false",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source_weights_dir = tmp_path / "pretrained" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target",
+        [
+            "algorithm.actor_critic=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert learning.loaded_critic_checkpoint_path == source_weights_dir / "weights.pt"
+    assert len(learning.critic_networks) == NUM_AGENTS
+    assert len(learning.policy_networks) == NUM_AGENTS
+    for critic in learning.critic_networks:
+        assert critic.model.training is False
+        assert all(param.requires_grad is False for param in critic.model.parameters())
+    for actor in learning.policy_networks:
+        assert any(param.requires_grad is True for param in actor.model.parameters())
+
+    _close_learning_loggers(learning)
+
+
+def test_loaded_frozen_critics_run_greedy_smoke_test_with_critic_controller(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_smoke",
+        [
+            "algorithm.actor_critic=true",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source_weights_dir = tmp_path / "pretrained_smoke" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_smoke",
+        [
+            "algorithm.actor_critic=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+        ],
+    )
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    called = {"controller": None}
+    original_eval_performance = learning_eval_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        called["controller"] = kwargs["agent_controller"]
+        return {
+            "greedy_pps": 12.0,
+            "greedy_ratio": 0.6,
+            "nearest_pps": 10.0,
+            "nearest_ratio": 0.5,
+            "total_apples": 20,
+            "nearest_total_apples": 20,
+        }
+
+    learning_eval_mod.eval_performance = fake_eval_performance
+    try:
+        result = learning._maybe_run_loaded_critic_smoke_test()
+    finally:
+        learning_eval_mod.eval_performance = original_eval_performance
+
+    assert isinstance(called["controller"], AgentControllerDecentralized)
+    assert not isinstance(called["controller"], AgentControllerActorCritic)
+    assert result is not None
+    assert result["greedy_pps"] == pytest.approx(12.0)
+    assert learning.loaded_critic_smoke_test_result["greedy_ratio"] == pytest.approx(0.6)
+
+    _close_learning_loggers(learning)
+
+
+def test_frozen_critic_metrics_header_includes_smoke_columns(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=true",
+        ],
+    )
+    learner = Learning(cfg)
+
+    header = _read_header(learner.data_dir / "metrics.csv")
+    assert "loaded_critic_smoke_greedy_pps" in header
+    assert "loaded_critic_smoke_greedy_ratio" in header
+    assert "loaded_critic_smoke_nearest_pps" in header
+    assert "loaded_critic_smoke_nearest_ratio" in header
+
+    _close_learning_loggers(learner)
+
+
+def test_eval_performance_logs_loaded_critic_smoke_metrics_at_step_zero(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=true",
+        ],
+    )
+    learner = Learning(cfg)
+
+    class DummyController:
+        epsilon = 0.05
+
+    class DummyCritic:
+        @staticmethod
+        def get_lr():
+            return 0.01
+
+    class DummyEnv:
+        d_apple = 0.1
+        p_apple = 0.1
+        max_apples = 9
+
+    learner.agent_controller = DummyController()
+    learner.critic_networks = [DummyCritic(), DummyCritic()]
+    learner.env = DummyEnv()
+    learner.loaded_critic_smoke_test_result = {
+        "greedy_pps": 12.0,
+        "greedy_ratio": 0.6,
+        "nearest_pps": 10.0,
+        "nearest_ratio": 0.5,
+        "total_apples": 20,
+        "nearest_total_apples": 20,
+    }
+
+    original_eval_performance = learning_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        return {
+            "greedy_pps": 9.0,
+            "total_apples": 18,
+            "greedy_ratio": 0.45,
+            "nearest_pps": 8.0,
+            "nearest_ratio": 0.4,
+            "nearest_total_apples": 18,
+            "greedy_agent_positions": np.zeros((2, NUM_AGENTS, 2), dtype=np.int16),
+        }
+
+    learning_mod.eval_performance = fake_eval_performance
+    try:
+        learner.eval_performance(step=0)
+    finally:
+        learning_mod.eval_performance = original_eval_performance
+
+    rows = _read_rows(learner.data_dir / "metrics.csv")
+    assert rows
+    row = rows[-1]
+    assert row["step"] == "0"
+    assert float(row["loaded_critic_smoke_greedy_pps"]) == pytest.approx(12.0)
+    assert float(row["loaded_critic_smoke_greedy_ratio"]) == pytest.approx(0.6)
+    assert float(row["loaded_critic_smoke_nearest_pps"]) == pytest.approx(10.0)
+    assert float(row["loaded_critic_smoke_nearest_ratio"]) == pytest.approx(0.5)
+
+    _close_learning_loggers(learner)
 
 
 def test_value_tracking_state_generation_per_agent(learner_with_config):

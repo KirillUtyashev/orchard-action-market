@@ -131,21 +131,30 @@ class LearningLoopMixin:
         self._maybe_log_tracked_state_values(step=0)
         self._maybe_log_weight_samples(step=0)
 
+    def _critics_trainable(self) -> bool:
+        return not bool(getattr(self.exp_config.train, "freeze_critics", False))
+
     def _select_training_action(self, curr_state: dict, actor_idx: int):
         if self.exp_config.reward.reward_learning:
-            return nearest_apple_policy(
+            new_pos = nearest_apple_policy(
                 curr_state["agent_positions"][actor_idx],
                 curr_state["apples"],
             )
+            return new_pos, None, None
         if self.exp_config.algorithm.random_policy:
-            return random_policy(
+            new_pos = random_policy(
                 curr_state["agent_positions"][actor_idx],
                 width=self.width,
                 length=self.length,
             )
-        return self.agent_controller.agent_get_action(self.env, actor_idx)
+            return new_pos, None, None
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            return self.agent_controller.sample_action(self.env, actor_idx)
+        return self.agent_controller.agent_get_action(self.env, actor_idx), None, None
 
     def _train_centralized_transition(self, curr_state, s_moved, s_next, pick_rewards, on_apple):
+        if not self._critics_trainable():
+            return
         enc_t = self.encoder.encode(curr_state, 0)
         enc_moved = self.encoder.encode(s_moved, 0)
         enc_next = self.encoder.encode(s_next, 0)
@@ -181,6 +190,8 @@ class LearningLoopMixin:
         net.train()
 
     def _train_decentralized_transition(self, curr_state, s_moved, s_next, pick_rewards, on_apple):
+        if not self._critics_trainable():
+            return
         for i in range(len(self.critic_networks)):
             enc_t = self.encoder.encode(curr_state, i)
             enc_moved = self.encoder.encode(s_moved, i)
@@ -213,6 +224,90 @@ class LearningLoopMixin:
                 )
 
             self.critic_networks[i].train()
+
+    def _train_actor_critic_transition(
+        self,
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards,
+        on_apple,
+        actor_idx: int,
+        action_idx: int,
+        legal_mask,
+    ):
+        critic_losses = []
+        enc_t_by_agent = []
+        enc_moved_by_agent = []
+        enc_next_by_agent = []
+
+        for i in range(len(self.critic_networks)):
+            enc_t = self.encoder.encode(curr_state, i)
+            enc_moved = self.encoder.encode(s_moved, i)
+            enc_next = self.encoder.encode(s_next, i)
+            enc_t_by_agent.append(enc_t)
+            enc_moved_by_agent.append(enc_moved)
+            enc_next_by_agent.append(enc_next)
+
+        with torch.no_grad():
+            v_soc = 0.0
+            q_soc = 0.0
+            for i, critic in enumerate(self.critic_networks):
+                reward_i = float(pick_rewards[i]) if on_apple else 0.0
+                v_soc += float(critic.get_value_function(enc_t_by_agent[i]))
+                q_soc += reward_i + self.discount_factor * float(critic.get_value_function(enc_next_by_agent[i]))
+        advantage = q_soc - v_soc
+
+        actor_state = self.encoder.encode(curr_state, actor_idx)
+        self.policy_networks[actor_idx].add_experience(actor_state, legal_mask, action_idx, advantage)
+
+        if self._critics_trainable():
+            for i, critic in enumerate(self.critic_networks):
+                true_t = self._supervised_target(enc_t_by_agent[i], i)
+                true_moved = self._supervised_target(enc_moved_by_agent[i], i)
+                reward_i = float(pick_rewards[i]) if on_apple else 0.0
+
+                if on_apple:
+                    critic.add_experience(
+                        enc_t_by_agent[i],
+                        enc_moved_by_agent[i],
+                        0,
+                        discount_factor=self.discount_factor,
+                        true_value=true_t,
+                    )
+                    critic.add_experience(
+                        enc_moved_by_agent[i],
+                        enc_next_by_agent[i],
+                        reward_i,
+                        discount_factor=1.0,
+                        true_value=true_moved,
+                    )
+                else:
+                    critic.add_experience(
+                        enc_t_by_agent[i],
+                        enc_next_by_agent[i],
+                        reward_i,
+                        discount_factor=self.discount_factor,
+                        true_value=true_t,
+                    )
+
+                loss = critic.train()
+                critic_losses.append(float(loss) if loss is not None else 0.0)
+
+        actor_metrics = self.policy_networks[actor_idx].train()
+        if actor_metrics is None:
+            actor_metrics = {
+                "loss": None,
+                "advantage_mean": float(advantage),
+                "entropy_mean": None,
+            }
+
+        self._last_actor_training_stats = {
+            "actor_loss_mean": actor_metrics.get("loss"),
+            "advantage_mean": actor_metrics.get("advantage_mean", float(advantage)),
+            "policy_entropy_mean": actor_metrics.get("entropy_mean"),
+        }
+        return critic_losses
 
     def _run_periodic_evaluation(self, step: int) -> None:
         print(f"Running evaluation at step {step}/{self.trajectory_length}")
@@ -249,7 +344,7 @@ class LearningLoopMixin:
             measured = 0.0
 
             start = time.perf_counter()
-            new_pos = self._select_training_action(curr_state, actor_idx)
+            new_pos, action_idx, legal_mask = self._select_training_action(curr_state, actor_idx)
             dt = time.perf_counter() - start
             measured += dt
             self._add_pipeline_time("action_select", dt)
@@ -266,7 +361,18 @@ class LearningLoopMixin:
             self._add_pipeline_time("env_step", dt)
 
             start = time.perf_counter()
-            if self.exp_config.algorithm.centralized:
+            if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+                self._train_actor_critic_transition(
+                    curr_state,
+                    s_moved,
+                    s_next,
+                    pick_rewards,
+                    on_apple,
+                    actor_idx=actor_idx,
+                    action_idx=action_idx,
+                    legal_mask=legal_mask,
+                )
+            elif self.exp_config.algorithm.centralized:
                 self._train_centralized_transition(curr_state, s_moved, s_next, pick_rewards, on_apple)
             else:
                 self._train_decentralized_transition(curr_state, s_moved, s_next, pick_rewards, on_apple)
@@ -322,6 +428,12 @@ class LearningLoopMixin:
             self._add_pipeline_time("other", dt)
             self._add_pipeline_time("loop_total", dt)
 
+            start = time.perf_counter()
+            self._maybe_run_loaded_critic_smoke_test()
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+
             self.step_and_collect_observation()
 
             start = time.perf_counter()
@@ -355,6 +467,10 @@ class LearningLoopMixin:
         payload = {"critics": []}
         for crit in self.critic_networks:
             payload["critics"].append({"blob": crit.export_net_state()})
+        if self.policy_networks:
+            payload["actors"] = []
+            for actor in self.policy_networks:
+                payload["actors"].append({"blob": actor.export_net_state()})
 
         dst = path / "weights.pt"
         torch.save(payload, dst)

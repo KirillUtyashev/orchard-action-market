@@ -32,18 +32,24 @@ class NetworkConfig:
 class TrainingConfig:
     """Optimization and learning parameters."""
     alpha: float = 0.01
+    actor_alpha: float | None = None
     timesteps: int = 1_000_000
     seed: int = 1234
     epsilon: float = 0.1
     lmda: float = 0.5
     schedule_lr: bool = False
+    critic_schedule_lr: bool | None = None
+    actor_schedule_lr: bool | None = None
     load_weights: bool = False
+    critic_weights_path: str = ""
+    freeze_critics: bool = False
 
 
 @dataclass
 class AlgorithmConfig:
     """TD/RL algorithm choices."""
     random_policy: bool = False
+    actor_critic: bool = False
     q_agent: float = 0.5
     centralized: bool = False
     concat: bool = False

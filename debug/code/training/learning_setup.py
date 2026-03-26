@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 
-from debug.code.agents.controllers import AgentControllerCentralized, AgentControllerDecentralized
+from debug.code.agents.actor_critic_agent import ACAgent
+from debug.code.agents.controllers import AgentControllerActorCritic, AgentControllerCentralized, AgentControllerDecentralized
 from debug.code.nn.encoders import (
     CenConcatEncoder,
     CenEntityEncoder,
@@ -14,10 +16,23 @@ from debug.code.nn.encoders import (
 from debug.code.env.environment import Orchard
 from debug.code.training.helpers import random_policy, teleport
 from debug.code.agents.simple_agent import SimpleAgent
+from debug.code.nn.policy_network import PolicyNetwork
 from debug.code.nn.value_function import VNetwork
 
 
 class LearningSetupMixin:
+    def _critic_schedule_lr(self) -> bool:
+        specific = getattr(self.exp_config.train, "critic_schedule_lr", None)
+        if specific is None:
+            return bool(getattr(self.exp_config.train, "schedule_lr", False))
+        return bool(specific)
+
+    def _actor_schedule_lr(self) -> bool:
+        specific = getattr(self.exp_config.train, "actor_schedule_lr", None)
+        if specific is None:
+            return bool(getattr(self.exp_config.train, "schedule_lr", False))
+        return bool(specific)
+
     def _build_encoder(self):
         cfg = self.exp_config
         k = cfg.reward.top_k_num_apples
@@ -108,10 +123,10 @@ class LearningSetupMixin:
 
     def _init_critic_networks(self):
         cfg = self.exp_config
+        critic_schedule_lr = self._critic_schedule_lr()
 
         if cfg.algorithm.centralized:
-            self.critic_networks.append(
-                VNetwork(
+            net = VNetwork(
                     self.encoder,
                     1,
                     cfg.train.alpha,
@@ -122,11 +137,17 @@ class LearningSetupMixin:
                     use_mlp=bool(getattr(cfg.network, "MLP", True)),
                     num_training_steps=self.trajectory_length,
                     lam=self.exp_config.train.lmda,
-                    schedule=cfg.train.schedule_lr,
+                    schedule=critic_schedule_lr,
                     conv_channels=cfg.network.conv_channels,
                     kernel_size=cfg.network.kernel_size,
                 )
-            )
+            if self.crit_blobs:
+                net.import_net_state(self.crit_blobs[0]["blob"])
+            if bool(getattr(cfg.train, "freeze_critics", False)):
+                net.set_eval_mode()
+                for param in net.model.parameters():
+                    param.requires_grad = False
+            self.critic_networks.append(net)
         else:
             for i in range(self.num_agents):
                 nn = VNetwork(
@@ -140,13 +161,56 @@ class LearningSetupMixin:
                     use_mlp=bool(getattr(cfg.network, "MLP", True)),
                     lam=self.exp_config.train.lmda,
                     num_training_steps=self.trajectory_length,
-                    schedule=cfg.train.schedule_lr,
+                    schedule=critic_schedule_lr,
                     conv_channels=cfg.network.conv_channels,
                     kernel_size=cfg.network.kernel_size,
                 )
-                if cfg.train.load_weights:
+                if self.crit_blobs:
                     nn.import_net_state(self.crit_blobs[i]["blob"])
+                if bool(getattr(cfg.train, "freeze_critics", False)):
+                    nn.set_eval_mode()
+                    for param in nn.model.parameters():
+                        param.requires_grad = False
                 self.critic_networks.append(nn)
+
+    def _actor_alpha(self) -> float:
+        actor_alpha = getattr(self.exp_config.train, "actor_alpha", None)
+        if actor_alpha is None:
+            actor_alpha = self.exp_config.train.alpha
+        return float(actor_alpha)
+
+    def _init_policy_networks(self):
+        self.policy_networks = []
+        if not bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            return
+
+        cfg = self.exp_config
+        actor_alpha = self._actor_alpha()
+        expected = self.num_agents
+        if cfg.train.load_weights and self.actor_blobs and len(self.actor_blobs) != expected:
+            raise ValueError(
+                f"Expected {expected} actor blobs when loading actor-critic weights, got {len(self.actor_blobs)}."
+            )
+
+        for i in range(self.num_agents):
+            net = PolicyNetwork(
+                self.encoder,
+                output_dim=5,
+                alpha=actor_alpha,
+                discount=self.discount_factor,
+                mlp_dims=tuple(cfg.network.mlp_dims),
+                use_mlp=bool(getattr(cfg.network, "MLP", True)),
+                num_training_steps=self.trajectory_length,
+                schedule=self._actor_schedule_lr(),
+                conv_channels=cfg.network.conv_channels,
+                kernel_size=cfg.network.kernel_size,
+            )
+            if cfg.train.load_weights:
+                if not self.actor_blobs:
+                    raise ValueError("Missing actor weights in checkpoint for actor-critic load.")
+                blob = self.actor_blobs[i]
+                net.import_net_state(blob["blob"] if isinstance(blob, dict) and "blob" in blob else blob)
+            self.policy_networks.append(net)
 
     def _init_agents_for_training(self):
         if self.exp_config.algorithm.random_policy:
@@ -155,11 +219,23 @@ class LearningSetupMixin:
             policy_fn = lambda _agent_pos: teleport(self.width, self.length)
         for i in range(self.num_agents):
             net = self.critic_networks[0] if self.exp_config.algorithm.centralized else self.critic_networks[i]
-            self.agents.append(SimpleAgent(policy_fn, i, net))
+            if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+                self.agents.append(
+                    ACAgent(
+                        policy_fn,
+                        i,
+                        net,
+                        self.policy_networks[i],
+                        np.zeros(self.num_agents, dtype=float),
+                    )
+                )
+            else:
+                self.agents.append(SimpleAgent(policy_fn, i, net))
 
     def build_experiment(self):
         self._build_encoder()
         self._init_critic_networks()
+        self._init_policy_networks()
         self._init_supervised_networks()
         self._init_agents_for_training()
 
@@ -173,6 +249,13 @@ class LearningSetupMixin:
 
         if self.exp_config.algorithm.centralized:
             self.agent_controller = AgentControllerCentralized(
+                self.agents,
+                self.encoder,
+                self.discount_factor,
+                self.exp_config.train.epsilon,
+            )
+        elif bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            self.agent_controller = AgentControllerActorCritic(
                 self.agents,
                 self.encoder,
                 self.discount_factor,
@@ -198,5 +281,5 @@ class LearningSetupMixin:
         self.env.set_positions()
         if self.supervised_enabled:
             self._generate_evaluation_states_supervised()
-        self._networks_for_eval = self.critic_networks
+        self._networks_for_eval = self.policy_networks if self.policy_networks else self.critic_networks
         self._init_weight_sample_indices()

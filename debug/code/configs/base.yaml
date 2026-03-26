@@ -9,15 +9,21 @@ network:
 
 train:
   alpha: 0.01
-  timesteps: 50000
+  actor_alpha: null
+  timesteps: 1000
   seed: 1234
-  epsilon: 0.3
-  lmda: -1.0
+  epsilon: 0.1
+  lmda: 0.3
   schedule_lr: false
+  critic_schedule_lr: null
+  actor_schedule_lr: null
   load_weights: false
+  critic_weights_path: ""
+  freeze_critics: false
 
 algorithm:
   random_policy: false
+  actor_critic: true
   q_agent: 1.44
   centralized: false
   concat: false
@@ -25,7 +31,7 @@ algorithm:
 reward:
   picker_r: -1
   supervised: false
-  reward_learning: true
+  reward_learning: false
   top_k_num_apples: 1
 
 supervised:
@@ -49,9 +55,9 @@ eval:
   value_track_num_states: 10
 
 env:
-  num_agents: 4
-  length: 9
-  width: 9
+  num_agents: 2
+  length: 6
+  width: 6
   apple_life: 20.0
 
 logging:
