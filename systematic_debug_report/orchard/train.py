@@ -1,6 +1,7 @@
 """Training loop and CLI entry point."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import sys
 sys.path.append("../")
@@ -13,11 +14,12 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.config import load_config
-from orchard.enums import NUM_ACTIONS, LearningType, StoppingCondition, TDTarget, TrainMode
+from orchard.enums import (
+    LearningType, PickMode, StoppingCondition, TDTarget, TrainMode,
+)
 from orchard.env import create_env
 from orchard.eval import (
     Action,
-    argmax_a_Q_team_batched,
     collect_after_state_test_states,
     collect_on_policy_test_states,
     collect_reward_test_states,
@@ -39,12 +41,18 @@ from orchard.policy import (
     ACTION_PRIORITY,
     ValueNetwork,
     argmax_a_Q_team,
+    argmax_a_Q_team_batched,
     epsilon_greedy,
     epsilon_greedy_batched,
-    nearest_apple_action,
+    get_all_actions,
+    get_phase2_actions,
+    heuristic_action,
+    init_vmap,
+    make_pick_action,
+    refresh_vmap,
 )
 from orchard.schedule import compute_schedule_value
-from orchard.seed import rng, rng, set_all_seeds
+from orchard.seed import rng, set_all_seeds
 from orchard.datatypes import EncoderOutput, ExperimentConfig, State
 
 def _train_all_agents(
@@ -68,7 +76,7 @@ def _train_all_agents(
 def _encode_all(state: State, n_networks: int, n_agents: int, centralized: bool) -> list[EncoderOutput]:
     """Encode state for each network."""
     if centralized:
-        return [encoding.encode(state, 0)]  # single encoding, agent_idx ignored
+        return [encoding.encode(state, 0)]
     return [encoding.encode(state, i) for i in range(n_agents)]
 
 
@@ -104,12 +112,16 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     # --- Setup ---
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest)
+    encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest,
+                          use_vec_encode=cfg.train.use_vec_encode)
 
     n_agents = cfg.env.n_agents
     centralized = cfg.train.learning_type == LearningType.CENTRALIZED
     n_networks = 1 if centralized else n_agents
-    
+    heuristic = cfg.train.heuristic
+    n_task_types = cfg.env.n_task_types
+    pick_mode = cfg.env.pick_mode
+
     _cached_zero_rewards = tuple(0.0 for _ in range(n_networks))
     networks = create_networks(
             cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps,
@@ -131,25 +143,39 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
         print(f"Loaded pretrained weights from: {resume_checkpoint}")
         print(f"  Checkpoint was at step {ckpt.get('step', '?')}. Training restarts from step 0.")
     
+    # --- Initialize vmap (if enabled) ---
+    use_vmap = cfg.train.use_vmap and not centralized
+    if use_vmap:
+        init_vmap(networks)
+        print("vmap-batched action selection enabled")
+
     run_dir = setup_logging(cfg)
     _save_checkpoint(networks, 0, run_dir / "checkpoints" / "step_0.pt")
+
     # --- CSV loggers ---
-    main_fields = build_main_csv_fieldnames(n_agents, cfg.train.mode, n_networks=n_networks, centralized=centralized)
+    heuristic_name = heuristic.name.lower()
+    main_fields = build_main_csv_fieldnames(
+        n_agents, cfg.train.mode, n_networks=n_networks,
+        centralized=centralized, n_task_types=n_task_types,
+        heuristic_name=heuristic_name,
+    )
     main_logger = CSVLogger(run_dir / "metrics.csv", main_fields)
 
     detail_fields = build_detail_csv_fieldnames(n_agents, networks, n_networks=n_networks)
     detail_logger = CSVLogger(run_dir / "details.csv", detail_fields)
 
-    # --- Test states + ground truth (value_learning) ---
+    # --- Test states + ground truth ---
     test_states: list | None = None
     ground_truth: list | None = None
     reward_categories: list | None = None
     if cfg.train.mode == TrainMode.VALUE_LEARNING:
         if cfg.train.td_target == TDTarget.PRE_ACTION:
-            test_states = collect_on_policy_test_states(env, cfg.eval.n_test_states)
+            test_states = collect_on_policy_test_states(env, cfg.eval.n_test_states, heuristic=heuristic)
         else:
-            test_states = collect_after_state_test_states(env, cfg.eval.n_test_states)
-        ground_truth = precompute_ground_truth(test_states, env, cfg.eval, cfg.train.td_target)
+            test_states = collect_after_state_test_states(env, cfg.eval.n_test_states, heuristic=heuristic)
+        ground_truth = precompute_ground_truth(
+            test_states, env, cfg.eval, cfg.train.td_target, heuristic=heuristic
+        )
     elif cfg.train.mode == TrainMode.REWARD_LEARNING:
         test_states = collect_reward_test_states(env, cfg.eval.n_test_states)
         ground_truth, reward_categories = compute_reward_ground_truth(
@@ -162,42 +188,58 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     sample_logger: CSVLogger | None = None
     if cfg.train.mode == TrainMode.POLICY_LEARNING:
         n_sample = 100
-        set_all_seeds(9999) # so different runs use same sample states
+        set_all_seeds(9999)
         sample_states = []
         s_tmp = env.init_state()
         for _ in range(n_sample * 3):
-            a_tmp = Action(rng.randint(0, NUM_ACTIONS - 1))
+            # Phase 1: random move
+            move_acts = get_all_actions(cfg.env)
+            a_tmp = move_acts[rng.randint(0, len(move_acts) - 1)]
+            s_moved = env.apply_action(s_tmp, a_tmp)
 
             if cfg.train.td_target == TDTarget.AFTER_STATE:
-                s_moved = env.apply_action(s_tmp, a_tmp)
-                if s_moved.is_agent_on_apple(s_moved.actor):
-                    s_after, _ = env.resolve_pick(s_moved)
+                if s_moved.is_agent_on_task(s_moved.actor):
+                    # Phase 2: auto-pick (FORCED) or random (CHOICE)
+                    if pick_mode == PickMode.FORCED:
+                        s_after, _ = env.resolve_pick(s_moved)
+                    else:
+                        p2 = get_phase2_actions(s_moved, cfg.env)
+                        p2_act = p2[rng.randint(0, len(p2) - 1)]
+                        s_after, _ = env.resolve_pick(
+                            s_moved,
+                            pick_type=p2_act.pick_type() if p2_act.is_pick() else None,
+                        )
+                    if len(sample_states) < n_sample:
+                        sample_states.append(s_after)
+                    s_tmp = env.advance_actor(env.spawn_and_despawn(s_after))
                 else:
-                    s_after = s_moved
-                if len(sample_states) < n_sample:
-                    sample_states.append(s_after)
-                s_picked, _ = env.resolve_pick(s_moved)
-                s_tmp = env.advance_actor(env.spawn_and_despawn(s_picked))
+                    if len(sample_states) < n_sample:
+                        sample_states.append(s_moved)
+                    s_tmp = env.advance_actor(env.spawn_and_despawn(s_moved))
             else:
                 if len(sample_states) < n_sample:
                     sample_states.append(s_tmp)
-                s_moved = env.apply_action(s_tmp, a_tmp)
-                s_picked, _ = env.resolve_pick(s_moved)
-                s_tmp = env.advance_actor(env.spawn_and_despawn(s_picked))
+                # step() handles FORCED auto-pick; CHOICE just moves
+                s_tmp = env.step(s_tmp, a_tmp).s_t_next
 
         set_all_seeds(cfg.train.seed)
         s_t = env.init_state()
 
+        # Column headers: 5 move actions + T pick actions for CHOICE
+        all_actions = get_all_actions(cfg.env)
+        if cfg.env.pick_mode == PickMode.CHOICE:
+            for t_idx in range(cfg.env.n_task_types):
+                all_actions.append(make_pick_action(t_idx))
         sample_fields = ["step", "wall_time",
                          "value_mean", "value_std", "value_min", "value_max", "value_range"]
-        for act in ACTION_PRIORITY:
+        for act in all_actions:
             sample_fields.append(f"action_{act.name}")
         for ni in range(n_networks):
             for si in range(n_sample):
                 sample_fields.append(f"net{ni}_s{si}")
         sample_logger = CSVLogger(run_dir / "sample_values.csv", sample_fields)
 
-    # --- After-state TD bookkeeping (only used when td_target == AFTER_STATE) ---
+    # --- After-state TD bookkeeping ---
     prev_after_enc: list[EncoderOutput] | None = None
     prev_reward: tuple[float, ...] | None = None
     prev_discount: float | None = None
@@ -206,107 +248,118 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     td_loss_accum: float = 0.0
     td_loss_count: int = 0
     running_max_pps: float = float("-inf")
+    running_max_rps: float = float("-inf")
     running_min_mae: float = float("inf")
     steps_since_improvement: int = 0
-    action: Action = Action.STAY  # dummy init
+    action: Action = Action.STAY
+
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
 
-        # --- Action selection ---
+        # --- Phase-1 action selection (always a move action) ---
+        if use_vmap:
+            refresh_vmap()
         if cfg.train.mode == TrainMode.VALUE_LEARNING:
-            action = nearest_apple_action(s_t, cfg.env)
+            move_action = heuristic_action(s_t, cfg.env, heuristic, phase2=False)
         elif cfg.train.mode == TrainMode.POLICY_LEARNING:
             assert cfg.train.policy_learning is not None
             epsilon = compute_schedule_value(
                 cfg.train.policy_learning.epsilon, t, cfg.train.total_steps
             )
             if cfg.train.batch_actions:
-                action = epsilon_greedy_batched(s_t, networks, env, epsilon)
+                move_action = epsilon_greedy_batched(s_t, networks, env, epsilon,
+                                                     use_vmap=use_vmap, phase2=False)
             else:
-                action = epsilon_greedy(s_t, networks, env, epsilon)
+                move_action = epsilon_greedy(s_t, networks, env, epsilon, phase2=False)
         elif cfg.train.mode == TrainMode.REWARD_LEARNING:
-            action = Action(rng.randint(0, NUM_ACTIONS - 1))
+            move_actions = get_all_actions(cfg.env)
+            move_action = move_actions[rng.randint(0, len(move_actions) - 1)]
+
+        assert move_action.is_move(), f"Expected move action in phase 1, got {move_action}"
+
+        # --- Apply move ---
+        s_moved = env.apply_action(s_t, move_action)
+        on_task = s_moved.is_agent_on_task(s_moved.actor)
+
+        # --- Phase-2 action selection (only if on a task cell) ---
+        if on_task:
+            if pick_mode == PickMode.FORCED:
+                # Auto-pick: find the single task at this cell
+                tau = s_moved.task_type_at(s_moved.agent_positions[s_moved.actor])
+                pick_action = make_pick_action(tau)
+            elif cfg.train.mode == TrainMode.VALUE_LEARNING:
+                pick_action = heuristic_action(s_moved, cfg.env, heuristic, phase2=True)
+            elif cfg.train.mode == TrainMode.POLICY_LEARNING:
+                if cfg.train.batch_actions:
+                    pick_action = epsilon_greedy_batched(s_moved, networks, env, epsilon,
+                                                         use_vmap=use_vmap, phase2=True)
+                else:
+                    pick_action = epsilon_greedy(s_moved, networks, env, epsilon, phase2=True)
+            else:  # REWARD_LEARNING
+                p2_acts = get_phase2_actions(s_moved, cfg.env)
+                pick_action = p2_acts[rng.randint(0, len(p2_acts) - 1)]
+
+            s_picked, pick_rewards = env.resolve_pick(
+                s_moved,
+                pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
+            )
+            s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
+        else:
+            s_picked = s_moved
+            pick_rewards = _zero_rewards(n_networks)
+            pick_action = Action.STAY  # unused sentinel
+            s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
+
         # --- TD updates ---
-        s_moved = env.apply_action(s_t, action)
-        on_apple = s_moved.is_agent_on_apple(s_moved.actor)
-
         if cfg.train.td_target == TDTarget.PRE_ACTION:
-            # ============================================================
-            # PRE_ACTION: train on (pre-action state → next pre-action state)
-            # ============================================================
-            if on_apple:
-                # Transition 1: pre-action → movement after-state (discount=gamma, reward=0)
-                pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
-                move_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
-                
-                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks), cfg.env.gamma, move_enc, t)                
-                td_loss_accum += loss
-                td_loss_count += count
+            # PRE_ACTION: train on pre-action state → next pre-action state
+            pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
 
-                # Transition 2: movement after-state → next pre-action state (discount=1, reward=pick)
-                s_picked, pick_rewards = env.resolve_pick(s_moved)
-                s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
+            if on_task:
+                # Two transitions: move (r=0, γ) then pick (r=pick_rewards, 1.0)
+                move_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
+                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
+                                                cfg.env.gamma, move_enc, t)
+                td_loss_accum += loss; td_loss_count += count
+
                 next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
-                loss, count = _train_all_agents(networks, move_enc, _team_rewards(pick_rewards, centralized), 1.0, next_enc, t)                
-                td_loss_accum += loss
-                td_loss_count += count
+                loss, count = _train_all_agents(networks, move_enc,
+                                                _team_rewards(pick_rewards, centralized),
+                                                1.0, next_enc, t)
+                td_loss_accum += loss; td_loss_count += count
             else:
-                # Single transition: pre-action → next pre-action (discount=gamma, reward=0)
-                pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
-                s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
+                # One transition: move (r=0, γ)
                 next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
-                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks), cfg.env.gamma, next_enc, t)
-                td_loss_accum += loss
-                td_loss_count += count
+                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
+                                                cfg.env.gamma, next_enc, t)
+                td_loss_accum += loss; td_loss_count += count
 
         else:
-            # ============================================================
-            # AFTER_STATE: train on (after-state → next after-state)
-            # with delayed updates. Pick after-state is PRE-SPAWN.
-            # ============================================================
-            if on_apple:
-                move_after_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
-                # Delayed update: prev after-state → movement after-state
-                if prev_after_enc is not None:
-                    assert prev_reward is not None and prev_discount is not None
-                    loss, count = _train_all_agents(networks, prev_after_enc, prev_reward, prev_discount, move_after_enc, t)
-                    td_loss_accum += loss
-                    td_loss_count += count
+            # AFTER_STATE: train on after-state → next after-state
+            s_moved_enc_state = replace(s_moved, phase2_pending=True) if on_task else s_moved
+            move_after_enc = _encode_all(s_moved_enc_state, n_networks, n_agents, centralized)
 
-                # Pick after-state: apple removed, PRE-SPAWN
-                s_picked, pick_rewards = env.resolve_pick(s_moved)
+            # Delayed update: previous after-state → current move after-state
+            if prev_after_enc is not None:
+                assert prev_reward is not None and prev_discount is not None
+                loss, count = _train_all_agents(networks, prev_after_enc, prev_reward,
+                                                prev_discount, move_after_enc, t)
+                td_loss_accum += loss; td_loss_count += count
+
+            if on_task:
+                # Immediate update: move after-state → pick after-state (discount 1)
                 pick_after_enc = _encode_all(s_picked, n_networks, n_agents, centralized)
-
-                # Immediate update: movement after-state → pick after-state (discount=1.0)
                 pick_discount = 0.0 if cfg.train.mode == TrainMode.REWARD_LEARNING else 1.0
-                loss, count = _train_all_agents(networks, move_after_enc, _team_rewards(pick_rewards, centralized), pick_discount, pick_after_enc, t)
-                td_loss_accum += loss
-                td_loss_count += count
-
-                # Store pick after-state for next delayed update
+                loss, count = _train_all_agents(networks, move_after_enc,
+                                                _team_rewards(pick_rewards, centralized),
+                                                pick_discount, pick_after_enc, t)
+                td_loss_accum += loss; td_loss_count += count
                 prev_after_enc = pick_after_enc
-                prev_reward = _zero_rewards(n_networks)
-                prev_discount = cfg.env.gamma
-
-                # Env response: spawn/despawn + advance actor
-                s_next = env.advance_actor(env.spawn_and_despawn(s_picked))
-
             else:
-                move_after_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
-                # Delayed update: prev after-state → movement after-state
-                if prev_after_enc is not None:
-                    assert prev_reward is not None and prev_discount is not None
-                    loss, count = _train_all_agents(networks, prev_after_enc, prev_reward, prev_discount, move_after_enc, t)
-                    td_loss_accum += loss
-                    td_loss_count += count
-
-                # Store movement after-state for next delayed update
                 prev_after_enc = move_after_enc
-                prev_reward = _zero_rewards(n_networks)
-                prev_discount = cfg.env.gamma
 
-                # Env response: spawn/despawn + advance actor
-                s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
+            prev_reward = _zero_rewards(n_networks)
+            prev_discount = cfg.env.gamma
 
         s_t = s_next
 
@@ -338,8 +391,14 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
             # Policy learning metrics
             if cfg.train.mode == TrainMode.POLICY_LEARNING:
-                pol_metrics = evaluate_policy_learning(networks, env, cfg.eval.eval_steps, batch_actions=cfg.train.batch_actions)
+                pol_metrics = evaluate_policy_learning(
+                    networks, env, cfg.eval.eval_steps,
+                    batch_actions=cfg.train.batch_actions,
+                    heuristic=heuristic,
+                )
                 row.update(pol_metrics)
+
+            # Reward learning metrics
             if cfg.train.mode == TrainMode.REWARD_LEARNING and test_states is not None:
                 assert ground_truth is not None
                 assert reward_categories is not None
@@ -357,21 +416,22 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
             main_logger.log(row)
             
-            # --- Early stopping check ---
+            # --- Early stopping ---
             if (
-                cfg.train.stopping_condition == StoppingCondition.RUNNING_MAX_PPS
-                and "greedy_pps" in row
+                cfg.train.stopping_condition == StoppingCondition.RUNNING_MAX_RPS
+                and "greedy_rps" in row
             ):
-                pps = float(row["greedy_pps"])
-                if pps > running_max_pps + cfg.train.improvement_threshold:
-                    running_max_pps = pps
+                rps = float(row["greedy_rps"])
+                if rps > running_max_rps + cfg.train.improvement_threshold:
+                    running_max_rps = rps
                     steps_since_improvement = 0
                 else:
                     steps_since_improvement += cfg.logging.main_csv_freq
                 if steps_since_improvement >= cfg.train.patience_steps and (t + 1) >= cfg.train.min_steps_before_stop:
-                    print(f"\nEarly stop at step {t+1}: running max PPS {running_max_pps:.4f} "
+                    print(f"\nEarly stop at step {t+1}: running max RPS {running_max_rps:.6f} "
                           f"unchanged for {cfg.train.patience_steps} steps.")
                     break
+
             if (
                 cfg.train.stopping_condition == StoppingCondition.RUNNING_MIN_MAE
                 and "mae_avg" in row
@@ -386,10 +446,18 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     print(f"\nEarly stop at step {t+1}: running min MAE {running_min_mae:.6f} "
                         f"unchanged for {cfg.train.patience_steps} steps.")
                     break
+
+            # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
-            if "greedy_pps" in row:
-                print(f"  Greedy PPS: {row['greedy_pps']:.4f}  "
-                    f"Nearest PPS: {row['nearest_pps']:.4f}")
+            if "greedy_rps" in row:
+                msg = f"  Greedy RPS: {row['greedy_rps']:.4f}"
+                if "greedy_correct_pps" in row:
+                    msg += (f"  Correct PPS: {row['greedy_correct_pps']:.4f}"
+                            f"  Wrong PPS: {row['greedy_wrong_pps']:.4f}")
+                print(msg)
+                h_key = f"{heuristic_name}_rps"
+                if h_key in row:
+                    print(f"  {heuristic_name} RPS: {row[h_key]:.4f}")
             if "mae_avg" in row:
                 msg = f"  MAE avg: {row['mae_avg']:.4f}"
                 if "bias_avg" in row:
@@ -406,7 +474,6 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 "wall_time": round(wall_time, 3),
             }
 
-            # RAM usage
             try:
                 import resource
                 ram_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
@@ -414,10 +481,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 ram_mb = 0.0
             detail_row["ram_mb"] = round(ram_mb, 1)
 
-            # Current LR (from first network)
             detail_row["current_lr"] = networks[0].optimizer.param_groups[0]["lr"]
 
-            # Current epsilon
             if cfg.train.mode == TrainMode.POLICY_LEARNING:
                 assert cfg.train.policy_learning is not None
                 detail_row["current_epsilon"] = compute_schedule_value(
@@ -426,7 +491,6 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             else:
                 detail_row["current_epsilon"] = 0.0
 
-            # Weight and grad norms
             for agent_idx in range(n_networks):
                 w_norms = networks[agent_idx].get_weight_norms()
                 g_norms = networks[agent_idx].get_grad_norms()
@@ -435,14 +499,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 for name in g_norms:
                     detail_row[f"grad_norm_agent_{agent_idx}_{name}"] = round(g_norms[name], 6)
 
-            # Step-level TD loss and value stats
             detail_row["td_loss_step"] = round(avg_loss if td_loss_count == 0 else td_loss_accum / max(td_loss_count, 1), 8)
 
-            # Value prediction stats over test states
             if test_states is not None:
                 preds: list[float] = []
                 with torch.no_grad():
-                    for s in test_states[:10]:  # sample for speed
+                    for s in test_states[:10]:
                         for i in range(n_networks):
                             preds.append(networks[i](encoding.encode(s, i)).item())
                 if preds:
@@ -452,6 +514,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     detail_row["value_pred_std"] = round(var ** 0.5, 6)
 
             detail_logger.log(detail_row)
+
             # --- Sample value logging ---
             if sample_states is not None and sample_logger is not None:
                 sample_row: dict[str, float | int | str] = {
@@ -459,7 +522,11 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     "wall_time": round(time.time() - start_time, 3),
                 }
                 all_vals: list[float] = []
-                action_counts: dict[str, int] = {f"action_{act.name}": 0 for act in ACTION_PRIORITY}
+                _log_actions = get_all_actions(cfg.env)
+                if cfg.env.pick_mode == PickMode.CHOICE:
+                    for t_idx in range(cfg.env.n_task_types):
+                        _log_actions.append(make_pick_action(t_idx))
+                action_counts: dict[str, int] = {f"action_{act.name}": 0 for act in _log_actions}
 
                 with torch.no_grad():
                     for si, ss in enumerate(sample_states):
@@ -481,13 +548,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     sample_row[k] = cnt / len(sample_states)
 
                 sample_logger.log(sample_row)
-            
 
-        # --- Eval printout ---
+        # --- Periodic checkpoints ---
         if cfg.eval.checkpoint_freq > 0 and (t + 1) % cfg.eval.checkpoint_freq == 0:
             _save_checkpoint(networks, t + 1, run_dir / "checkpoints" / f"step_{t + 1}.pt")
     
-    # --- Final checkpoint (always saved) ---
+    # --- Final checkpoint ---
     _save_checkpoint(networks, cfg.train.total_steps, run_dir / "checkpoints" / "final.pt")
     
     # --- Cleanup ---

@@ -250,7 +250,7 @@ def build_report(
         std = np.std(vals)
         val_cells = "".join(f"<td>{v:.4f}</td>" for v in vals)
         agents_str = str(c.state.agent_positions)
-        apples_str = str(c.state.apple_positions)
+        tasks_str = str(c.state.task_positions)
         table_rows.append(
             f"<tr>"
             f"<td>{c.state_index}</td>"
@@ -258,7 +258,7 @@ def build_report(
             f"<td>{std:.4f}</td>"
             f"<td>{c.state.actor}</td>"
             f"<td class='detail'>{agents_str}</td>"
-            f"<td class='detail'>{apples_str}</td>"
+            f"<td class='detail'>{tasks_str}</td>"
             f"</tr>"
         )
     table_html = "\n".join(table_rows)

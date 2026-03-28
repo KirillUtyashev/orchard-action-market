@@ -45,6 +45,10 @@ def _load_config_from_metadata(metadata_path: Path) -> ExperimentConfig:
     if "env" in cfg_dict and "env_type" in cfg_dict["env"] and "type" not in cfg_dict["env"]:
         cfg_dict["env"]["type"] = cfg_dict["env"].pop("env_type")
 
+    # Old metadata may have 'apple_lifetime' in stochastic — harmless, ignored by parser.
+    # Old metadata may have 'force_pick' instead of 'pick_mode' — handled by parser.
+    # Old metadata may have 'n_apples' instead of 'n_tasks' — handled by parser.
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
         yaml.dump(cfg_dict, tmp)
         tmp_path = tmp.name

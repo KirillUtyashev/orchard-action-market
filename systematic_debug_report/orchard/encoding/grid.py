@@ -454,3 +454,276 @@ class EgoCentricGridEncoder(GridEncoder):
 
             scalars = torch.full((n, 1), 0.0, dtype=torch.float32)
             return EncoderOutput(grid=grids, scalar=scalars)
+
+
+# ---------------------------------------------------------------------------
+# Task specialization encoders (n_task_types > 1)
+# ---------------------------------------------------------------------------
+
+class TaskGridEncoder(GridEncoder):
+    """Decentralized task-specialization encoding.
+
+    Channels (T + 3 total):
+      0..T-1 — task type channels: channel τ has 1.0 where type-τ task exists
+      T      — self position (1.0 at agent i's cell)
+      T+1    — other agents (count of agents j≠i at each cell)
+      T+2    — actor position (1.0 at actor's cell)
+    Scalar: is_self_actor ∈ {0, 1}. Dim = 1.
+    """
+
+    def __init__(self, env_cfg, use_vec_encode: bool = True) -> None:
+        super().__init__(env_cfg)
+        self._n_types = env_cfg.n_task_types
+        self._use_vec = use_vec_encode
+
+    def grid_channels(self) -> int:
+        return self._n_types + 3
+
+    def scalar_dim(self) -> int:
+        return 2
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        T = self._n_types
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grid = torch.zeros(T + 3, h, w, dtype=torch.float32)
+
+        if self._use_vec:
+            # Task type channels (vectorized)
+            if state.task_positions and state.task_types is not None:
+                types_t = torch.tensor(state.task_types, dtype=torch.long)
+                rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+                cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+                grid[types_t, rows_t, cols_t] = 1.0
+
+            # Self
+            r, c = state.agent_positions[agent_idx]
+            grid[T, r, c] = 1.0
+
+            # Others (vectorized scatter_add)
+            other_idxs = [i for i in range(len(state.agent_positions)) if i != agent_idx]
+            if other_idxs:
+                o_rows = torch.tensor([state.agent_positions[i].row for i in other_idxs], dtype=torch.long)
+                o_cols = torch.tensor([state.agent_positions[i].col for i in other_idxs], dtype=torch.long)
+                flat_idx = o_rows * w + o_cols
+                ones = torch.ones(len(other_idxs), dtype=torch.float32)
+                grid[T + 1].view(-1).scatter_add_(0, flat_idx, ones)
+        else:
+            # Loop-based fallback (for timing baseline)
+            if state.task_types is not None:
+                for pos, tau in zip(state.task_positions, state.task_types):
+                    grid[tau, pos.row, pos.col] = 1.0
+
+            r, c = state.agent_positions[agent_idx]
+            grid[T, r, c] = 1.0
+
+            for i, pos in enumerate(state.agent_positions):
+                if i != agent_idx:
+                    grid[T + 1, pos.row, pos.col] += 1.0
+
+        # Actor (same for both paths)
+        actor_pos = state.agent_positions[state.actor]
+        grid[T + 2, actor_pos.row, actor_pos.col] = 1.0
+
+        is_actor = 1.0 if agent_idx == state.actor else 0.0
+        p2_pending = 1.0 if state.phase2_pending else 0.0
+        scalar = torch.tensor([is_actor, p2_pending], dtype=torch.float32)
+
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+    def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+        """Batch-encode after-states for all actions.
+
+        Movement after-states: actor position varies, tasks constant.
+        Pick after-states: actor position constant, task channels may vary.
+        """
+        T = self._n_types
+        h, w = self.env_cfg.height, self.env_cfg.width
+        n = len(after_states)
+        actor = state.actor
+        is_actor = (agent_idx == actor)
+
+        if self._use_vec:
+            # Build base grid with constant channels
+            base = torch.zeros(T + 3, h, w, dtype=torch.float32)
+
+            if state.task_positions and state.task_types is not None:
+                types_t = torch.tensor(state.task_types, dtype=torch.long)
+                rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+                cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+                base[types_t, rows_t, cols_t] = 1.0
+
+            if is_actor:
+                for j, pos in enumerate(state.agent_positions):
+                    if j != agent_idx:
+                        base[T + 1, pos.row, pos.col] += 1.0
+            else:
+                r, c = state.agent_positions[agent_idx]
+                base[T, r, c] = 1.0
+                for j, pos in enumerate(state.agent_positions):
+                    if j != agent_idx and j != actor:
+                        base[T + 1, pos.row, pos.col] += 1.0
+
+            grids = torch.zeros(n, T + 3, h, w, dtype=torch.float32)
+            for k, s_after in enumerate(after_states):
+                grids[k] = base.clone()
+                actor_pos = s_after.agent_positions[actor]
+
+                if is_actor:
+                    grids[k, T, actor_pos.row, actor_pos.col] = 1.0
+                else:
+                    grids[k, T + 1, actor_pos.row, actor_pos.col] += 1.0
+                grids[k, T + 2, actor_pos.row, actor_pos.col] = 1.0
+
+                if s_after.task_positions != state.task_positions:
+                    grids[k, :T] = 0.0
+                    if s_after.task_positions and s_after.task_types is not None:
+                        at = torch.tensor(s_after.task_types, dtype=torch.long)
+                        ar = torch.tensor([p.row for p in s_after.task_positions], dtype=torch.long)
+                        ac = torch.tensor([p.col for p in s_after.task_positions], dtype=torch.long)
+                        grids[k][at, ar, ac] = 1.0
+        else:
+            # Loop-based fallback
+            grids = torch.zeros(n, T + 3, h, w, dtype=torch.float32)
+            for k, s_after in enumerate(after_states):
+                if s_after.task_types is not None:
+                    for pos, tau in zip(s_after.task_positions, s_after.task_types):
+                        grids[k, tau, pos.row, pos.col] = 1.0
+
+                actor_pos = s_after.agent_positions[actor]
+                if is_actor:
+                    grids[k, T, actor_pos.row, actor_pos.col] = 1.0
+                else:
+                    r, c = state.agent_positions[agent_idx]
+                    grids[k, T, r, c] = 1.0
+
+                for j, pos in enumerate(s_after.agent_positions):
+                    if j != agent_idx:
+                        grids[k, T + 1, pos.row, pos.col] += 1.0
+
+                grids[k, T + 2, actor_pos.row, actor_pos.col] = 1.0
+
+        scalar_val = 1.0 if is_actor else 0.0
+        scalars = torch.zeros((n, 2), dtype=torch.float32)
+        scalars[:, 0] = scalar_val
+        for k, s_after in enumerate(after_states):
+            if s_after.phase2_pending:
+                scalars[k, 1] = 1.0
+        return EncoderOutput(grid=grids, scalar=scalars)
+
+
+class CentralizedTaskGridEncoder(GridEncoder):
+    """Centralized task-specialization encoding.
+
+    Channels (T + N + 1 total):
+      0..T-1       — task type channels (same as dec)
+      T..T+N-1     — per-agent position: channel T+j has 1.0 at agent j's cell
+      T+N          — actor position (1.0 at actor's cell)
+    Scalar: one-hot actor identity, length N.
+    """
+
+    def __init__(self, env_cfg, use_vec_encode: bool = True) -> None:
+        super().__init__(env_cfg)
+        self._n_types = env_cfg.n_task_types
+        self._n_agents = env_cfg.n_agents
+        self._use_vec = use_vec_encode
+
+    def grid_channels(self) -> int:
+        return self._n_types + self._n_agents + 1
+
+    def scalar_dim(self) -> int:
+        return self._n_agents + 1
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        T = self._n_types
+        N = self._n_agents
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + N + 1
+        grid = torch.zeros(C, h, w, dtype=torch.float32)
+
+        if self._use_vec:
+            # Task type channels (vectorized)
+            if state.task_positions and state.task_types is not None:
+                types_t = torch.tensor(state.task_types, dtype=torch.long)
+                rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+                cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+                grid[types_t, rows_t, cols_t] = 1.0
+        else:
+            if state.task_types is not None:
+                for pos, tau in zip(state.task_positions, state.task_types):
+                    grid[tau, pos.row, pos.col] = 1.0
+
+        # Per-agent position channels (same for both paths — always loop, small N)
+        for j, pos in enumerate(state.agent_positions):
+            grid[T + j, pos.row, pos.col] = 1.0
+
+        # Actor position channel
+        actor_pos = state.agent_positions[state.actor]
+        grid[T + N, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalar: one-hot actor identity + phase2_pending
+        scalar = torch.zeros(N + 1, dtype=torch.float32)
+        scalar[state.actor] = 1.0
+        if state.phase2_pending:
+            scalar[N] = 1.0
+
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+    def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
+        T = self._n_types
+        N = self._n_agents
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + N + 1
+        n = len(after_states)
+        actor = state.actor
+
+        if self._use_vec:
+            # Base grid: tasks + non-actor agent channels
+            base = torch.zeros(C, h, w, dtype=torch.float32)
+
+            if state.task_positions and state.task_types is not None:
+                types_t = torch.tensor(state.task_types, dtype=torch.long)
+                rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+                cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+                base[types_t, rows_t, cols_t] = 1.0
+
+            for j, pos in enumerate(state.agent_positions):
+                if j != actor:
+                    base[T + j, pos.row, pos.col] = 1.0
+
+            grids = torch.zeros(n, C, h, w, dtype=torch.float32)
+            for k, s_after in enumerate(after_states):
+                grids[k] = base.clone()
+                actor_pos = s_after.agent_positions[actor]
+                grids[k, T + actor, actor_pos.row, actor_pos.col] = 1.0
+                grids[k, T + N, actor_pos.row, actor_pos.col] = 1.0
+
+                if s_after.task_positions != state.task_positions:
+                    grids[k, :T] = 0.0
+                    if s_after.task_positions and s_after.task_types is not None:
+                        at = torch.tensor(s_after.task_types, dtype=torch.long)
+                        ar = torch.tensor([p.row for p in s_after.task_positions], dtype=torch.long)
+                        ac = torch.tensor([p.col for p in s_after.task_positions], dtype=torch.long)
+                        grids[k][at, ar, ac] = 1.0
+        else:
+            # Loop-based fallback
+            grids = torch.zeros(n, C, h, w, dtype=torch.float32)
+            for k, s_after in enumerate(after_states):
+                if s_after.task_types is not None:
+                    for pos, tau in zip(s_after.task_positions, s_after.task_types):
+                        grids[k, tau, pos.row, pos.col] = 1.0
+
+                for j, pos in enumerate(s_after.agent_positions):
+                    grids[k, T + j, pos.row, pos.col] = 1.0
+
+                actor_pos = s_after.agent_positions[actor]
+                grids[k, T + N, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalar: one-hot + phase2_pending (may vary across actions)
+        scalar_base = torch.zeros(N + 1, dtype=torch.float32)
+        scalar_base[actor] = 1.0
+        scalars = scalar_base.unsqueeze(0).expand(n, -1).clone()
+        for k, s_after in enumerate(after_states):
+            if s_after.phase2_pending:
+                scalars[k, N] = 1.0
+
+        return EncoderOutput(grid=grids, scalar=scalars)

@@ -74,7 +74,6 @@ def main() -> None:
         if custom_labels[i]:
             run.label = custom_labels[i]
         else:
-            # Use directory name as label
             run.label = Path(run_path).name
         print(f"  → {run.label}")
         runs.append(run)
@@ -86,18 +85,18 @@ def main() -> None:
     print("  ✓ All env configs match")
     print(f"  TD target: {runs[0].cfg.train.td_target.name.lower()}")
 
-    # Print differences
     cen_runs = [r for r in runs if r.is_centralized]
     dec_runs = [r for r in runs if not r.is_centralized]
     if cen_runs and dec_runs:
         print(f"  Mix of centralized ({len(cen_runs)}) and decentralized ({len(dec_runs)}) runs")
 
     # --- Generate states ---
+    ref = runs[0]
     print(f"Generating {args.n_states} states (seed={args.seed})...")
     t0 = time.time()
     states = generate_states(
-        runs[0].cfg.env,
-        runs[0].cfg.train.td_target,
+        ref.cfg.env,
+        ref.cfg.train.td_target,
         args.n_states,
         args.seed,
     )

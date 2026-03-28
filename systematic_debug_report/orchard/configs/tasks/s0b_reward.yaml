@@ -1,0 +1,52 @@
+env:
+  height: 9
+  width: 9
+  n_agents: 4
+  n_tasks: 4
+  n_task_types: 4
+  gamma: 0.0
+  r_high: 1.0
+  r_low: 0.0
+  max_tasks_per_type: 5
+  rho: 1.0
+  pick_mode: forced
+  type: stochastic
+  stochastic:
+    spawn_prob: 0.01
+    despawn_mode: probability
+    despawn_prob: 0.0125
+model:
+  input_type: task_cnn_grid
+  model_type: cnn
+  conv_specs: [[1, 3]]
+  mlp_dims: []
+  activation: leaky_relu
+  weight_init: zero_bias
+train:
+  learning_type: decentralized
+  mode: reward_learning
+  td_target: after_state
+  train_method: backward_view
+  td_lambda: 0.0
+  total_steps: 2000000
+  seed: 1234
+  batch_actions: true
+  heuristic: nearest_correct_task
+  use_vmap: true
+  stopping_condition: running_min_mae
+  patience_steps: 200000
+  improvement_threshold: 1e-7
+  min_steps_before_stop: 400000
+  lr:
+    start: 0.001
+    end: 0.001
+    schedule: none
+eval:
+  rollout_len: 2000
+  eval_steps: 1000
+  n_test_states: 1000
+  checkpoint_freq: 0
+logging:
+  output_dir: runs/
+  main_csv_freq: 1000
+  detail_csv_freq: 1000

@@ -3,16 +3,16 @@
 import pytest
 import torch
 
-from orchard.enums import EncoderType, EnvType
+from orchard.enums import EncoderType, EnvType, PickMode
 from orchard.datatypes import EnvConfig, Grid, State
 from orchard.encoding.grid import EgoCentricGridEncoder, NoRedundantAgentGridEncoder
 
 
 def _make_cfg(**overrides) -> EnvConfig:
     defaults = dict(
-        height=6, width=6, n_agents=2, n_apples=9,
-        gamma=0.99, r_picker=-1.0, force_pick=True,
-        max_apples=9, env_type=EnvType.STOCHASTIC,
+        height=6, width=6, n_agents=2, n_tasks=9,
+        gamma=0.99, r_picker=-1.0, pick_mode=PickMode.FORCED,
+        max_tasks=9, env_type=EnvType.STOCHASTIC,
         stochastic=None,
     )
     defaults.update(overrides)
@@ -21,9 +21,9 @@ def _make_cfg(**overrides) -> EnvConfig:
 
 def _make_small_cfg(**overrides) -> EnvConfig:
     defaults = dict(
-        height=3, width=3, n_agents=2, n_apples=1,
-        gamma=0.99, r_picker=-1.0, force_pick=True,
-        max_apples=1, env_type=EnvType.DETERMINISTIC,
+        height=3, width=3, n_agents=2, n_tasks=1,
+        gamma=0.99, r_picker=-1.0, pick_mode=PickMode.FORCED,
+        max_tasks=1, env_type=EnvType.DETERMINISTIC,
     )
     defaults.update(overrides)
     return EnvConfig(**defaults)
@@ -56,7 +56,7 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(2, 3), Grid(4, 1)),
-            apple_positions=(Grid(0, 0), Grid(5, 5)),
+            task_positions=(Grid(0, 0), Grid(5, 5)),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -73,7 +73,7 @@ class TestEgoCentricGridEncoder:
         for r, c in [(0, 0), (1, 1), (2, 2), (0, 2)]:
             s = State(
                 agent_positions=(Grid(r, c), Grid(1, 1) if (r, c) != (1, 1) else Grid(0, 0)),
-                apple_positions=(Grid(2, 2),),
+                task_positions=(Grid(2, 2),),
                 actor=0,
             )
             out = enc.encode(s, 0)
@@ -88,7 +88,7 @@ class TestEgoCentricGridEncoder:
         # Agent at corner (0,0): top-left of ego grid is OOB
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -104,7 +104,7 @@ class TestEgoCentricGridEncoder:
         # Agent at center (1,1): all world cells are reachable
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -120,7 +120,7 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -133,7 +133,7 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -147,7 +147,7 @@ class TestEgoCentricGridEncoder:
         # agent 0 at (1,1), agent 1 at (0,0), actor=0
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -159,7 +159,7 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         # Agent 0 is actor
@@ -175,14 +175,14 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         # 3 fake after-states (actor moved to different positions)
         after_states = [
-            State(agent_positions=(Grid(0, 1), Grid(0, 0)), apple_positions=(Grid(2, 2),), actor=0),
-            State(agent_positions=(Grid(1, 0), Grid(0, 0)), apple_positions=(Grid(2, 2),), actor=0),
-            State(agent_positions=(Grid(1, 1), Grid(0, 0)), apple_positions=(Grid(2, 2),), actor=0),
+            State(agent_positions=(Grid(0, 1), Grid(0, 0)), task_positions=(Grid(2, 2),), actor=0),
+            State(agent_positions=(Grid(1, 0), Grid(0, 0)), task_positions=(Grid(2, 2),), actor=0),
+            State(agent_positions=(Grid(1, 1), Grid(0, 0)), task_positions=(Grid(2, 2),), actor=0),
         ]
         out = enc.encode_batch_for_actions(s, 0, after_states)
         assert out.grid.shape == (3, 4, 5, 5)
@@ -194,12 +194,12 @@ class TestEgoCentricGridEncoder:
         enc = EgoCentricGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0)),
-            apple_positions=(Grid(2, 2),),
+            task_positions=(Grid(2, 2),),
             actor=0,
         )
         after_states = [
-            State(agent_positions=(Grid(0, 1), Grid(0, 0)), apple_positions=(Grid(2, 2),), actor=0),
-            State(agent_positions=(Grid(1, 0), Grid(0, 0)), apple_positions=(Grid(2, 2),), actor=0),
+            State(agent_positions=(Grid(0, 1), Grid(0, 0)), task_positions=(Grid(2, 2),), actor=0),
+            State(agent_positions=(Grid(1, 0), Grid(0, 0)), task_positions=(Grid(2, 2),), actor=0),
         ]
         # Encode from agent 1's perspective (not actor)
         out = enc.encode_batch_for_actions(s, 1, after_states)
@@ -227,7 +227,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out = enc.encode(s, 0)
@@ -240,7 +240,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out = enc.encode(s, 0)  # agent 0 is actor
@@ -253,7 +253,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out = enc.encode(s, 1)  # agent 1 is not actor
@@ -265,12 +265,12 @@ class TestNoRedundantAgentGridEncoder:
 
     def test_others_excludes_actor_when_not_self(self):
         """Others channel excludes both self AND actor."""
-        cfg = _make_small_cfg(n_agents=3, n_apples=1)
+        cfg = _make_small_cfg(n_agents=3, n_tasks=1)
         enc = NoRedundantAgentGridEncoder(cfg)
         # 3 agents: 0 at (0,0), 1 at (1,1), 2 at (2,2). Actor=0
         s = State(
             agent_positions=(Grid(0, 0), Grid(1, 1), Grid(2, 2)),
-            apple_positions=(Grid(0, 2),),
+            task_positions=(Grid(0, 2),),
             actor=0,
         )
         # From agent 1's perspective: self=1, actor=0
@@ -286,7 +286,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out = enc.encode(s, 0)  # agent 0 is actor
@@ -300,7 +300,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         # From agent 0 (is actor)
@@ -315,7 +315,7 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out0 = enc.encode(s, 0)
@@ -328,12 +328,12 @@ class TestNoRedundantAgentGridEncoder:
         enc = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         after_states = [
-            State(agent_positions=(Grid(0, 1), Grid(2, 2)), apple_positions=(Grid(1, 1),), actor=0),
-            State(agent_positions=(Grid(1, 0), Grid(2, 2)), apple_positions=(Grid(1, 1),), actor=0),
+            State(agent_positions=(Grid(0, 1), Grid(2, 2)), task_positions=(Grid(1, 1),), actor=0),
+            State(agent_positions=(Grid(1, 0), Grid(2, 2)), task_positions=(Grid(1, 1),), actor=0),
         ]
         out = enc.encode_batch_for_actions(s, 0, after_states)
         assert out.grid.shape == (2, 4, 3, 3)
@@ -348,7 +348,7 @@ class TestNoRedundantAgentGridEncoder:
         noreg = NoRedundantAgentGridEncoder(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(2, 2)),
-            apple_positions=(Grid(1, 1),),
+            task_positions=(Grid(1, 1),),
             actor=0,
         )
         out_b = basic.encode(s, 1)

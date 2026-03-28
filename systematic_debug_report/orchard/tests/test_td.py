@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from orchard.enums import EncoderType, EnvType, ModelType, Schedule
+from orchard.enums import EncoderType, EnvType, ModelType, PickMode, Schedule
 from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, ScheduleConfig
 import orchard.encoding as encoding
 from orchard.model import ValueNetwork
@@ -12,9 +12,9 @@ from orchard.model import ValueNetwork
 def _setup():
     """Initialize encoder and return configs."""
     env_cfg = EnvConfig(
-        height=2, width=2, n_agents=2, n_apples=1,
-        gamma=0.9, r_picker=-1.0, force_pick=True,
-        max_apples=1, env_type=EnvType.DETERMINISTIC,
+        height=2, width=2, n_agents=2, n_tasks=1,
+        gamma=0.9, r_picker=-1.0, pick_mode=PickMode.FORCED,
+        max_tasks=1, env_type=EnvType.DETERMINISTIC,
     )
     model_cfg = ModelConfig(
         input_type=EncoderType.RELATIVE,

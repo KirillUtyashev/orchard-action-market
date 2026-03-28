@@ -4,6 +4,7 @@ import csv
 import tempfile
 from pathlib import Path
 
+from orchard.enums import TrainMode
 from orchard.logging_ import CSVLogger, build_main_csv_fieldnames
 
 
@@ -39,12 +40,45 @@ class TestCSVLogger:
 
 
 class TestFieldnames:
-    def test_main_csv_2_agents(self):
-        fields = build_main_csv_fieldnames(2)
+    def test_value_learning_fields(self):
+        fields = build_main_csv_fieldnames(2, TrainMode.VALUE_LEARNING)
         assert "step" in fields
         assert "mae_agent_0" in fields
         assert "mae_agent_1" in fields
         assert "mae_avg" in fields
         assert "bias_avg" in fields
-        assert "greedy_pps" in fields
         assert "td_loss_avg" in fields
+
+    def test_policy_learning_legacy_fields(self):
+        fields = build_main_csv_fieldnames(2, TrainMode.POLICY_LEARNING)
+        assert "greedy_rps" in fields
+        assert "nearest_task_rps" in fields
+        assert "greedy_pps" not in fields
+        assert "nearest_pps" not in fields
+        assert "td_loss_avg" in fields
+
+    def test_policy_learning_task_spec_fields(self):
+        fields = build_main_csv_fieldnames(
+            4, TrainMode.POLICY_LEARNING, n_task_types=4,
+            heuristic_name="nearest_correct_task",
+        )
+        assert "greedy_rps" in fields
+        assert "greedy_correct_pps" in fields
+        assert "greedy_wrong_pps" in fields
+        assert "nearest_correct_task_rps" in fields
+        assert "greedy_pps" not in fields  # legacy field should NOT appear
+
+    def test_reward_learning_legacy_fields(self):
+        fields = build_main_csv_fieldnames(2, TrainMode.REWARD_LEARNING)
+        assert "mae_avg" in fields
+        assert "mae_zero_avg" in fields
+        assert "mae_picker_avg" in fields
+
+    def test_reward_learning_task_spec_fields(self):
+        fields = build_main_csv_fieldnames(
+            4, TrainMode.REWARD_LEARNING, n_networks=4, n_task_types=4,
+        )
+        assert "mae_avg" in fields
+        assert "mae_no_pick_avg" in fields
+        assert "mae_my_task_avg" in fields
+        assert "mae_other_task_avg" in fields

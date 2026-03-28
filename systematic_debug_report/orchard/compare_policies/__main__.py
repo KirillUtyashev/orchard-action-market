@@ -7,9 +7,18 @@ import time
 from pathlib import Path
 
 from orchard.compare_values.loader import load_run
-from orchard.compare_policies.compare import generate_states, run_comparison, add_nearest_policy
+from orchard.compare_policies.compare import (
+    generate_states, run_comparison, add_heuristic_policy, add_nearest_policy,
+)
 from orchard.compare_policies.report import build_report
 from orchard.compare_values.compare import validate_env_compatibility, validate_td_target_compatibility
+from orchard.enums import Heuristic
+
+
+_HEURISTIC_MAP = {
+    "nearest_task": Heuristic.NEAREST_TASK,
+    "nearest_correct_task": Heuristic.NEAREST_CORRECT_TASK,
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +30,7 @@ Examples:
   python -m orchard.compare_policies runs/dec_cnn64_lr1e-3 runs/cen_cnn64_lr1e-3
   python -m orchard.compare_policies runs/a runs/b runs/c --labels "Dec 64" "Cen 64" "Dec 8"
   python -m orchard.compare_policies runs/a runs/b --checkpoint step_500000.pt --n-states 200
+  python -m orchard.compare_policies runs/a runs/b --heuristic nearest_correct_task
 """,
     )
     p.add_argument("runs", nargs="+", type=str,
@@ -40,17 +50,20 @@ Examples:
     p.add_argument("--match-training", action="store_true",
                    help="Use same 100 random-action sample states as train.py (seed from config)")
     p.add_argument("--nearest", action="store_true",
-                   help="Include nearest-apple heuristic policy as an extra comparison column")
+                   help="Include nearest-task heuristic policy as an extra comparison column")
+    p.add_argument("--heuristic", type=str, default=None,
+                   choices=list(_HEURISTIC_MAP.keys()),
+                   help="Include heuristic policy as extra column (auto-detected from config if not set)")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    min_runs = 1 if args.nearest else 2
+    min_runs = 1 if (args.nearest or args.heuristic) else 2
     if len(args.runs) < min_runs:
         print(f"Error: need at least {min_runs} runs to compare"
-              + (" (or pass --nearest with 1 run)" if not args.nearest else ""))
+              + (" (or pass --nearest/--heuristic with 1 run)" if not (args.nearest or args.heuristic) else ""))
         return
 
     if args.labels and len(args.labels) != len(args.runs):
@@ -62,7 +75,6 @@ def main() -> None:
     for i, run_path in enumerate(args.runs):
         print(f"Loading run {i}: {run_path}")
         rp = Path(run_path)
-        # Auto-descend into timestamp subdir if metadata.yaml isn't here
         if not (rp / "metadata.yaml").exists():
             subdirs = sorted([d for d in rp.iterdir() if d.is_dir()])
             if subdirs:
@@ -73,7 +85,7 @@ def main() -> None:
 
     # --- Labels ---
     if args.labels:
-        labels = args.labels
+        labels = list(args.labels)
     else:
         labels = []
         for i, run in enumerate(loaded):
@@ -81,12 +93,13 @@ def main() -> None:
             labels.append(f"{lt} (step {run.checkpoint_step})")
 
     # --- Validate compatibility ---
-    print("Validating env compatibility...")
+    if len(loaded) >= 2:
+        print("Validating env compatibility...")
+        validate_env_compatibility(loaded)
+        validate_td_target_compatibility(loaded)
+        print("  ✓ All envs compatible")
+
     ref = loaded[0]
-    for i, run in enumerate(loaded[1:], 1):
-        validate_env_compatibility(ref.cfg.env, run.cfg.env)
-        validate_td_target_compatibility(ref, run)
-    print("  ✓ All envs compatible")
 
     # --- Generate states ---
     if args.match_training:
@@ -95,7 +108,7 @@ def main() -> None:
         t0 = time.time()
         states = generate_training_sample_states(ref, n_sample=100)
     else:
-        print(f"Generating {args.n_states} states (seed={args.seed}, nearest-apple policy)...")
+        print(f"Generating {args.n_states} states (seed={args.seed})...")
         t0 = time.time()
         states = generate_states(ref, args.n_states, args.seed)
     print(f"  Collected {len(states)} states in {time.time() - t0:.1f}s")
@@ -107,11 +120,23 @@ def main() -> None:
     elapsed = time.time() - t0
     print(f"  Done in {elapsed:.1f}s")
 
-    # --- Optionally add nearest-apple heuristic ---
-    if args.nearest:
-        print("Adding nearest-apple heuristic policy...")
-        add_nearest_policy(comparisons, ref.cfg.env)
-        labels.append("Nearest")
+    # --- Optionally add heuristic policy ---
+    if args.heuristic:
+        h = _HEURISTIC_MAP[args.heuristic]
+        hname = args.heuristic.replace("_", " ").title()
+        print(f"Adding {hname} heuristic policy...")
+        add_heuristic_policy(comparisons, ref.cfg.env, h)
+        labels.append(hname)
+    elif args.nearest:
+        # Auto-detect: use nearest_correct_task for multi-type
+        if ref.cfg.env.n_task_types > 1:
+            print("Adding nearest_correct_task heuristic policy...")
+            add_heuristic_policy(comparisons, ref.cfg.env, Heuristic.NEAREST_CORRECT_TASK)
+            labels.append("Nearest Correct Task")
+        else:
+            print("Adding nearest-task heuristic policy...")
+            add_nearest_policy(comparisons, ref.cfg.env)
+            labels.append("Nearest Task")
 
     # Summary
     n_agree = sum(1 for c in comparisons if c.agrees)

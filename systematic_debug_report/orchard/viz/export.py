@@ -25,11 +25,15 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
         "actor",
         "action",
         "picked",
+        "picked_task_type",
+        "picked_correct",
         *reward_cols,
         "discount",
-        "n_apples",
-        "n_apples_after",
+        "n_tasks",
+        "n_tasks_after",
         "cum_picks",
+        "cum_correct_picks",
+        "cum_wrong_picks",
         "picks_per_step",
         *agent_pick_cols,
     ]
@@ -46,10 +50,14 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
                 "actor": frame.actor,
                 "action": frame.action.name,
                 "picked": frame.picked,
+                "picked_task_type": frame.picked_task_type if frame.picked_task_type is not None else "",
+                "picked_correct": frame.picked_correct if frame.picked_correct is not None else "",
                 "discount": frame.discount,
-                "n_apples": frame.apples_on_grid,
-                "n_apples_after": frame.apples_after,
+                "n_tasks": frame.tasks_on_grid,
+                "n_tasks_after": frame.tasks_after,
                 "cum_picks": frame.total_picks,
+                "cum_correct_picks": frame.total_correct_picks,
+                "cum_wrong_picks": frame.total_wrong_picks,
                 "picks_per_step": f"{frame.picks_per_step:.6f}",
             }
             for i, rcol in enumerate(reward_cols):
@@ -74,6 +82,9 @@ def write_summary_json(
     total_decisions = frames[-1].total_decisions
     total_transitions = len(frames)
     total_picks = frames[-1].total_picks
+    total_correct = frames[-1].total_correct_picks
+    total_wrong = frames[-1].total_wrong_picks
+    total_reward = frames[-1].total_reward
 
     # Per-agent pick counts
     agent_picks = [0] * n_agents
@@ -81,12 +92,12 @@ def write_summary_json(
         if frame.picked:
             agent_picks[frame.actor] += 1
 
-    # Apple count stats (at s_t of each transition)
-    apple_counts = [f.apples_on_grid for f in frames]
-    avg_apples_all = sum(apple_counts) / len(apple_counts)
+    # Task count stats
+    task_counts = [f.tasks_on_grid for f in frames]
+    avg_tasks_all = sum(task_counts) / len(task_counts)
 
-    last_n = min(100, len(apple_counts))
-    avg_apples_last = sum(apple_counts[-last_n:]) / last_n
+    last_n = min(100, len(task_counts))
+    avg_tasks_last = sum(task_counts[-last_n:]) / last_n
 
     summary = {
         "policy": frames[0].policy_name,
@@ -97,9 +108,15 @@ def write_summary_json(
         "total_decisions": total_decisions,
         "total_transitions": total_transitions,
         "total_picks": total_picks,
+        "total_correct_picks": total_correct,
+        "total_wrong_picks": total_wrong,
         "picks_per_step": total_picks / total_decisions if total_decisions > 0 else 0.0,
-        "avg_apples_all": avg_apples_all,
-        f"avg_apples_last_{last_n}": avg_apples_last,
+        "total_reward": total_reward,
+        "reward_per_step": total_reward / total_decisions if total_decisions > 0 else 0.0,
+        "correct_picks_per_step": total_correct / total_decisions if total_decisions > 0 else 0.0,
+        "wrong_picks_per_step": total_wrong / total_decisions if total_decisions > 0 else 0.0,
+        "avg_tasks_all": avg_tasks_all,
+        f"avg_tasks_last_{last_n}": avg_tasks_last,
         "agent_pick_counts": agent_picks,
     }
 

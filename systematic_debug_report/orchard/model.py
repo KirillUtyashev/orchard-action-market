@@ -120,23 +120,34 @@ class ValueNetwork(nn.Module):
     def forward(self, encoder_output: EncoderOutput) -> torch.Tensor:
         """Returns scalar value estimate."""
         if encoder_output.grid is not None:
-            x = encoder_output.grid
-            if x.dim() == 3:
-                x = x.unsqueeze(0)
-            x = self.flatten(self.conv(x))
-            if encoder_output.scalar is not None:
-                s = encoder_output.scalar
-                if s.dim() == 1:
-                    s = s.unsqueeze(0)
-                x = torch.cat([x, s], dim=-1)
-            out = self.net(x).squeeze(-1)
-            if out.dim() == 1 and out.size(0) == 1:
-                return out.squeeze(0)
-            return out
+            return self.forward_raw(encoder_output.grid, encoder_output.scalar)
         elif encoder_output.scalar is not None:
             return self.net(encoder_output.scalar).squeeze(-1)
         else:
             raise ValueError("EncoderOutput has neither scalar nor grid")
+
+    def forward_raw(self, grid: torch.Tensor, scalar: torch.Tensor | None = None) -> torch.Tensor:
+        """Forward pass on raw tensors (for vmap compatibility).
+        
+        Args:
+            grid: (C, H, W) or (B, C, H, W)
+            scalar: (S,) or (B, S) or None
+        Returns:
+            scalar value(s)
+        """
+        x = grid
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+        x = self.flatten(self.conv(x))
+        if scalar is not None:
+            s = scalar
+            if s.dim() == 1:
+                s = s.unsqueeze(0)
+            x = torch.cat([x, s], dim=-1)
+        out = self.net(x).squeeze(-1)
+        if out.dim() == 1 and out.size(0) == 1:
+            return out.squeeze(0)
+        return out
 
     def train_step(self, s_enc, reward, discount, s_next_enc, env_step: int = 0) -> float:
         if self._train_method == TrainMethod.BACKWARD_VIEW:

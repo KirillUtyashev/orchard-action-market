@@ -9,8 +9,8 @@ import torch
 from orchard.compare_values.loader import LoadedRun
 from orchard.datatypes import EnvConfig, State
 from orchard.encoding.base import BaseEncoder
+from orchard.enums import Heuristic, TDTarget
 from orchard.env import create_env
-from orchard.enums import TDTarget
 from orchard.eval import collect_after_state_test_states, collect_on_policy_test_states
 from orchard.model import ValueNetwork
 from orchard.seed import set_all_seeds
@@ -39,7 +39,8 @@ def validate_env_compatibility(runs: list[LoadedRun]) -> None:
 
     ref = runs[0].cfg.env
     fields_to_check = [
-        "height", "width", "n_agents", "n_apples", "gamma", "force_pick", "max_apples", "env_type",
+        "height", "width", "n_agents", "n_tasks", "gamma", "pick_mode",
+        "max_tasks", "env_type", "n_task_types",
     ]
 
     for run in runs[1:]:
@@ -52,7 +53,7 @@ def validate_env_compatibility(runs: list[LoadedRun]) -> None:
                 mismatches.append(f"  {field}: {va} vs {vb}")
 
         if ref.stochastic is not None and other.stochastic is not None:
-            for field in ["spawn_prob", "despawn_mode", "despawn_prob", "apple_lifetime"]:
+            for field in ["spawn_prob", "despawn_mode", "despawn_prob"]:
                 va = getattr(ref.stochastic, field)
                 vb = getattr(other.stochastic, field)
                 if va != vb:
@@ -86,15 +87,21 @@ def generate_states(
     td_target: TDTarget,
     n_states: int,
     seed: int,
+    heuristic: Heuristic | None = None,
 ) -> list[State]:
-    """Generate comparison states using nearest-apple policy."""
+    """Generate comparison states using heuristic policy."""
+    if heuristic is None:
+        heuristic = (Heuristic.NEAREST_CORRECT_TASK
+                     if env_cfg.n_task_types > 1
+                     else Heuristic.NEAREST_TASK)
+
     set_all_seeds(seed)
     env = create_env(env_cfg)
 
     if td_target == TDTarget.AFTER_STATE:
-        return collect_after_state_test_states(env, n_states)
+        return collect_after_state_test_states(env, n_states, heuristic=heuristic)
     else:
-        return collect_on_policy_test_states(env, n_states)
+        return collect_on_policy_test_states(env, n_states, heuristic=heuristic)
 
 
 def compute_team_value(
@@ -104,16 +111,7 @@ def compute_team_value(
     is_centralized: bool,
     n_agents: int,
 ) -> tuple[float, dict[int, float]]:
-    """Compute team value and per-agent/per-network values for a state.
-
-    Returns:
-        (team_value, agent_values_dict)
-
-    For decentralized: agent_values_dict has one entry per agent (network).
-        team_value = sum of all agent values.
-    For centralized: agent_values_dict has one entry (key 0).
-        team_value = that single value (it already predicts team value).
-    """
+    """Compute team value and per-agent/per-network values for a state."""
     agent_values: dict[int, float] = {}
 
     with torch.no_grad():

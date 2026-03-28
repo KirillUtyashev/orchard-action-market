@@ -16,6 +16,7 @@ from orchard.compare_policies.compare import PolicyComparison
 from orchard.compare_values.loader import LoadedRun
 from orchard.datatypes import State
 from orchard.enums import Action, ACTION_PRIORITY
+from orchard.policy import get_all_actions
 from orchard.viz.renderer import render_state_png
 
 
@@ -23,13 +24,22 @@ from orchard.viz.renderer import render_state_png
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ACTION_SYMBOLS: dict[Action, str] = {
-    Action.UP: "\u2191",
-    Action.DOWN: "\u2193",
-    Action.LEFT: "\u2190",
-    Action.RIGHT: "\u2192",
-    Action.STAY: "\u00b7",
+_ACTION_SYMBOLS: dict[int, str] = {
+    0: "\u2191",   # UP
+    1: "\u2193",   # DOWN
+    2: "\u2190",   # LEFT
+    3: "\u2192",   # RIGHT
+    4: "\u00b7",   # STAY
+    5: "\u2605",   # PICK (generic)
 }
+
+
+def _action_symbol(action: Action) -> str:
+    if action.value in _ACTION_SYMBOLS:
+        return _ACTION_SYMBOLS[action.value]
+    if action.is_pick():
+        return f"\u2605{action.pick_type()}"
+    return action.name
 
 
 def _png_to_data_uri(png_bytes: bytes) -> str:
@@ -49,18 +59,30 @@ def _q_table_html(comp: PolicyComparison, labels: list[str]) -> str:
     """Build an HTML table: rows = actions, columns = models."""
     rows = []
 
-    # Header
     header = "<tr><th>Action</th>"
     for label in labels:
         header += f"<th>{label}</th>"
     header += "</tr>"
     rows.append(header)
 
-    for action in ACTION_PRIORITY:
-        sym = _ACTION_SYMBOLS.get(action, action.name)
+    # Collect all actions from the Q-value dicts
+    all_actions_set: set[Action] = set()
+    for qv in comp.q_values:
+        all_actions_set.update(qv.keys())
+
+    # Order: movement by priority, then pick actions by type
+    ordered_actions = list(ACTION_PRIORITY)
+    pick_actions = sorted(
+        [a for a in all_actions_set if a.is_pick()],
+        key=lambda a: a.value,
+    )
+    ordered_actions.extend(pick_actions)
+
+    for action in ordered_actions:
+        sym = _action_symbol(action)
         row = f"<tr><td><b>{sym} {action.name}</b></td>"
         for i, label in enumerate(labels):
-            q = comp.q_values[i][action]
+            q = comp.q_values[i].get(action, float("nan"))
             chosen = comp.actions[i] == action
             cls = "chosen" if chosen else ""
             if math.isnan(q):
@@ -81,16 +103,15 @@ def _state_card_html(
     comp: PolicyComparison,
     labels: list[str],
     state_uri: str,
+    env_cfg=None,
 ) -> str:
     """One state's card: grid image + action summary + Q table."""
-    # Action summary line
     action_parts = []
     for i, label in enumerate(labels):
-        sym = _ACTION_SYMBOLS.get(comp.actions[i], comp.actions[i].name)
+        sym = _action_symbol(comp.actions[i])
         action_parts.append(f"<b>{label}</b>: {sym} {comp.actions[i].name}")
     action_summary = " &nbsp;|&nbsp; ".join(action_parts)
 
-    # Q gap info
     gaps = []
     for qv in comp.q_values:
         sorted_q = sorted(qv.values(), reverse=True)
@@ -99,10 +120,23 @@ def _state_card_html(
     gap_strs = [f"{g:.6f}" for g in gaps]
     gap_line = "Q gap (best \u2212 2nd): " + ", ".join(gap_strs)
 
-    # Agent/apple info
     agents_str = ", ".join(f"A{i}=({p.row},{p.col})" for i, p in enumerate(comp.state.agent_positions))
-    apples_str = f"{len(comp.state.apple_positions)} apples"
+    n_tasks = len(comp.state.task_positions)
     actor_str = f"actor={comp.state.actor}"
+
+    # Task type info
+    if comp.state.task_types is not None and env_cfg is not None:
+        type_counts: dict[int, int] = {}
+        for t in comp.state.task_types:
+            type_counts[t] = type_counts.get(t, 0) + 1
+        types_str = ", ".join(f"τ{k}:{v}" for k, v in sorted(type_counts.items()))
+        task_info = f"{n_tasks} tasks ({types_str})"
+        # Show actor's assignment
+        if env_cfg.task_assignments is not None:
+            g_actor = env_cfg.task_assignments[comp.state.actor]
+            task_info += f", G_actor={set(g_actor)}"
+    else:
+        task_info = f"{n_tasks} tasks"
 
     qtable = _q_table_html(comp, labels)
 
@@ -117,7 +151,7 @@ def _state_card_html(
       <div class="card-body">
         <div class="grid-col">
           <img src="{state_uri}" />
-          <div class="meta">{agents_str}<br>{apples_str}, {actor_str}</div>
+          <div class="meta">{agents_str}<br>{task_info}, {actor_str}</div>
         </div>
         <div class="info-col">
           <div class="actions">{action_summary}</div>
@@ -143,48 +177,56 @@ def build_report(
     """Build self-contained HTML policy comparison report."""
     height = runs[0].cfg.env.height
     width = runs[0].cfg.env.width
+    env_cfg = runs[0].cfg.env
 
-    # Partition
     disagree = [c for c in comparisons if not c.agrees]
     agree = [c for c in comparisons if c.agrees]
-
-    # Sort disagreements: largest max Q-gap first (most confident = most interesting)
     disagree.sort(key=lambda c: c.q_gap, reverse=True)
 
-    # Summary stats
     n_total = len(comparisons)
     n_disagree = len(disagree)
     n_agree = len(agree)
     pct_agree = n_agree / n_total * 100 if n_total > 0 else 0
 
-    # Action distribution per model
+    # Action distribution per model — use all actions from the data
     n_cols = len(labels)
-    action_counts: list[dict[Action, int]] = [{a: 0 for a in ACTION_PRIORITY} for _ in range(n_cols)]
+    all_actions_seen: set[Action] = set()
+    for c in comparisons:
+        for a in c.actions:
+            all_actions_seen.add(a)
+
+    ordered_dist_actions = list(ACTION_PRIORITY)
+    for a in sorted(all_actions_seen, key=lambda a: a.value):
+        if a not in ordered_dist_actions:
+            ordered_dist_actions.append(a)
+
+    action_counts: list[dict[Action, int]] = [{a: 0 for a in ordered_dist_actions} for _ in range(n_cols)]
     for c in comparisons:
         for i, a in enumerate(c.actions):
+            if a not in action_counts[i]:
+                action_counts[i][a] = 0
             action_counts[i][a] += 1
 
-    # Render disagreement state images
+    # Render cards
     disagree_cards = []
     for c in disagree:
         uri = _render_state(c.state, height, width, dpi)
-        disagree_cards.append(_state_card_html(c, labels, uri))
+        disagree_cards.append(_state_card_html(c, labels, uri, env_cfg))
 
-    # For agreements: render a small sample (first 10)
     agree_sample = agree[:10]
     agree_cards = []
     for c in agree_sample:
         uri = _render_state(c.state, height, width, dpi)
-        agree_cards.append(_state_card_html(c, labels, uri))
+        agree_cards.append(_state_card_html(c, labels, uri, env_cfg))
 
     # Action distribution table
     dist_header = "<tr><th>Action</th>" + "".join(f"<th>{l}</th>" for l in labels) + "</tr>"
     dist_rows = [dist_header]
-    for action in ACTION_PRIORITY:
-        sym = _ACTION_SYMBOLS.get(action, action.name)
+    for action in ordered_dist_actions:
+        sym = _action_symbol(action)
         row = f"<tr><td><b>{sym} {action.name}</b></td>"
         for i in range(n_cols):
-            cnt = action_counts[i][action]
+            cnt = action_counts[i].get(action, 0)
             pct = cnt / n_total * 100 if n_total > 0 else 0
             row += f"<td>{cnt} ({pct:.1f}%)</td>"
         row += "</tr>"
@@ -196,9 +238,13 @@ def build_report(
     for i, (run, label) in enumerate(zip(runs, labels)):
         lt = "centralized" if run.is_centralized else "decentralized"
         run_info += f"<tr><td class='label'>{label}:</td><td>{lt}, step {run.checkpoint_step}, {run.run_dir}</td></tr>\n"
-    # Extra labels (e.g. "Nearest") that don't correspond to a LoadedRun
     for label in labels[len(runs):]:
         run_info += f"<tr><td class='label'>{label}:</td><td>heuristic policy</td></tr>\n"
+
+    # Task specialization info
+    task_info_html = ""
+    if env_cfg.n_task_types > 1:
+        task_info_html = f"<tr><td class='label'>Task types:</td><td>{env_cfg.n_task_types}, assignments: {env_cfg.task_assignments}</td></tr>"
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -258,6 +304,7 @@ def build_report(
   <table>
     {run_info}
     <tr><td class="label">Env:</td><td>{height}&times;{width}, {runs[0].cfg.env.n_agents} agents, &gamma;={runs[0].cfg.env.gamma}</td></tr>
+    {task_info_html}
     <tr><td class="label">States compared:</td><td>{n_total}</td></tr>
   </table>
 

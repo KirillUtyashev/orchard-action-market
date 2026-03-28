@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from orchard.env.base import BaseEnv
-from orchard.datatypes import EnvConfig, Grid, State
+from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
 
 
 class DeterministicEnv(BaseEnv):
@@ -13,52 +13,109 @@ class DeterministicEnv(BaseEnv):
         super().__init__(cfg)
 
     def init_state(self) -> State:
-        """Agents fill first cells row-major, apples fill next."""
+        """Agents fill first cells row-major, tasks fill next."""
         cells = [
             Grid(r, c)
             for r in range(self.cfg.height)
             for c in range(self.cfg.width)
         ]
-        total_needed = self.cfg.n_agents + self.cfg.n_apples
-        assert total_needed <= len(cells), (
-            f"Need {total_needed} cells but grid is {self.cfg.height}x{self.cfg.width} "
-            f"= {len(cells)} cells"
-        )
-        agent_positions = tuple(cells[: self.cfg.n_agents])
-        apple_positions = tuple(sorted(cells[self.cfg.n_agents : total_needed]))
-        apple_ids = tuple(range(len(apple_positions)))
+
+        if self.cfg.n_task_types == 1:
+            # --- Legacy path ---
+            total_needed = self.cfg.n_agents + self.cfg.n_tasks
+            assert total_needed <= len(cells), (
+                f"Need {total_needed} cells but grid is "
+                f"{self.cfg.height}x{self.cfg.width} = {len(cells)} cells"
+            )
+            agent_positions = tuple(cells[:self.cfg.n_agents])
+            task_positions = tuple(sorted(
+                cells[self.cfg.n_agents:total_needed]
+            ))
+            return State(
+                agent_positions=agent_positions,
+                task_positions=task_positions,
+                actor=0,
+                task_types=None,
+            )
+
+        # --- Task specialization path ---
+        agent_positions = tuple(cells[:self.cfg.n_agents])
+        occupied = set(agent_positions)
+
+        all_task_positions: list[Grid] = []
+        all_task_types: list[int] = []
+
+        for tau in range(self.cfg.n_task_types):
+            count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
+            spawned = 0
+            for cell in cells:
+                if spawned >= count:
+                    break
+                if cell not in occupied:
+                    all_task_positions.append(cell)
+                    all_task_types.append(tau)
+                    occupied.add(cell)
+                    spawned += 1
+
+        tp, tt = sort_tasks(all_task_positions, all_task_types)
         return State(
             agent_positions=agent_positions,
-            apple_positions=apple_positions,
+            task_positions=tp,
             actor=0,
-            apple_ids=apple_ids,
+            task_types=tt,
         )
 
     def spawn_and_despawn(self, state: State) -> State:
-        """If apple count < n_apples, spawn at first empty cell row-major. No despawn."""
-        if len(state.apple_positions) >= self.cfg.n_apples:
+        """If task count < n_tasks, spawn at first empty cell row-major. No despawn."""
+        if self.cfg.n_task_types == 1:
+            return self._spawn_legacy(state)
+        return self._spawn_multi(state)
+
+    def _spawn_legacy(self, state: State) -> State:
+        """Legacy spawn for n_task_types == 1."""
+        if len(state.task_positions) >= self.cfg.n_tasks:
             return state
 
-        occupied = set(state.agent_positions) | set(state.apple_positions)
+        occupied = set(state.agent_positions) | set(state.task_positions)
         for r in range(self.cfg.height):
             for c in range(self.cfg.width):
                 pos = Grid(r, c)
                 if pos not in occupied:
-                    new_apples = tuple(sorted(state.apple_positions + (pos,)))
-                    new_ids: tuple[int, ...] | None = None
-                    if state.apple_ids is not None:
-                        used = set(state.apple_ids)
-                        new_id = min(set(range(self.cfg.max_apples)) - used)
-                        pos_id = dict(zip(state.apple_positions, state.apple_ids))
-                        pos_id[pos] = new_id
-                        new_ids = tuple(pos_id[p] for p in new_apples)
+                    new_tasks = tuple(sorted(state.task_positions + (pos,)))
                     return State(
                         agent_positions=state.agent_positions,
-                        apple_positions=new_apples,
+                        task_positions=new_tasks,
                         actor=state.actor,
-                        apple_ages=state.apple_ages,
-                        apple_ids=new_ids,
+                        task_types=None,
                     )
-
-        # No empty cell found (shouldn't happen in normal configs)
         return state
+
+    def _spawn_multi(self, state: State) -> State:
+        """Spawn for n_task_types > 1: one task per under-capacity type."""
+        positions = list(state.task_positions)
+        types = list(state.task_types)
+
+        for tau in range(self.cfg.n_task_types):
+            n_tau = sum(1 for t in types if t == tau)
+            if n_tau >= self.cfg.max_tasks_per_type:
+                continue
+
+            occupied = set(state.agent_positions) | set(positions)
+            for r in range(self.cfg.height):
+                for c in range(self.cfg.width):
+                    pos = Grid(r, c)
+                    if pos not in occupied:
+                        positions.append(pos)
+                        types.append(tau)
+                        break
+                else:
+                    continue
+                break
+
+        tp, tt = sort_tasks(positions, types)
+        return State(
+            agent_positions=state.agent_positions,
+            task_positions=tp,
+            actor=state.actor,
+            task_types=tt,
+        )

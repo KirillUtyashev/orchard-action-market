@@ -8,16 +8,17 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.datatypes import State
-from orchard.enums import Action, ACTION_PRIORITY
+from orchard.enums import Action, PickMode
 from orchard.env.base import BaseEnv
 from orchard.eval import rollout_trajectory
 from orchard.model import ValueNetwork
+from orchard.policy import get_all_actions, get_phase2_actions
 from orchard.viz.frame import Decision, Frame
 
 
 def generate_frames(
     start_state: State,
-    policy_fn: Callable[[State], Action],
+    policy_fn: "Callable[[State, bool], Action]",
     env: BaseEnv,
     n_steps: int,
     policy_name: str = "",
@@ -29,46 +30,66 @@ def generate_frames(
 
     A pick step yields two Frames (move + pick). A non-pick step yields one.
     n_steps counts agent decisions, not transitions.
-
-    Parameters
-    ----------
-    start_state : starting env state
-    policy_fn : s -> Action
-    env : environment instance
-    n_steps : how many agent decisions to roll out
-    policy_name : label shown in the viewer
-    networks : value networks (needed for --decisions and --values)
-    include_decisions : compute Q_team for all actions at decision points
-    include_values : compute V_i(s) for each agent at decision points
     """
     frames: list[Frame] = []
     total_picks = 0
+    total_correct_picks = 0
+    total_wrong_picks = 0
+    total_reward = 0.0
     decision_count = 0
     state_index = 0
     transition_index = 0
     n_agents = env.cfg.n_agents
     agent_pick_counts: dict[int, int] = {i: 0 for i in range(n_agents)}
     is_decentralized = networks is not None and len(networks) > 1
+    # Phase-1 actions for Q-value display; phase-2 handled per-transition
+    all_actions = get_all_actions(env.cfg)
+    has_task_types = env.cfg.n_task_types > 1
 
     for transition in rollout_trajectory(start_state, policy_fn, env, n_steps):
-        is_pick = (transition.action == Action.PICK)
+        is_pick = (transition.action == Action.PICK or
+                   (transition.action.is_pick() and transition.action != Action.PICK))
         picked = any(r != 0.0 for r in transition.rewards)
+
+        # Determine pick type and correctness
+        picked_task_type: int | None = None
+        picked_correct: bool | None = None
 
         if picked:
             total_picks += 1
             agent_pick_counts[transition.s_t.actor] += 1
 
+            if has_task_types and env.cfg.task_assignments is not None:
+                # Figure out what type was picked by comparing before/after tasks
+                before_tasks = set(zip(transition.s_t.task_positions,
+                                       transition.s_t.task_types or ()))
+                after_tasks = set(zip(transition.s_t_after.task_positions,
+                                      transition.s_t_after.task_types or ()))
+                removed = before_tasks - after_tasks
+                if removed:
+                    _, tau = next(iter(removed))
+                    picked_task_type = tau
+                    g_actor = set(env.cfg.task_assignments[transition.s_t.actor])
+                    picked_correct = (tau in g_actor)
+                    if picked_correct:
+                        total_correct_picks += 1
+                    else:
+                        total_wrong_picks += 1
+
+        # Accumulate reward (actor's reward from this transition)
+        total_reward += transition.rewards[transition.s_t.actor]
+
         # Increment decision count on non-PICK transitions (actual agent choices)
-        if not is_pick:
+        if transition.action.is_move():
             decision_count += 1
 
         # --- Optional: decision introspection (only at decision points) ---
         decisions: list[Decision] | None = None
-        if include_decisions and networks is not None and not is_pick:
+        # Introspect Q-values only at phase-1 decision points (move actions)
+        if include_decisions and networks is not None and transition.action.is_move():
             decisions = []
-            for action in ACTION_PRIORITY:
+            for action in all_actions:
                 s_after = env.apply_action(transition.s_t, action)
-                # Compute per-agent V_i(s^a) and sum for Q_team
                 agent_qvals: dict[int, float] = {}
                 q_total: float = 0.0
                 with torch.no_grad():
@@ -85,7 +106,7 @@ def generate_frames(
 
         # --- Optional: per-agent values (only at decision points) ---
         agent_values: dict[int, float] | None = None
-        if include_values and networks is not None and not is_pick:
+        if include_values and networks is not None and transition.action.is_move():
             agent_values = {}
             with torch.no_grad():
                 for i, net in enumerate(networks):
@@ -107,8 +128,13 @@ def generate_frames(
             policy_name=policy_name,
             total_picks=total_picks,
             total_decisions=decision_count,
-            apples_on_grid=len(transition.s_t.apple_positions),
-            apples_after=len(transition.s_t_after.apple_positions),
+            tasks_on_grid=len(transition.s_t.task_positions),
+            tasks_after=len(transition.s_t_after.task_positions),
+            picked_task_type=picked_task_type,
+            picked_correct=picked_correct,
+            total_correct_picks=total_correct_picks,
+            total_wrong_picks=total_wrong_picks,
+            total_reward=total_reward,
             decisions=decisions,
             agent_values=agent_values,
             agent_picks=dict(agent_pick_counts),

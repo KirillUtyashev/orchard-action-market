@@ -113,7 +113,11 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | None = None, centralized: bool = False) -> list[str]:
+def build_main_csv_fieldnames(
+    n_agents: int, mode: TrainMode,
+    n_networks: int | None = None, centralized: bool = False,
+    n_task_types: int = 1, heuristic_name: str = "nearest_task",
+) -> list[str]:
     """Build column names for metrics.csv."""
     from orchard.enums import TrainMode
     if n_networks is None:
@@ -125,14 +129,24 @@ def build_main_csv_fieldnames(n_agents: int, mode: TrainMode, n_networks: int | 
                 fields.append(f"{metric}_agent_{i}")
             fields.append(f"{metric}_avg")
     elif mode == TrainMode.POLICY_LEARNING:
-        fields.extend(["greedy_pps", "nearest_pps"])
+        if n_task_types > 1:
+            fields.extend([
+                "greedy_rps", "greedy_correct_pps", "greedy_wrong_pps",
+                f"{heuristic_name}_rps", f"{heuristic_name}_correct_pps",
+                f"{heuristic_name}_wrong_pps",
+            ])
+        else:
+            fields.extend(["greedy_rps", f"{heuristic_name}_rps"])
     elif mode == TrainMode.REWARD_LEARNING:
         for metric in ("mae",):
             for i in range(n_networks):
                 fields.append(f"{metric}_agent_{i}")
             fields.append(f"{metric}_avg")
         # Per-category MAE
-        categories = ["zero", "pick"] if centralized else ["zero", "picker", "other"]
+        if n_task_types > 1:
+            categories = ["no_pick", "pick"] if centralized else ["no_pick", "my_task", "other_task"]
+        else:
+            categories = ["zero", "pick"] if centralized else ["zero", "picker", "other"]
         for cat in categories:
             for i in range(n_networks):
                 fields.append(f"mae_{cat}_agent_{i}")

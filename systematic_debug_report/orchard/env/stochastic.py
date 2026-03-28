@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from orchard.enums import DespawnMode
+from orchard.enums import DespawnMode, PickMode
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
-from orchard.datatypes import EnvConfig, Grid, State
+from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
 
 
 class StochasticEnv(BaseEnv):
@@ -17,68 +17,75 @@ class StochasticEnv(BaseEnv):
         self.stoch = cfg.stochastic
 
     def init_state(self) -> State:
-        """Random placement, no overlaps between agents and apples."""
+        """Random placement, no overlaps between agents and tasks."""
         cells = [
             Grid(r, c)
             for r in range(self.cfg.height)
             for c in range(self.cfg.width)
         ]
-        total_needed = self.cfg.n_agents + self.cfg.n_apples
-        assert total_needed <= len(cells), (
-            f"Need {total_needed} cells but grid is {self.cfg.height}x{self.cfg.width}"
-        )
-        chosen = rng.sample(cells, total_needed)
-        agent_positions = tuple(chosen[: self.cfg.n_agents])
-        apple_positions = tuple(sorted(chosen[self.cfg.n_agents :]))
 
-        apple_ages: tuple[int, ...] | None = None
-        if self.stoch.despawn_mode == DespawnMode.LIFETIME:
-            apple_ages = tuple(0 for _ in apple_positions)
-        apple_ids = tuple(range(len(apple_positions)))
+        if self.cfg.n_task_types == 1:
+            # --- Legacy path ---
+            total_needed = self.cfg.n_agents + self.cfg.n_tasks
+            assert total_needed <= len(cells), (
+                f"Need {total_needed} cells but grid is "
+                f"{self.cfg.height}x{self.cfg.width}"
+            )
+            chosen = rng.sample(cells, total_needed)
+            agent_positions = tuple(chosen[:self.cfg.n_agents])
+            task_positions = tuple(sorted(chosen[self.cfg.n_agents:]))
+            return State(
+                agent_positions=agent_positions,
+                task_positions=task_positions,
+                actor=0,
+                task_types=None,
+            )
 
+        # --- Task specialization path ---
+        # Place agents first
+        agent_positions = tuple(rng.sample(cells, self.cfg.n_agents))
+        occupied = set(agent_positions)
+
+        # Spawn initial tasks per type
+        all_task_positions: list[Grid] = []
+        all_task_types: list[int] = []
+
+        for tau in range(self.cfg.n_task_types):
+            count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
+            available = [c for c in cells if c not in occupied]
+            to_spawn = min(count, len(available))
+            chosen_cells = rng.sample(available, to_spawn)
+            for cell in chosen_cells:
+                all_task_positions.append(cell)
+                all_task_types.append(tau)
+                occupied.add(cell)
+
+        tp, tt = sort_tasks(all_task_positions, all_task_types)
         return State(
             agent_positions=agent_positions,
-            apple_positions=apple_positions,
+            task_positions=tp,
             actor=0,
-            apple_ages=apple_ages,
-            apple_ids=apple_ids,
+            task_types=tt,
         )
 
     def spawn_and_despawn(self, state: State) -> State:
         """Despawn phase then spawn phase."""
+
+        if self.cfg.n_task_types == 1:
+            return self._spawn_and_despawn_legacy(state)
+
+        return self._spawn_and_despawn_multi(state)
+
+    def _spawn_and_despawn_legacy(self, state: State) -> State:
+        """Legacy spawn/despawn for n_task_types == 1."""
+        tasks = list(state.task_positions)
+
         # --- Despawn phase ---
-        apples = list(state.apple_positions)
-        ages: list[int] | None = list(state.apple_ages) if state.apple_ages is not None else None
-        ids: list[int] | None = list(state.apple_ids) if state.apple_ids is not None else None
-
         if self.stoch.despawn_mode == DespawnMode.PROBABILITY:
-            keep_indices = [
-                i for i in range(len(apples))
-                if rng.random() >= self.stoch.despawn_prob
-            ]
-            apples = [apples[i] for i in keep_indices]
-            if ages is not None:
-                ages = [ages[i] for i in keep_indices]
-            if ids is not None:
-                ids = [ids[i] for i in keep_indices]
-
-        elif self.stoch.despawn_mode == DespawnMode.LIFETIME:
-            assert ages is not None
-            keep_indices = [
-                i for i in range(len(apples))
-                if ages[i] < self.stoch.apple_lifetime
-            ]
-            apples = [apples[i] for i in keep_indices]
-            ages = [ages[i] for i in keep_indices]
-            if ids is not None:
-                ids = [ids[i] for i in keep_indices]
-
-        # Age surviving apples
-        if ages is not None:
-            ages = [a + 1 for a in ages]
+            tasks = [t for t in tasks if rng.random() >= self.stoch.despawn_prob]
 
         # --- Spawn phase ---
-        occupied = set(state.agent_positions) | set(apples)
+        occupied = set(state.agent_positions) | set(tasks)
         empty_cells = [
             Grid(r, c)
             for r in range(self.cfg.height)
@@ -86,37 +93,88 @@ class StochasticEnv(BaseEnv):
             if Grid(r, c) not in occupied
         ]
 
-        # Pre-compute available IDs for spawning
-        available_ids: list[int] = []
-        if ids is not None:
-            available_ids = sorted(set(range(self.cfg.max_apples)) - set(ids))
-
         for cell in empty_cells:
-            if len(apples) >= self.cfg.max_apples:
+            if len(tasks) >= self.cfg.max_tasks:
                 break
             if rng.random() < self.stoch.spawn_prob:
-                apples.append(cell)
-                if ages is not None:
-                    ages.append(0)
-                if ids is not None and available_ids:
-                    ids.append(available_ids.pop(0))
-
-        new_apple_positions = tuple(sorted(apples))
-        # Re-sort ages to match sorted apple positions
-        new_ages: tuple[int, ...] | None = None
-        if ages is not None:
-            pos_age = dict(zip(apples, ages))
-            new_ages = tuple(pos_age[p] for p in new_apple_positions)
-        # Re-sort ids to match sorted apple positions
-        new_ids: tuple[int, ...] | None = None
-        if ids is not None:
-            pos_id = dict(zip(apples, ids))
-            new_ids = tuple(pos_id[p] for p in new_apple_positions)
+                tasks.append(cell)
 
         return State(
             agent_positions=state.agent_positions,
-            apple_positions=new_apple_positions,
+            task_positions=tuple(sorted(tasks)),
             actor=state.actor,
-            apple_ages=new_ages,
-            apple_ids=new_ids,
+            task_types=None,
+        )
+
+    def _spawn_and_despawn_multi(self, state: State) -> State:
+        """Spawn/despawn for n_task_types > 1."""
+        positions = list(state.task_positions)
+        types = list(state.task_types)
+
+        # --- Despawn phase ---
+        if self.stoch.despawn_mode == DespawnMode.PROBABILITY:
+            keep = [
+                i for i in range(len(positions))
+                if rng.random() >= self.stoch.despawn_prob
+            ]
+            positions = [positions[i] for i in keep]
+            types = [types[i] for i in keep]
+
+        # --- Spawn phase (per type) ---
+        # Resolve effective spawn mode:
+        #   explicit task_spawn_mode overrides; None → auto based on pick_mode
+        from orchard.enums import TaskSpawnMode
+        tsm = self.stoch.task_spawn_mode
+        if tsm is None:
+            tsm = (
+                TaskSpawnMode.GLOBAL_UNIQUE
+                if self.cfg.pick_mode == PickMode.FORCED
+                else TaskSpawnMode.PER_TYPE_UNIQUE
+            )
+
+        for tau in range(self.cfg.n_task_types):
+            n_tau = sum(1 for t in types if t == tau)
+            if n_tau >= self.cfg.max_tasks_per_type:
+                continue
+
+            if tsm == TaskSpawnMode.GLOBAL_UNIQUE:
+                # No task of ANY type, no agent
+                task_set = set(positions)
+                agent_set = set(state.agent_positions)
+                empty_cells = [
+                    Grid(r, c)
+                    for r in range(self.cfg.height)
+                    for c in range(self.cfg.width)
+                    if Grid(r, c) not in task_set
+                    and Grid(r, c) not in agent_set
+                ]
+            else:
+                # PER_TYPE_UNIQUE: no task of type τ at this cell, no agent
+                cells_with_tau = set(
+                    positions[i] for i in range(len(positions))
+                    if types[i] == tau
+                )
+                agent_set = set(state.agent_positions)
+                empty_cells = [
+                    Grid(r, c)
+                    for r in range(self.cfg.height)
+                    for c in range(self.cfg.width)
+                    if Grid(r, c) not in cells_with_tau
+                    and Grid(r, c) not in agent_set
+                ]
+
+            for cell in empty_cells:
+                if n_tau >= self.cfg.max_tasks_per_type:
+                    break
+                if rng.random() < self.stoch.spawn_prob:
+                    positions.append(cell)
+                    types.append(tau)
+                    n_tau += 1
+
+        tp, tt = sort_tasks(positions, types)
+        return State(
+            agent_positions=state.agent_positions,
+            task_positions=tp,
+            actor=state.actor,
+            task_types=tt,
         )

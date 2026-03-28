@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import BasicGridEncoder, CentralizedGridEncoder, EgoCentricGridEncoder, GridMLPEncoder, NoRedundantAgentGridEncoder
-from orchard.encoding.relative import PositionalKEncoder, RelativeEncoder, RelativeKEncoder, StableIdEncoder
+from orchard.encoding.grid import BasicGridEncoder, CentralizedGridEncoder, EgoCentricGridEncoder, GridMLPEncoder, NoRedundantAgentGridEncoder, TaskGridEncoder, CentralizedTaskGridEncoder
+from orchard.encoding.relative import RelativeEncoder, RelativeKEncoder
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, EnvConfig, State
 
@@ -13,7 +13,7 @@ from orchard.datatypes import EncoderOutput, EnvConfig, State
 _encoder: BaseEncoder | None = None
 
 
-def _create_encoder(encoder_type, env_cfg, k=None):
+def _create_encoder(encoder_type, env_cfg, k=None, use_vec_encode=True):
     if encoder_type == EncoderType.RELATIVE:
         return RelativeEncoder(env_cfg)
     elif encoder_type == EncoderType.RELATIVE_K:
@@ -21,27 +21,24 @@ def _create_encoder(encoder_type, env_cfg, k=None):
         return RelativeKEncoder(env_cfg, k)
     elif encoder_type == EncoderType.CNN_GRID:
         return BasicGridEncoder(env_cfg)
-    elif encoder_type == EncoderType.POSITIONAL_K:
-            assert k is not None, "k_nearest required for POSITIONAL_K"
-            return PositionalKEncoder(env_cfg, k)
-    elif encoder_type == EncoderType.STABLE_ID:
-        return StableIdEncoder(env_cfg)
     elif encoder_type == EncoderType.GRID_MLP:
         return GridMLPEncoder(env_cfg)
     elif encoder_type == EncoderType.CENTRALIZED_CNN_GRID:
         return CentralizedGridEncoder(env_cfg)
     elif encoder_type == EncoderType.EGOCENTRIC_CNN_GRID:
-        print("Using egocentric CNN grid encoder")
         return EgoCentricGridEncoder(env_cfg)
     elif encoder_type == EncoderType.NO_REDUNDANT_AGENT_GRID:
-        print("Using no redundant agent CNN grid encoder")
         return NoRedundantAgentGridEncoder(env_cfg)
+    elif encoder_type == EncoderType.TASK_CNN_GRID:
+        return TaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
+    elif encoder_type == EncoderType.CENTRALIZED_TASK_CNN_GRID:
+        return CentralizedTaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 
-def init_encoder(encoder_type, env_cfg, k=None):
+def init_encoder(encoder_type, env_cfg, k=None, use_vec_encode=True):
     global _encoder
-    _encoder = _create_encoder(encoder_type, env_cfg, k)
+    _encoder = _create_encoder(encoder_type, env_cfg, k, use_vec_encode=use_vec_encode)
 
 
 def encode(state: State, agent_idx: int) -> EncoderOutput:

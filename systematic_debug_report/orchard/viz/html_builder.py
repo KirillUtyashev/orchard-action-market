@@ -9,14 +9,22 @@ from pathlib import Path
 from orchard.enums import Action
 from orchard.viz.frame import Frame
 
-_ACTION_ARROWS: dict[Action, str] = {
-    Action.UP: "\u2191",
-    Action.DOWN: "\u2193",
-    Action.LEFT: "\u2190",
-    Action.RIGHT: "\u2192",
-    Action.STAY: "\u00b7",
-    Action.PICK: "\u2605",
+_ACTION_ARROWS: dict[int, str] = {
+    0: "\u2191",  # UP
+    1: "\u2193",  # DOWN
+    2: "\u2190",  # LEFT
+    3: "\u2192",  # RIGHT
+    4: "\u00b7",  # STAY
+    5: "\u2605",  # PICK
 }
+
+
+def _action_symbol(action: Action) -> str:
+    if action.value in _ACTION_ARROWS:
+        return _ACTION_ARROWS[action.value]
+    if action.is_pick():
+        return f"\u2605{action.pick_type()}"
+    return action.name
 
 
 def _agent_css_color(idx: int) -> str:
@@ -28,12 +36,13 @@ def _agent_css_color(idx: int) -> str:
     return palette[idx % len(palette)]
 
 
-def _build_frame_info_html(frame: Frame) -> str:
+def _build_frame_info_html(frame: Frame, n_task_types: int = 1,
+                           task_assignments: tuple[tuple[int, ...], ...] | None = None) -> str:
     """Build the HTML info panel for one frame with math notation."""
     parts: list[str] = []
     t = frame.state_index
     t1 = t + 1
-    is_pick = (frame.action == Action.PICK)
+    is_pick = (frame.action == Action.PICK or frame.action.is_pick())
 
     # Transition header
     parts.append(
@@ -43,11 +52,18 @@ def _build_frame_info_html(frame: Frame) -> str:
 
     # Actor and action
     ac = _agent_css_color(frame.actor)
-    arrow = _ACTION_ARROWS.get(frame.action, "?")
+    arrow = _action_symbol(frame.action)
     parts.append(
         f'<span style="color:{ac};font-weight:bold">A{frame.actor}</span> '
         f'\u2192 {frame.action.name} {arrow}'
     )
+
+    # Task assignments for actor
+    if n_task_types > 1 and task_assignments is not None:
+        g = task_assignments[frame.actor]
+        parts.append(
+            f'<span style="color:#888">G<sub>{frame.actor}</sub> = {set(g)}</span>'
+        )
 
     # Rewards: r_{t+1}
     if any(r != 0.0 for r in frame.rewards):
@@ -57,23 +73,34 @@ def _build_frame_info_html(frame: Frame) -> str:
             sign = "+" if r > 0 else ""
             r_parts.append(f'<span style="color:{c}">{sign}{r:.2f}</span>')
         parts.append(f'r<sub>{t1}</sub> = [{", ".join(r_parts)}]')
+
+        # Pick type and correctness
+        if frame.picked_task_type is not None:
+            if frame.picked_correct:
+                parts.append(
+                    f'<span style="color:#2ca02c;font-weight:bold">'
+                    f'\u2713 Correct pick (type {frame.picked_task_type})</span>'
+                )
+            elif frame.picked_correct is False:
+                parts.append(
+                    f'<span style="color:#d62728;font-weight:bold">'
+                    f'\u2717 Wrong pick (type {frame.picked_task_type})</span>'
+                )
     else:
         parts.append(f'r<sub>{t1}</sub> = 0')
 
     # Discount: γ_{t+1}
     parts.append(f'\u03b3<sub>{t1}</sub> = {frame.discount}')
 
-    # What happens on "next": env response or not
-    agent_on_apple_after = frame.state_after.is_agent_on_apple(frame.actor)
-    if not is_pick and agent_on_apple_after:
-        # MOVE landed on apple — forced PICK follows with no env response
+    # What happens next
+    agent_on_task_after = frame.state_after.is_agent_on_task(frame.actor)
+    if not is_pick and agent_on_task_after:
         parts.append(
             '<span style="color:#e377c2">'
             '\u2192 Next: forced PICK (no env response, \u03b3=1)'
             '</span>'
         )
     else:
-        # After this transition, env responds before next frame
         parts.append(
             '<span style="color:#888">'
             '\u2192 Next: env responds (spawn/despawn + advance actor)'
@@ -81,11 +108,30 @@ def _build_frame_info_html(frame: Frame) -> str:
         )
 
     # Stats
-    stats_line = (
-        f'Apples: <span style="color:#d62728">{frame.apples_on_grid}</span> '
-        f'| Picks/step: <span style="color:#2ca02c">{frame.picks_per_step:.4f}</span>'
-    )
-    parts.append(stats_line)
+    stats_parts = [
+        f'Tasks: <span style="color:#d62728">{frame.tasks_on_grid}</span>',
+    ]
+    if n_task_types > 1:
+        stats_parts.append(
+            f'RPS: <span style="color:#2ca02c">{frame.reward_per_step:.4f}</span>'
+        )
+        stats_parts.append(
+            f'Correct: <span style="color:#2ca02c">{frame.total_correct_picks}</span>'
+            f' Wrong: <span style="color:#d62728">{frame.total_wrong_picks}</span>'
+        )
+    else:
+        stats_parts.append(
+            f'Picks/step: <span style="color:#2ca02c">{frame.picks_per_step:.4f}</span>'
+        )
+    parts.append(" | ".join(stats_parts))
+
+    # Per-type task counts
+    if n_task_types > 1 and frame.state.task_types is not None:
+        type_counts: dict[int, int] = {}
+        for tt in frame.state.task_types:
+            type_counts[tt] = type_counts.get(tt, 0) + 1
+        type_str = " ".join(f'\u03c4{k}:{v}' for k, v in sorted(type_counts.items()))
+        parts.append(f'Per-type: {type_str}')
 
     # Per-agent picks
     if frame.agent_picks:
@@ -118,13 +164,12 @@ def _build_frame_info_html(frame: Frame) -> str:
         dec_lines = ['<div style="margin-top:6px"><b>Q-values:</b>']
         sorted_decs = sorted(frame.decisions, key=lambda d: d.q_value, reverse=True)
         for d in sorted_decs:
-            sym = _ACTION_ARROWS.get(d.action, "?")
+            sym = _action_symbol(d.action)
             chosen = " \u25c4" if d.is_chosen else ""
             style = "font-weight:bold;color:#2ca02c" if d.is_chosen else "color:#555"
             dec_lines.append(
                 f'<div style="{style}">&nbsp;&nbsp;{sym} {d.action.name:<5} Q={d.q_value:+.4f}{chosen}</div>'
             )
-            # Per-agent breakdown (decentralized only)
             if has_agent_breakdown and d.agent_q_values:
                 for i, v in sorted(d.agent_q_values.items()):
                     c = _agent_css_color(i)
@@ -154,6 +199,8 @@ def build_html(
     fps: int = 3,
     compare_frames: list[Frame] | None = None,
     compare_pngs: list[bytes] | None = None,
+    n_task_types: int = 1,
+    task_assignments: tuple[tuple[int, ...], ...] | None = None,
 ) -> None:
     """Write a self-contained HTML file with embedded frames and slider."""
     n = len(frames)
@@ -164,13 +211,13 @@ def build_html(
     if is_compare:
         b64_compare = [base64.b64encode(png).decode("ascii") for png in compare_pngs]
 
-    info_htmls = [_build_frame_info_html(f) for f in frames]
+    info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments) for f in frames]
     compare_info_htmls = []
     if is_compare:
-        compare_info_htmls = [_build_frame_info_html(f) for f in compare_frames]
+        compare_info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments) for f in compare_frames]
 
-    apple_counts = [f.apples_on_grid for f in frames]
-    compare_apple_counts = [f.apples_on_grid for f in compare_frames] if is_compare else []
+    task_counts = [f.tasks_on_grid for f in frames]
+    compare_task_counts = [f.tasks_on_grid for f in compare_frames] if is_compare else []
 
     info_json = json.dumps(info_htmls)
     compare_info_json = json.dumps(compare_info_htmls) if is_compare else "[]"
@@ -178,7 +225,6 @@ def build_html(
     policy_name = frames[0].policy_name
     compare_policy_name = compare_frames[0].policy_name if is_compare else ""
 
-    # Determine max slider for compare mode (may have different lengths due to picks)
     n_compare = len(compare_frames) if is_compare else 0
     max_slider = n - 1
 
@@ -199,94 +245,36 @@ def build_html(
     padding: 20px;
     min-height: 100vh;
   }}
-  h1 {{
-    font-size: 18px;
-    margin-bottom: 10px;
-    color: #aaa;
-  }}
+  h1 {{ font-size: 18px; margin-bottom: 10px; color: #aaa; }}
   .controls {{
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 12px 0;
-    flex-wrap: wrap;
-    justify-content: center;
+    display: flex; align-items: center; gap: 12px; margin: 12px 0;
+    flex-wrap: wrap; justify-content: center;
   }}
   .controls button {{
-    background: #2a2a4a;
-    color: #e0e0e0;
-    border: 1px solid #444;
-    padding: 6px 14px;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 13px;
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #444;
+    padding: 6px 14px; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 13px;
   }}
   .controls button:hover {{ background: #3a3a5a; }}
-  #slider {{
-    width: 500px;
-    max-width: 80vw;
-    accent-color: #7a7aaa;
-  }}
-  .step-label {{
-    font-size: 14px;
-    min-width: 180px;
-    text-align: center;
-  }}
-  .viewer {{
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-  }}
+  #slider {{ width: 500px; max-width: 80vw; accent-color: #7a7aaa; }}
+  .step-label {{ font-size: 14px; min-width: 180px; text-align: center; }}
+  .viewer {{ display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 8px; }}
   .frame-section {{
-    background: #22223a;
-    border-radius: 8px;
-    padding: 12px;
-    border: 1px solid #333;
+    background: #22223a; border-radius: 8px; padding: 12px; border: 1px solid #333;
   }}
-  .frame-section h2 {{
-    font-size: 13px;
-    color: #888;
-    margin-bottom: 8px;
-  }}
-  .frame-img {{
-    max-width: 90vw;
-    border-radius: 4px;
-  }}
+  .frame-section h2 {{ font-size: 13px; color: #888; margin-bottom: 8px; }}
+  .frame-img {{ max-width: 90vw; border-radius: 4px; }}
   .info-panel {{
-    font-size: 12px;
-    line-height: 1.7;
-    margin-top: 8px;
-    padding: 8px;
-    background: #1a1a2e;
-    border-radius: 4px;
+    font-size: 12px; line-height: 1.7; margin-top: 8px;
+    padding: 8px; background: #1a1a2e; border-radius: 4px;
   }}
   .sparkline-container {{
-    width: 520px;
-    max-width: 85vw;
-    margin-top: 16px;
-    background: #22223a;
-    border-radius: 8px;
-    padding: 12px;
-    border: 1px solid #333;
+    width: 520px; max-width: 85vw; margin-top: 16px;
+    background: #22223a; border-radius: 8px; padding: 12px; border: 1px solid #333;
   }}
-  .sparkline-container h3 {{
-    font-size: 12px;
-    color: #888;
-    margin-bottom: 6px;
-  }}
-  canvas {{
-    width: 100%;
-    height: 60px;
-    display: block;
-  }}
-  .keyboard-hint {{
-    font-size: 11px;
-    color: #555;
-    margin-top: 12px;
-  }}
+  .sparkline-container h3 {{ font-size: 12px; color: #888; margin-bottom: 6px; }}
+  canvas {{ width: 100%; height: 60px; display: block; }}
+  .keyboard-hint {{ font-size: 11px; color: #555; margin-top: 12px; }}
 </style>
 </head>
 <body>
@@ -321,7 +309,7 @@ def build_html(
 </div>
 
 <div class="sparkline-container">
-  <h3>Apple count over trajectory</h3>
+  <h3>Task count over trajectory</h3>
   <canvas id="sparkline"></canvas>
 </div>
 
@@ -339,8 +327,8 @@ const images = [{','.join(f'"data:image/png;base64,{b}"' for b in b64_images)}];
 const infoData = {info_json};
 const compareInfoData = {compare_info_json};
 
-const appleCounts = {json.dumps(apple_counts)};
-const compareAppleCounts = {json.dumps(compare_apple_counts)};
+const taskCounts = {json.dumps(task_counts)};
+const compareTaskCounts = {json.dumps(compare_task_counts)};
 
 const slider = document.getElementById('slider');
 const stepLabel = document.getElementById('stepLabel');
@@ -378,10 +366,7 @@ function togglePlay() {{
   if (playing) {{
     const fps = parseInt(fpsInput.value) || FPS_DEFAULT;
     playInterval = setInterval(() => {{
-      if (currentStep >= N - 1) {{
-        togglePlay();
-        return;
-      }}
+      if (currentStep >= N - 1) {{ togglePlay(); return; }}
       showStep(currentStep + 1);
     }}, 1000 / fps);
   }} else {{
@@ -396,7 +381,7 @@ function drawSparkline() {{
   const H = canvas.height = canvas.offsetHeight * 2;
   ctx.clearRect(0, 0, W, H);
 
-  const allVals = [...appleCounts, ...compareAppleCounts];
+  const allVals = [...taskCounts, ...compareTaskCounts];
   const maxVal = Math.max(...allVals, 1);
   const minVal = Math.min(...allVals, 0);
   const range = maxVal - minVal || 1;
@@ -416,8 +401,8 @@ function drawSparkline() {{
     ctx.stroke();
   }}
 
-  drawLine(appleCounts, '#d62728', N);
-  if (IS_COMPARE) drawLine(compareAppleCounts, '#1f77b4', N_COMPARE);
+  drawLine(taskCounts, '#d62728', N);
+  if (IS_COMPARE) drawLine(compareTaskCounts, '#1f77b4', N_COMPARE);
 
   const markerX = pad + (currentStep / Math.max(N - 1, 1)) * (W - 2 * pad);
   ctx.beginPath();
