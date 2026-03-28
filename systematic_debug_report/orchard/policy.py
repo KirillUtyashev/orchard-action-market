@@ -461,3 +461,58 @@ def epsilon_greedy_batched(
     if use_vmap and _vmap_helper is not None:
         return argmax_a_Q_team_vmap(state, networks, env, phase2=phase2)
     return argmax_a_Q_team_batched(state, networks, env, phase2=phase2)
+
+
+# ---------------------------------------------------------------------------
+# GPU-batched action selection (uses BatchedTrainer directly, no sync needed)
+# ---------------------------------------------------------------------------
+def argmax_a_Q_team_gpu(
+    state: State,
+    batched_trainer: object,
+    env: BaseEnv,
+    phase2: bool = False,
+) -> Action:
+    """Greedy action using BatchedTrainer's GPU params directly.
+
+    Uses encode_all_agents_for_actions to build all N×B grids at once — O(N+B).
+    No sync_to_networks or refresh_vmap needed.
+    """
+    all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+
+    after_states: list[State] = []
+    immediate_rewards: list[float] = []
+    for a in all_actions:
+        if phase2:
+            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True)
+            after_states.append(s_after)
+            immediate_rewards.append(r)
+        else:
+            after_states.append(_after_state_for_action(state, a, env, phase2=False))
+            immediate_rewards.append(0.0)
+
+    # Build all N×B grids at once — O(N+B), no O(N²)
+    grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
+    # grids: (N, B, C, H, W), scalars: (N, B, S)
+
+    values = batched_trainer.forward_batched(grids, scalars)  # (N, B)
+    team_values = values.sum(dim=0)  # (B,)
+
+    for k in range(len(all_actions)):
+        team_values[k] += immediate_rewards[k]
+
+    best_idx = team_values.argmax().item()
+    return all_actions[best_idx]
+
+
+def epsilon_greedy_gpu(
+    state: State,
+    batched_trainer: object,
+    env: BaseEnv,
+    epsilon: float,
+    phase2: bool = False,
+) -> Action:
+    """GPU-batched epsilon-greedy. No sync needed."""
+    actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    if rng.random() < epsilon:
+        return actions[rng.randint(0, len(actions) - 1)]
+    return argmax_a_Q_team_gpu(state, batched_trainer, env, phase2=phase2)

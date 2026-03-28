@@ -353,6 +353,9 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         heuristic=heuristic,
         use_vmap=bool(d.get("use_vmap", False)),
         use_vec_encode=bool(d.get("use_vec_encode", True)),
+        use_gpu_batched=bool(d.get("use_gpu_batched", False)),
+        time_debug=bool(d.get("time_debug", False)),
+        time_csv_freq=int(d.get("time_csv_freq", 100)),
     )
 
 

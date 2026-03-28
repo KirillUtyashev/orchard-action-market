@@ -223,6 +223,9 @@ class TrainConfig:
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     use_vmap: bool = False
     use_vec_encode: bool = True  # vectorized encoding (disable for timing baseline)
+    use_gpu_batched: bool = False  # GPU-batched TD(λ) training via vmap
+    time_debug: bool = False  # per-step timing breakdown to timing.csv
+    time_csv_freq: int = 100  # how often to write timing averages
 
 
 @dataclass(frozen=True)

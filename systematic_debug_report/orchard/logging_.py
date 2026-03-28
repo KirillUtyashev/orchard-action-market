@@ -169,4 +169,5 @@ def build_detail_csv_fieldnames(n_agents: int, networks: list[Any], n_networks: 
                 fields.append(f"grad_norm_agent_{agent_idx}_{name}")
 
     fields.extend(["td_loss_step", "value_pred_mean", "value_pred_std"])
+    fields.extend(["vram_allocated_mb", "vram_peak_mb", "vram_total_mb"])
     return fields

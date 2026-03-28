@@ -11,7 +11,7 @@ from orchard.enums import Action, Heuristic, PickMode, TDTarget, TrainMode
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.policy import (
-    argmax_a_Q_team, argmax_a_Q_team_batched,
+    argmax_a_Q_team, argmax_a_Q_team_batched, argmax_a_Q_team_gpu,
     nearest_task_action, heuristic_action,
     nearest_apple_action,
 )
@@ -331,6 +331,7 @@ def evaluate_value_learning(
     env_cfg: EnvConfig,
     test_states: list[State],
     ground_truth: list[list[float]],
+    batched_trainer: object | None = None,
 ) -> dict[str, float]:
     """Compare V predictions to precomputed ground truth."""
     n_agents = env_cfg.n_agents
@@ -341,25 +342,39 @@ def evaluate_value_learning(
     sum_abs_true: list[float] = [0.0] * n_agents
     count = len(test_states)
 
-    for net in networks:
-        net.eval()
-
-    with torch.no_grad():
-        for k, s in enumerate(test_states):
-            for i in range(len(networks)):
-                pred = networks[i](encoding.encode(s, i)).item()
-                true_v = ground_truth[k][i]
-                err = pred - true_v
-                ae = abs(err)
-
-                sum_ae[i] += ae
-                sum_se[i] += err
-                sum_abs_true[i] += abs(true_v)
-                if abs(true_v) > 1e-8:
-                    sum_ape[i] += ae / abs(true_v)
-
-    for net in networks:
-        net.train()
+    if batched_trainer is not None:
+        # GPU-batched: one forward call per test state, all N agents at once
+        with torch.no_grad():
+            for k, s in enumerate(test_states):
+                grids, scalars = encoding.encode_all_agents(s)
+                preds = batched_trainer.forward_single_batched(grids, scalars)  # (N,)
+                for i in range(len(networks)):
+                    pred = preds[i].item()
+                    true_v = ground_truth[k][i]
+                    err = pred - true_v
+                    ae = abs(err)
+                    sum_ae[i] += ae
+                    sum_se[i] += err
+                    sum_abs_true[i] += abs(true_v)
+                    if abs(true_v) > 1e-8:
+                        sum_ape[i] += ae / abs(true_v)
+    else:
+        for net in networks:
+            net.eval()
+        with torch.no_grad():
+            for k, s in enumerate(test_states):
+                for i in range(len(networks)):
+                    pred = networks[i](encoding.encode(s, i)).item()
+                    true_v = ground_truth[k][i]
+                    err = pred - true_v
+                    ae = abs(err)
+                    sum_ae[i] += ae
+                    sum_se[i] += err
+                    sum_abs_true[i] += abs(true_v)
+                    if abs(true_v) > 1e-8:
+                        sum_ape[i] += ae / abs(true_v)
+        for net in networks:
+            net.train()
 
     result: dict[str, float] = {}
     for i in range(len(networks)):
@@ -391,11 +406,14 @@ def evaluate_policy_learning(
     eval_steps: int,
     batch_actions: bool = False,
     heuristic: Heuristic = Heuristic.NEAREST_TASK,
+    batched_trainer: object | None = None,
 ) -> dict[str, float]:
     """Evaluate greedy vs heuristic policy."""
     eval_start = env.init_state()
 
     def greedy_policy(s: State, phase2: bool = False) -> Action:
+        if batched_trainer is not None:
+            return argmax_a_Q_team_gpu(s, batched_trainer, env, phase2=phase2)
         if batch_actions:
             return argmax_a_Q_team_batched(s, networks, env, phase2=phase2)
         return argmax_a_Q_team(s, networks, env, phase2=phase2)
@@ -526,6 +544,7 @@ def evaluate_reward_learning(
     ground_truth: list[list[float]],
     categories: list[list[str]],
     centralized: bool,
+    batched_trainer: object | None = None,
 ) -> dict[str, float]:
     """MAE per agent, per category, averaged."""
     n_networks = len(networks)
@@ -535,26 +554,38 @@ def evaluate_reward_learning(
     total_ae: list[float] = [0.0] * n_networks
     total_count: list[int] = [0] * n_networks
 
-    for net in networks:
-        net.eval()
-
-    with torch.no_grad():
-        for k, s in enumerate(test_states):
-            for i in range(n_networks):
-                pred = networks[i](encoding.encode(s, i)).item()
-                true_v = ground_truth[k][i]
-                cat = categories[k][i]
-                ae = abs(pred - true_v)
-
-                total_ae[i] += ae
-                total_count[i] += 1
-
-                key = (i, cat)
-                sum_ae[key] = sum_ae.get(key, 0.0) + ae
-                counts[key] = counts.get(key, 0) + 1
-
-    for net in networks:
-        net.train()
+    if batched_trainer is not None:
+        with torch.no_grad():
+            for k, s in enumerate(test_states):
+                grids, scalars = encoding.encode_all_agents(s)
+                preds = batched_trainer.forward_single_batched(grids, scalars)
+                for i in range(n_networks):
+                    pred = preds[i].item()
+                    true_v = ground_truth[k][i]
+                    cat = categories[k][i]
+                    ae = abs(pred - true_v)
+                    total_ae[i] += ae
+                    total_count[i] += 1
+                    key = (i, cat)
+                    sum_ae[key] = sum_ae.get(key, 0.0) + ae
+                    counts[key] = counts.get(key, 0) + 1
+    else:
+        for net in networks:
+            net.eval()
+        with torch.no_grad():
+            for k, s in enumerate(test_states):
+                for i in range(n_networks):
+                    pred = networks[i](encoding.encode(s, i)).item()
+                    true_v = ground_truth[k][i]
+                    cat = categories[k][i]
+                    ae = abs(pred - true_v)
+                    total_ae[i] += ae
+                    total_count[i] += 1
+                    key = (i, cat)
+                    sum_ae[key] = sum_ae.get(key, 0.0) + ae
+                    counts[key] = counts.get(key, 0) + 1
+        for net in networks:
+            net.train()
 
     result: dict[str, float] = {}
 

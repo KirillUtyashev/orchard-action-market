@@ -610,6 +610,139 @@ class TaskGridEncoder(GridEncoder):
                 scalars[k, 1] = 1.0
         return EncoderOutput(grid=grids, scalar=scalars)
 
+    def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode state for all N agents, returning stacked tensors.
+
+        Returns:
+            grids:   (N, C, H, W) — one grid per agent
+            scalars: (N, S) — one scalar vector per agent
+
+        O(N) — uses total_agents - self trick to avoid O(N²) inner loop.
+        """
+        T = self._n_types
+        N = len(state.agent_positions)
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + 3
+
+        grids = torch.zeros(N, C, h, w, dtype=torch.float32)
+
+        # Task type channels — shared, broadcast to all N
+        if state.task_positions and state.task_types is not None:
+            types_t = torch.tensor(state.task_types, dtype=torch.long)
+            rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+            cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+            task_grid = torch.zeros(T, h, w, dtype=torch.float32)
+            task_grid[types_t, rows_t, cols_t] = 1.0
+            grids[:, :T] = task_grid.unsqueeze(0)
+
+        # Self channel (T): one-hot per agent — O(N)
+        for i, pos in enumerate(state.agent_positions):
+            grids[i, T, pos.row, pos.col] = 1.0
+
+        # Others channel (T+1): total - self — O(N) via broadcast
+        total_agents = torch.zeros(h, w, dtype=torch.float32)
+        for pos in state.agent_positions:
+            total_agents[pos.row, pos.col] += 1.0
+        grids[:, T + 1] = total_agents.unsqueeze(0) - grids[:, T]
+
+        # Actor channel (T+2) — shared, broadcast
+        actor_pos = state.agent_positions[state.actor]
+        grids[:, T + 2, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalars
+        scalars = torch.zeros(N, 2, dtype=torch.float32)
+        scalars[state.actor, 0] = 1.0
+        if state.phase2_pending:
+            scalars[:, 1] = 1.0
+
+        return grids, scalars
+
+    def encode_all_agents_for_actions(
+        self, state: State, after_states: list[State],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode all N agents × B after-states at once.
+
+        Returns:
+            grids:   (N, B, C, H, W)
+            scalars: (N, B, S)
+
+        O(N + B) — no O(N²) or O(N·B) Python loops.
+        Uses total_agents - self trick for others channel.
+        """
+        T = self._n_types
+        N = len(state.agent_positions)
+        B = len(after_states)
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + 3
+        actor = state.actor
+
+        grids = torch.zeros(N, B, C, h, w, dtype=torch.float32)
+
+        # --- Task channels (shared across N and B for movement) ---
+        task_grid = torch.zeros(T, h, w, dtype=torch.float32)
+        if state.task_positions and state.task_types is not None:
+            types_t = torch.tensor(state.task_types, dtype=torch.long)
+            rows_t = torch.tensor([p.row for p in state.task_positions], dtype=torch.long)
+            cols_t = torch.tensor([p.col for p in state.task_positions], dtype=torch.long)
+            task_grid[types_t, rows_t, cols_t] = 1.0
+        grids[:, :, :T] = task_grid  # broadcasts (T, H, W) → (N, B, T, H, W)
+
+        # --- Self one-hots at original positions: O(N) ---
+        self_orig = torch.zeros(N, h, w, dtype=torch.float32)
+        for i, pos in enumerate(state.agent_positions):
+            self_orig[i, pos.row, pos.col] = 1.0
+        total_orig = self_orig.sum(dim=0)  # (H, W)
+
+        # --- Self channel (T): broadcast original positions over B ---
+        grids[:, :, T] = self_orig.unsqueeze(1)  # (N, 1, H, W) → (N, B, H, W)
+
+        # --- Others channel (T+1) ---
+        # Actor: others = total - self[actor], constant across B
+        grids[actor, :, T + 1] = (total_orig - self_orig[actor]).unsqueeze(0)
+        # Non-actor: others_base = total - self[i] - self[actor], then + actor_new per action
+        non_actor = [i for i in range(N) if i != actor]
+        if non_actor:
+            others_base = (total_orig.unsqueeze(0)
+                           - self_orig[non_actor]
+                           - self_orig[actor].unsqueeze(0))  # (N-1, H, W)
+            grids[non_actor, :, T + 1] = others_base.unsqueeze(1)  # broadcast over B
+
+        # --- Per-action adjustments: O(B) loop, no N loop ---
+        for k, s_after in enumerate(after_states):
+            actor_pos = s_after.agent_positions[actor]
+            ar, ac_ = actor_pos.row, actor_pos.col
+
+            # Override actor's self channel for this action
+            grids[actor, k, T] = 0
+            grids[actor, k, T, ar, ac_] = 1.0
+
+            # Add actor's new position to non-actor others channels
+            if non_actor:
+                grids[non_actor, k, T + 1, ar, ac_] += 1.0
+
+            # Actor channel — same for all agents
+            grids[:, k, T + 2, ar, ac_] = 1.0
+
+            # Handle pick after-states where tasks changed
+            if s_after.task_positions != state.task_positions:
+                grids[:, k, :T] = 0
+                if s_after.task_positions and s_after.task_types is not None:
+                    at = torch.tensor(s_after.task_types, dtype=torch.long)
+                    a_r = torch.tensor([p.row for p in s_after.task_positions], dtype=torch.long)
+                    a_c = torch.tensor([p.col for p in s_after.task_positions], dtype=torch.long)
+                    task_k = torch.zeros(T, h, w, dtype=torch.float32)
+                    task_k[at, a_r, a_c] = 1.0
+                    grids[:, k, :T] = task_k  # broadcast
+
+        # --- Scalars (N, B, 2) ---
+        scalars = torch.zeros(N, B, 2, dtype=torch.float32)
+        scalars[actor, :, 0] = 1.0
+        for k, s_after in enumerate(after_states):
+            if s_after.phase2_pending:
+                scalars[:, k, 1] = 1.0
+
+        return grids, scalars
+
 
 class CentralizedTaskGridEncoder(GridEncoder):
     """Centralized task-specialization encoding.

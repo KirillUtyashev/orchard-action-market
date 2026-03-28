@@ -42,8 +42,10 @@ from orchard.policy import (
     ValueNetwork,
     argmax_a_Q_team,
     argmax_a_Q_team_batched,
+    argmax_a_Q_team_gpu,
     epsilon_greedy,
     epsilon_greedy_batched,
+    epsilon_greedy_gpu,
     get_all_actions,
     get_phase2_actions,
     heuristic_action,
@@ -73,11 +75,35 @@ def _train_all_agents(
         )
     return total_loss, len(networks)
 
+
+def _train_all_agents_gpu(
+    batched_trainer: "BatchedTrainer",
+    grids_t: "torch.Tensor",
+    scalars_t: "torch.Tensor",
+    rewards: tuple[float, ...],
+    discount: float,
+    grids_next: "torch.Tensor",
+    scalars_next: "torch.Tensor",
+    env_step: int,
+) -> tuple[float, int]:
+    """GPU-batched training. Same semantics as _train_all_agents."""
+    rewards_t = torch.tensor(rewards, dtype=torch.float32)
+    total_loss = batched_trainer.td_lambda_step_batched(
+        grids_t, scalars_t, rewards_t, discount,
+        grids_next, scalars_next, env_step,
+    )
+    return total_loss, batched_trainer.n
+
 def _encode_all(state: State, n_networks: int, n_agents: int, centralized: bool) -> list[EncoderOutput]:
     """Encode state for each network."""
     if centralized:
         return [encoding.encode(state, 0)]
     return [encoding.encode(state, i) for i in range(n_agents)]
+
+
+def _encode_all_gpu(state: State) -> tuple[torch.Tensor, torch.Tensor]:
+    """GPU path: encode state for all agents, returning stacked tensors."""
+    return encoding.encode_all_agents(state)
 
 
 def _team_rewards(rewards: tuple[float, ...], centralized: bool) -> tuple[float, ...]:
@@ -148,6 +174,24 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     if use_vmap:
         init_vmap(networks)
         print("vmap-batched action selection enabled")
+
+    # --- Initialize GPU-batched training (if enabled) ---
+    use_gpu_batched = cfg.train.use_gpu_batched and not centralized
+    batched_trainer = None
+    if use_gpu_batched:
+        from orchard.batched_training import BatchedTrainer
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        batched_trainer = BatchedTrainer(
+            networks, td_lambda=cfg.train.td_lambda,
+            lr_schedule=cfg.train.lr, total_steps=cfg.train.total_steps,
+            device=device,
+        )
+        print(f"GPU-batched TD(λ) training enabled (device={device})")
+        if device == "cuda" or device.startswith("cuda"):
+            alloc = torch.cuda.memory_allocated() / 1024**2
+            reserved = torch.cuda.memory_reserved() / 1024**2
+            total = torch.cuda.get_device_properties(0).total_memory / 1024**2
+            print(f"  VRAM: {alloc:.0f}MB allocated, {reserved:.0f}MB reserved, {total:.0f}MB total ({alloc/total*100:.1f}% used)")
 
     run_dir = setup_logging(cfg)
     _save_checkpoint(networks, 0, run_dir / "checkpoints" / "step_0.pt")
@@ -241,6 +285,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
     # --- After-state TD bookkeeping ---
     prev_after_enc: list[EncoderOutput] | None = None
+    prev_after_grids: torch.Tensor | None = None   # GPU path
+    prev_after_scalars: torch.Tensor | None = None  # GPU path
     prev_reward: tuple[float, ...] | None = None
     prev_discount: float | None = None
 
@@ -253,12 +299,34 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     steps_since_improvement: int = 0
     action: Action = Action.STAY
 
+    # --- Timing debug ---
+    time_debug = cfg.train.time_debug
+    if time_debug:
+        import time as _time
+        _gpu_sync = use_gpu_batched and torch.cuda.is_available()
+        def _tick():
+            if _gpu_sync:
+                torch.cuda.synchronize()
+            return _time.perf_counter()
+        _t_buckets = {"sync": 0.0, "action": 0.0, "env": 0.0, "encode": 0.0,
+                      "train": 0.0, "eval": 0.0, "detail": 0.0, "reset": 0.0}
+        _t_step_count = 0
+        timing_fields = ["step"] + [f"t_{k}" for k in _t_buckets] + ["t_total"]
+        timing_logger = CSVLogger(run_dir / "timing.csv", timing_fields)
+        print(f"time_debug enabled (csv_freq={cfg.train.time_csv_freq}, gpu_sync={_gpu_sync})")
+
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
+        if time_debug:
+            _t0 = _tick()
 
-        # --- Phase-1 action selection (always a move action) ---
-        if use_vmap:
+        # --- Sync (CPU-only paths need vmap refresh; GPU path needs no sync) ---
+        if not use_gpu_batched and use_vmap:
             refresh_vmap()
+
+        if time_debug:
+            _t1 = _tick()
+            _t_buckets["sync"] += _t1 - _t0
         if cfg.train.mode == TrainMode.VALUE_LEARNING:
             move_action = heuristic_action(s_t, cfg.env, heuristic, phase2=False)
         elif cfg.train.mode == TrainMode.POLICY_LEARNING:
@@ -266,7 +334,10 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             epsilon = compute_schedule_value(
                 cfg.train.policy_learning.epsilon, t, cfg.train.total_steps
             )
-            if cfg.train.batch_actions:
+            if use_gpu_batched:
+                move_action = epsilon_greedy_gpu(s_t, batched_trainer, env, epsilon,
+                                                 phase2=False)
+            elif cfg.train.batch_actions:
                 move_action = epsilon_greedy_batched(s_t, networks, env, epsilon,
                                                      use_vmap=use_vmap, phase2=False)
             else:
@@ -276,6 +347,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             move_action = move_actions[rng.randint(0, len(move_actions) - 1)]
 
         assert move_action.is_move(), f"Expected move action in phase 1, got {move_action}"
+
+        if time_debug:
+            _t2 = _tick()
 
         # --- Apply move ---
         s_moved = env.apply_action(s_t, move_action)
@@ -290,7 +364,10 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             elif cfg.train.mode == TrainMode.VALUE_LEARNING:
                 pick_action = heuristic_action(s_moved, cfg.env, heuristic, phase2=True)
             elif cfg.train.mode == TrainMode.POLICY_LEARNING:
-                if cfg.train.batch_actions:
+                if use_gpu_batched:
+                    pick_action = epsilon_greedy_gpu(s_moved, batched_trainer, env, epsilon,
+                                                     phase2=True)
+                elif cfg.train.batch_actions:
                     pick_action = epsilon_greedy_batched(s_moved, networks, env, epsilon,
                                                          use_vmap=use_vmap, phase2=True)
                 else:
@@ -310,72 +387,184 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             pick_action = Action.STAY  # unused sentinel
             s_next = env.advance_actor(env.spawn_and_despawn(s_moved))
 
+        if time_debug:
+            _t3 = _tick()
+            # Phase-2 has both action + env interleaved; attribute action to action, env to env
+            # For simplicity, everything from _t1 to _t2 is action (phase 1),
+            # _t2 to _t3 includes apply_action + phase2 action + resolve_pick + advance
+            _t_buckets["action"] += _t2 - _t1
+            _t_buckets["env"] += _t3 - _t2
+
         # --- TD updates ---
+        if time_debug:
+            _te_accum = 0.0  # encode time this step
+            _tt_accum = 0.0  # train time this step
+
         if cfg.train.td_target == TDTarget.PRE_ACTION:
-            # PRE_ACTION: train on pre-action state → next pre-action state
-            pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
+            if use_gpu_batched:
+                if time_debug: _ta = _tick()
+                pre_g, pre_s = _encode_all_gpu(s_t)
+                if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+                if on_task:
+                    if time_debug: _ta = _tick()
+                    move_g, move_s = _encode_all_gpu(s_moved)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
 
-            if on_task:
-                # Two transitions: move (r=0, γ) then pick (r=pick_rewards, 1.0)
-                move_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
-                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
-                                                cfg.env.gamma, move_enc, t)
-                td_loss_accum += loss; td_loss_count += count
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents_gpu(batched_trainer, pre_g, pre_s,
+                                                         _cached_zero_rewards, cfg.env.gamma,
+                                                         move_g, move_s, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
 
-                next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
-                loss, count = _train_all_agents(networks, move_enc,
-                                                _team_rewards(pick_rewards, centralized),
-                                                1.0, next_enc, t)
-                td_loss_accum += loss; td_loss_count += count
+                    if time_debug: _ta = _tick()
+                    next_g, next_s = _encode_all_gpu(s_next)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents_gpu(batched_trainer, move_g, move_s,
+                                                         _team_rewards(pick_rewards, centralized),
+                                                         1.0, next_g, next_s, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+                else:
+                    if time_debug: _ta = _tick()
+                    next_g, next_s = _encode_all_gpu(s_next)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents_gpu(batched_trainer, pre_g, pre_s,
+                                                         _cached_zero_rewards, cfg.env.gamma,
+                                                         next_g, next_s, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
             else:
-                # One transition: move (r=0, γ)
-                next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
-                loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
-                                                cfg.env.gamma, next_enc, t)
-                td_loss_accum += loss; td_loss_count += count
+                if time_debug: _ta = _tick()
+                pre_enc = _encode_all(s_t, n_networks, n_agents, centralized)
+                if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+                if on_task:
+                    if time_debug: _ta = _tick()
+                    move_enc = _encode_all(s_moved, n_networks, n_agents, centralized)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
+                                                    cfg.env.gamma, move_enc, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+
+                    if time_debug: _ta = _tick()
+                    next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents(networks, move_enc,
+                                                    _team_rewards(pick_rewards, centralized),
+                                                    1.0, next_enc, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+                else:
+                    if time_debug: _ta = _tick()
+                    next_enc = _encode_all(s_next, n_networks, n_agents, centralized)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
+                                                    cfg.env.gamma, next_enc, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
 
         else:
-            # AFTER_STATE: train on after-state → next after-state
             s_moved_enc_state = replace(s_moved, phase2_pending=True) if on_task else s_moved
-            move_after_enc = _encode_all(s_moved_enc_state, n_networks, n_agents, centralized)
 
-            # Delayed update: previous after-state → current move after-state
-            if prev_after_enc is not None:
-                assert prev_reward is not None and prev_discount is not None
-                loss, count = _train_all_agents(networks, prev_after_enc, prev_reward,
-                                                prev_discount, move_after_enc, t)
-                td_loss_accum += loss; td_loss_count += count
+            if use_gpu_batched:
+                if time_debug: _ta = _tick()
+                move_g, move_s = _encode_all_gpu(s_moved_enc_state)
+                if time_debug: _tb = _tick(); _te_accum += _tb - _ta
 
-            if on_task:
-                # Immediate update: move after-state → pick after-state (discount 1)
-                pick_after_enc = _encode_all(s_picked, n_networks, n_agents, centralized)
-                pick_discount = 0.0 if cfg.train.mode == TrainMode.REWARD_LEARNING else 1.0
-                loss, count = _train_all_agents(networks, move_after_enc,
-                                                _team_rewards(pick_rewards, centralized),
-                                                pick_discount, pick_after_enc, t)
-                td_loss_accum += loss; td_loss_count += count
-                prev_after_enc = pick_after_enc
+                if prev_after_grids is not None:
+                    assert prev_reward is not None and prev_discount is not None
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents_gpu(batched_trainer, prev_after_grids, prev_after_scalars,
+                                                         prev_reward, prev_discount, move_g, move_s, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+
+                if on_task:
+                    if time_debug: _ta = _tick()
+                    pick_g, pick_s = _encode_all_gpu(s_picked)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+                    pick_discount = 0.0 if cfg.train.mode == TrainMode.REWARD_LEARNING else 1.0
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents_gpu(batched_trainer, move_g, move_s,
+                                                         _team_rewards(pick_rewards, centralized),
+                                                         pick_discount, pick_g, pick_s, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+                    prev_after_grids, prev_after_scalars = pick_g, pick_s
+                else:
+                    prev_after_grids, prev_after_scalars = move_g, move_s
             else:
-                prev_after_enc = move_after_enc
+                if time_debug: _ta = _tick()
+                move_after_enc = _encode_all(s_moved_enc_state, n_networks, n_agents, centralized)
+                if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+
+                if prev_after_enc is not None:
+                    assert prev_reward is not None and prev_discount is not None
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents(networks, prev_after_enc, prev_reward,
+                                                    prev_discount, move_after_enc, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+
+                if on_task:
+                    if time_debug: _ta = _tick()
+                    pick_after_enc = _encode_all(s_picked, n_networks, n_agents, centralized)
+                    if time_debug: _tb = _tick(); _te_accum += _tb - _ta
+                    pick_discount = 0.0 if cfg.train.mode == TrainMode.REWARD_LEARNING else 1.0
+                    if time_debug: _ta = _tick()
+                    loss, count = _train_all_agents(networks, move_after_enc,
+                                                    _team_rewards(pick_rewards, centralized),
+                                                    pick_discount, pick_after_enc, t)
+                    if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
+                    td_loss_accum += loss; td_loss_count += count
+                    prev_after_enc = pick_after_enc
+                else:
+                    prev_after_enc = move_after_enc
 
             prev_reward = _zero_rewards(n_networks)
             prev_discount = cfg.env.gamma
 
+        if time_debug:
+            _t_buckets["encode"] += _te_accum
+            _t_buckets["train"] += _tt_accum
+
         s_t = s_next
 
         # --- Reset (value_learning only) ---
+        if time_debug:
+            _tr0 = _tick()
         if cfg.train.mode == TrainMode.VALUE_LEARNING:
             assert cfg.train.value_learning is not None
             if (t + 1) % cfg.train.value_learning.reset_freq == 0:
-                for net in networks:
-                    net.flush_nstep()
-                    net.reset_traces()
+                if use_gpu_batched:
+                    batched_trainer.reset_traces()
+                else:
+                    for net in networks:
+                        net.flush_nstep()
+                        net.reset_traces()
                 s_t = env.init_state()
                 if cfg.train.td_target == TDTarget.AFTER_STATE:
                     prev_after_enc = None
+                    prev_after_grids = None
+                    prev_after_scalars = None
+        if time_debug:
+            _t_buckets["reset"] += _tick() - _tr0
 
         # --- Main CSV logging ---
         if (t + 1) % cfg.logging.main_csv_freq == 0:
+            if time_debug:
+                _tev0 = _tick()
             wall_time = time.time() - start_time
             row: dict[str, float | int | str] = {
                 "step": t + 1,
@@ -385,7 +574,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             # Value learning metrics
             if cfg.train.mode == TrainMode.VALUE_LEARNING and test_states is not None and ground_truth is not None:
                 val_metrics = evaluate_value_learning(
-                    networks, cfg.env, test_states, ground_truth
+                    networks, cfg.env, test_states, ground_truth,
+                    batched_trainer=batched_trainer if use_gpu_batched else None,
                 )
                 row.update(val_metrics)
 
@@ -395,6 +585,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     networks, env, cfg.eval.eval_steps,
                     batch_actions=cfg.train.batch_actions,
                     heuristic=heuristic,
+                    batched_trainer=batched_trainer if use_gpu_batched else None,
                 )
                 row.update(pol_metrics)
 
@@ -404,7 +595,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 assert reward_categories is not None
                 reward_metrics = evaluate_reward_learning(
                     networks, cfg.env, test_states, ground_truth,
-                    reward_categories, centralized
+                    reward_categories, centralized,
+                    batched_trainer=batched_trainer if use_gpu_batched else None,
                 )
                 row.update(reward_metrics)
 
@@ -466,8 +658,15 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     msg += f"  MAPE avg: {row['mape_avg']:.4f}"
                 print(msg)
 
+            if time_debug:
+                _t_buckets["eval"] += _tick() - _tev0
+
         # --- Detail CSV logging ---
         if (t + 1) % cfg.logging.detail_csv_freq == 0:
+            if time_debug:
+                _td0 = _tick()
+            if use_gpu_batched:
+                batched_trainer.sync_to_networks()
             wall_time = time.time() - start_time
             detail_row: dict[str, float | int | str] = {
                 "step": t + 1,
@@ -480,6 +679,11 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             except ImportError:
                 ram_mb = 0.0
             detail_row["ram_mb"] = round(ram_mb, 1)
+
+            if use_gpu_batched and torch.cuda.is_available():
+                detail_row["vram_allocated_mb"] = round(torch.cuda.memory_allocated() / 1024**2, 1)
+                detail_row["vram_peak_mb"] = round(torch.cuda.max_memory_allocated() / 1024**2, 1)
+                detail_row["vram_total_mb"] = round(torch.cuda.get_device_properties(0).total_memory / 1024**2, 1)
 
             detail_row["current_lr"] = networks[0].optimizer.param_groups[0]["lr"]
 
@@ -504,9 +708,16 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             if test_states is not None:
                 preds: list[float] = []
                 with torch.no_grad():
-                    for s in test_states[:10]:
-                        for i in range(n_networks):
-                            preds.append(networks[i](encoding.encode(s, i)).item())
+                    if use_gpu_batched:
+                        for s in test_states[:10]:
+                            grids, scalars = encoding.encode_all_agents(s)
+                            vals = batched_trainer.forward_single_batched(grids, scalars)
+                            for i in range(n_networks):
+                                preds.append(vals[i].item())
+                    else:
+                        for s in test_states[:10]:
+                            for i in range(n_networks):
+                                preds.append(networks[i](encoding.encode(s, i)).item())
                 if preds:
                     detail_row["value_pred_mean"] = round(sum(preds) / len(preds), 6)
                     mean = sum(preds) / len(preds)
@@ -530,11 +741,20 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
                 with torch.no_grad():
                     for si, ss in enumerate(sample_states):
-                        for ni in range(n_networks):
-                            v = networks[ni](encoding.encode(ss, ni)).item()
-                            sample_row[f"net{ni}_s{si}"] = round(v, 6)
-                            all_vals.append(v)
-                        ga = argmax_a_Q_team_batched(ss, networks, env) if cfg.train.batch_actions else argmax_a_Q_team(ss, networks, env)
+                        if use_gpu_batched:
+                            grids, scalars = encoding.encode_all_agents(ss)
+                            vals = batched_trainer.forward_single_batched(grids, scalars)
+                            for ni in range(n_networks):
+                                v = vals[ni].item()
+                                sample_row[f"net{ni}_s{si}"] = round(v, 6)
+                                all_vals.append(v)
+                            ga = argmax_a_Q_team_gpu(ss, batched_trainer, env)
+                        else:
+                            for ni in range(n_networks):
+                                v = networks[ni](encoding.encode(ss, ni)).item()
+                                sample_row[f"net{ni}_s{si}"] = round(v, 6)
+                                all_vals.append(v)
+                            ga = argmax_a_Q_team_batched(ss, networks, env) if cfg.train.batch_actions else argmax_a_Q_team(ss, networks, env)
                         action_counts[f"action_{ga.name}"] += 1
 
                 sample_row["value_mean"] = round(sum(all_vals) / len(all_vals), 6)
@@ -549,11 +769,34 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
                 sample_logger.log(sample_row)
 
+            if time_debug:
+                _t_buckets["detail"] += _tick() - _td0
+
+        # --- Timing CSV ---
+        if time_debug:
+            _t_step_count += 1
+            if (t + 1) % cfg.train.time_csv_freq == 0:
+                timing_row = {"step": t + 1}
+                t_total = 0.0
+                for k in _t_buckets:
+                    avg = _t_buckets[k] / _t_step_count
+                    timing_row[f"t_{k}"] = round(avg, 6)
+                    t_total += avg
+                timing_row["t_total"] = round(t_total, 6)
+                timing_logger.log(timing_row)
+                for k in _t_buckets:
+                    _t_buckets[k] = 0.0
+                _t_step_count = 0
+
         # --- Periodic checkpoints ---
         if cfg.eval.checkpoint_freq > 0 and (t + 1) % cfg.eval.checkpoint_freq == 0:
+            if use_gpu_batched:
+                batched_trainer.sync_to_networks()
             _save_checkpoint(networks, t + 1, run_dir / "checkpoints" / f"step_{t + 1}.pt")
     
     # --- Final checkpoint ---
+    if use_gpu_batched:
+        batched_trainer.sync_to_networks()
     _save_checkpoint(networks, cfg.train.total_steps, run_dir / "checkpoints" / "final.pt")
     
     # --- Cleanup ---
@@ -561,6 +804,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     detail_logger.close()
     if sample_logger is not None:
         sample_logger.close()
+    if time_debug:
+        timing_logger.close()
     finalize_logging(run_dir, start_time)
     print(f"\nRun saved to: {run_dir}")
 

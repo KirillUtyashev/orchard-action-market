@@ -52,6 +52,24 @@ def encode_batch_for_actions(state: State, agent_idx: int, after_states: list[St
     return _encoder.encode_batch_for_actions(state, agent_idx, after_states)
 
 
+def encode_all_agents(state: State) -> tuple["torch.Tensor", "torch.Tensor"]:
+    """Encode state for all N agents, returning (N, C, H, W) grids and (N, S) scalars.
+
+    Only supported for encoders that implement encode_all_agents (TaskGridEncoder).
+    """
+    assert _encoder is not None, "Call init_encoder() first"
+    return _encoder.encode_all_agents(state)
+
+
+def encode_all_agents_for_actions(state: State, after_states: list[State]) -> tuple["torch.Tensor", "torch.Tensor"]:
+    """Encode all N agents × B after-states, returning (N, B, C, H, W) grids and (N, B, S) scalars.
+
+    Only supported for encoders that implement encode_all_agents_for_actions (TaskGridEncoder).
+    """
+    assert _encoder is not None, "Call init_encoder() first"
+    return _encoder.encode_all_agents_for_actions(state, after_states)
+
+
 def get_scalar_dim() -> int:
     """Scalar feature dim (full input for MLP, extra scalars for CNN)."""
     assert _encoder is not None, "Call init_encoder() first"

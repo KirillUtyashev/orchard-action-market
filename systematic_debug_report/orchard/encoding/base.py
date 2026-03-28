@@ -42,6 +42,20 @@ class BaseEncoder(ABC):
         """Batch-encode multiple after-states. Default: just calls encode() in a loop."""
         raise NotImplementedError(f"{type(self).__name__} does not support encode_batch_for_actions")
 
+    def encode_all_agents(self, state: State) -> tuple:
+        """Encode state for all N agents, returning (grids, scalars) tensors.
+
+        Only supported by encoders that implement GPU-batched training.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support encode_all_agents")
+
+    def encode_all_agents_for_actions(self, state: State, after_states: list) -> tuple:
+        """Encode all N agents × B after-states, returning (grids, scalars) tensors.
+
+        Only supported by encoders that implement GPU-batched action selection.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support encode_all_agents_for_actions")
+
 
 class GridEncoder(BaseEncoder):
     """Base for encoders that produce grid + scalar output."""
