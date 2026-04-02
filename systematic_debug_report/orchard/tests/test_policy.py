@@ -15,6 +15,7 @@ def _make_legacy_cfg(**overrides) -> EnvConfig:
         height=3, width=3, n_agents=2, n_tasks=1,
         gamma=0.9, r_picker=-1.0, pick_mode=PickMode.FORCED,
         max_tasks=1, env_type=EnvType.DETERMINISTIC,
+        task_assignments=((0,), (0,)),
     )
     defaults.update(overrides)
     return EnvConfig(**defaults)
@@ -24,7 +25,7 @@ def _make_task_cfg(**overrides) -> EnvConfig:
     defaults = dict(
         height=5, width=5, n_agents=4, n_tasks=3,
         gamma=0.99, r_picker=1.0,
-        n_task_types=4, r_high=1.0, r_low=0.0,
+        n_task_types=4, r_low=0.0,
         task_assignments=((0,), (1,), (2,), (3,)),
         pick_mode=PickMode.FORCED,
         max_tasks_per_type=3, max_tasks=12,

@@ -611,16 +611,16 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             # --- Early stopping ---
             if (
                 cfg.train.stopping_condition == StoppingCondition.RUNNING_MAX_RPS
-                and "greedy_rps" in row
+                and "greedy_team_rps" in row
             ):
-                rps = float(row["greedy_rps"])
+                rps = float(row["greedy_team_rps"])
                 if rps > running_max_rps + cfg.train.improvement_threshold:
                     running_max_rps = rps
                     steps_since_improvement = 0
                 else:
                     steps_since_improvement += cfg.logging.main_csv_freq
                 if steps_since_improvement >= cfg.train.patience_steps and (t + 1) >= cfg.train.min_steps_before_stop:
-                    print(f"\nEarly stop at step {t+1}: running max RPS {running_max_rps:.6f} "
+                    print(f"\nEarly stop at step {t+1}: running max team RPS {running_max_rps:.6f} "
                           f"unchanged for {cfg.train.patience_steps} steps.")
                     break
 
@@ -643,13 +643,19 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
             if "greedy_rps" in row:
                 msg = f"  Greedy RPS: {row['greedy_rps']:.4f}"
+                if "greedy_team_rps" in row:
+                    msg += f"  Team RPS: {row['greedy_team_rps']:.4f}"
                 if "greedy_correct_pps" in row:
                     msg += (f"  Correct PPS: {row['greedy_correct_pps']:.4f}"
                             f"  Wrong PPS: {row['greedy_wrong_pps']:.4f}")
                 print(msg)
                 h_key = f"{heuristic_name}_rps"
+                h_team_key = f"{heuristic_name}_team_rps"
                 if h_key in row:
-                    print(f"  {heuristic_name} RPS: {row[h_key]:.4f}")
+                    h_msg = f"  {heuristic_name} RPS: {row[h_key]:.4f}"
+                    if h_team_key in row:
+                        h_msg += f"  Team RPS: {row[h_team_key]:.4f}"
+                    print(h_msg)
             if "mae_avg" in row:
                 msg = f"  MAE avg: {row['mae_avg']:.4f}"
                 if "bias_avg" in row:

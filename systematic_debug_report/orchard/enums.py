@@ -46,6 +46,8 @@ class EncoderType(Enum):
     # New task-specialization encoders
     TASK_CNN_GRID = auto()              # dec: T+3 channels, 1 scalar
     CENTRALIZED_TASK_CNN_GRID = auto()  # cen: T+N+1 channels, N scalars
+    BLIND_TASK_CNN_GRID = auto()             # dec O(1): 4 grid channels, 3 scalars
+    FILTERED_TASK_CNN_GRID = auto()          # dec O(1): 6 grid channels, 3 scalars
 
 
 class ModelType(Enum):

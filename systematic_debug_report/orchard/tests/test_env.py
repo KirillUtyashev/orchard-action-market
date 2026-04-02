@@ -15,7 +15,8 @@ def _make_det_cfg(**overrides) -> EnvConfig:
     defaults = dict(
         height=2, width=2, n_agents=2, n_tasks=1,
         gamma=0.9, r_picker=-1.0, pick_mode=PickMode.FORCED,
-        max_tasks=1, env_type=EnvType.DETERMINISTIC,
+        max_tasks=1, max_tasks_per_type=1, env_type=EnvType.DETERMINISTIC,
+        task_assignments=((0,), (0,)),
     )
     defaults.update(overrides)
     return EnvConfig(**defaults)
@@ -26,6 +27,7 @@ def _make_stoch_cfg(**overrides) -> EnvConfig:
         height=9, width=9, n_agents=4, n_tasks=4,
         gamma=0.99, r_picker=1.0, pick_mode=PickMode.FORCED,
         max_tasks=12, env_type=EnvType.STOCHASTIC,
+        task_assignments=((0,), (0,), (0,), (0,)),
         stochastic=StochasticConfig(
             spawn_prob=0.04, despawn_mode=DespawnMode.PROBABILITY,
             despawn_prob=0.05,
@@ -40,7 +42,7 @@ def _make_task_spec_cfg(**overrides) -> EnvConfig:
     defaults = dict(
         height=9, width=9, n_agents=4, n_tasks=3,
         gamma=0.99, r_picker=1.0,
-        n_task_types=4, r_high=1.0, r_low=0.0,
+        n_task_types=4, r_low=0.0,
         task_assignments=((0,), (1,), (2,), (3,)),
         pick_mode=PickMode.FORCED,
         max_tasks_per_type=3, max_tasks=12,
@@ -49,26 +51,6 @@ def _make_task_spec_cfg(**overrides) -> EnvConfig:
     defaults.update(overrides)
     return EnvConfig(**defaults)
 
-
-# ---------------------------------------------------------------------------
-# Legacy (n_task_types=1) tests — same as old tests but with new API
-# ---------------------------------------------------------------------------
-class TestDeterministicInitLegacy:
-    def test_init_state_positions(self):
-        cfg = _make_det_cfg()
-        env = DeterministicEnv(cfg)
-        s = env.init_state()
-        assert s.agent_positions == (Grid(0, 0), Grid(0, 1))
-        assert s.task_positions == (Grid(1, 0),)
-        assert s.actor == 0
-        assert s.task_types is None
-
-    def test_init_state_3x3(self):
-        cfg = _make_det_cfg(height=3, width=3, n_agents=2, n_tasks=2)
-        env = DeterministicEnv(cfg)
-        s = env.init_state()
-        assert s.agent_positions == (Grid(0, 0), Grid(0, 1))
-        assert s.task_positions == (Grid(0, 2), Grid(1, 0))
 
 
 class TestApplyActionLegacy:
@@ -269,7 +251,7 @@ class TestResolvePickMultiType:
 
     def test_forced_pick_correct_type(self):
         """Agent 0 picks type 0 (its assigned type) → R_high=1.0."""
-        cfg = _make_task_spec_cfg(r_high=1.0, r_low=0.0)
+        cfg = _make_task_spec_cfg(r_low=0.0)
         env = DeterministicEnv(cfg)
         s = self._make_state()
         s_picked, rewards = env.resolve_pick(s)
@@ -282,7 +264,7 @@ class TestResolvePickMultiType:
 
     def test_forced_pick_wrong_type(self):
         """Agent 1 picks type 0 (not its assigned type 1) → R_low."""
-        cfg = _make_task_spec_cfg(r_high=1.0, r_low=-1.0)
+        cfg = _make_task_spec_cfg(r_low=-1.0)
         env = DeterministicEnv(cfg)
         # Agent 1 at (1,0), task type 0 at (1,0)
         s = State(
@@ -311,7 +293,7 @@ class TestResolvePickMultiType:
 
     def test_forced_pick_others_always_zero(self):
         """Non-actor agents always get 0 reward."""
-        cfg = _make_task_spec_cfg(r_high=1.0, r_low=-1.0)
+        cfg = _make_task_spec_cfg(r_low=-1.0)
         env = DeterministicEnv(cfg)
         s = self._make_state()
         _, rewards = env.resolve_pick(s)
@@ -324,7 +306,7 @@ class TestChoicePick:
         defaults = dict(
             height=5, width=5, n_agents=4, n_tasks=3,
             gamma=0.99, r_picker=1.0,
-            n_task_types=4, r_high=1.0, r_low=0.0,
+            n_task_types=4, r_low=0.0,
             task_assignments=((0,), (1,), (2,), (3,)),
             pick_mode=PickMode.CHOICE,
             max_tasks_per_type=3, max_tasks=12,
@@ -467,7 +449,7 @@ class TestSpawnMultiType:
 class TestCentralizedRewardEquivalence:
     """Centralized reward = sum of decentralized = actor's reward."""
     def test_cen_equals_dec_sum(self):
-        cfg = _make_task_spec_cfg(r_high=1.0, r_low=-1.0)
+        cfg = _make_task_spec_cfg(r_low=-1.0)
         env = DeterministicEnv(cfg)
         # Agent 0 picks correct type
         s = State(
@@ -482,7 +464,7 @@ class TestCentralizedRewardEquivalence:
         assert rewards[0] == 1.0
 
     def test_cen_equals_dec_sum_wrong_pick(self):
-        cfg = _make_task_spec_cfg(r_high=1.0, r_low=-1.0)
+        cfg = _make_task_spec_cfg(r_low=-1.0)
         env = DeterministicEnv(cfg)
         # Agent 0 picks wrong type (type 1, agent 0 owns type 0)
         s = State(

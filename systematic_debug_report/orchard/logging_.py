@@ -129,14 +129,13 @@ def build_main_csv_fieldnames(
                 fields.append(f"{metric}_agent_{i}")
             fields.append(f"{metric}_avg")
     elif mode == TrainMode.POLICY_LEARNING:
-        if n_task_types > 1:
-            fields.extend([
-                "greedy_rps", "greedy_correct_pps", "greedy_wrong_pps",
-                f"{heuristic_name}_rps", f"{heuristic_name}_correct_pps",
-                f"{heuristic_name}_wrong_pps",
-            ])
-        else:
-            fields.extend(["greedy_rps", f"{heuristic_name}_rps"])
+        fields.extend([
+            "greedy_rps", "greedy_team_rps",
+            "greedy_correct_pps", "greedy_wrong_pps",
+            f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
+            f"{heuristic_name}_correct_pps",
+            f"{heuristic_name}_wrong_pps",
+        ])
     elif mode == TrainMode.REWARD_LEARNING:
         for metric in ("mae",):
             for i in range(n_networks):

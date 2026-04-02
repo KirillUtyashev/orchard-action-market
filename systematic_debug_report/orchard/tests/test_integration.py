@@ -76,7 +76,6 @@ env:
   n_agents: 4
   n_tasks: 2
   n_task_types: 4
-  r_high: 1.0
   r_low: 0.0
   gamma: 0.99
   r_picker: 1.0

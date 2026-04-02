@@ -15,6 +15,7 @@ def _setup():
         height=2, width=2, n_agents=2, n_tasks=1,
         gamma=0.9, r_picker=-1.0, pick_mode=PickMode.FORCED,
         max_tasks=1, env_type=EnvType.DETERMINISTIC,
+        task_assignments=((0,), (0,)),
     )
     model_cfg = ModelConfig(
         input_type=EncoderType.RELATIVE,

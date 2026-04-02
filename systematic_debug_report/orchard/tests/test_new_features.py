@@ -39,7 +39,7 @@ def _det_cfg(pick_mode=PickMode.FORCED, n_task_types=4, n_agents=4, r_low=0.0):
     return EnvConfig(
         height=5, width=5, n_agents=n_agents, n_tasks=2,
         gamma=0.99, r_picker=1.0,
-        n_task_types=n_task_types, r_high=1.0, r_low=r_low,
+        n_task_types=n_task_types, r_low=r_low,
         task_assignments=tuple((i % n_task_types,) for i in range(n_agents)),
         pick_mode=pick_mode,
         max_tasks_per_type=3, max_tasks=12,
@@ -51,7 +51,7 @@ def _stoch_cfg(pick_mode=PickMode.FORCED, task_spawn_mode=None, n_task_types=4):
     return EnvConfig(
         height=9, width=9, n_agents=4, n_tasks=2,
         gamma=0.99, r_picker=1.0,
-        n_task_types=n_task_types, r_high=1.0, r_low=0.0,
+        n_task_types=n_task_types, r_low=0.0,
         task_assignments=tuple((i,) for i in range(n_task_types)),
         pick_mode=pick_mode,
         max_tasks_per_type=3, max_tasks=12,
@@ -440,6 +440,7 @@ class TestRPSLogging:
             gamma=0.9, r_picker=1.0,
             pick_mode=PickMode.FORCED,
             max_tasks=4, env_type=EnvType.DETERMINISTIC,
+            task_assignments=((0,), (0,)),
         )
         enc_mod.init_encoder(EncoderType.CNN_GRID, cfg)
         from orchard.model import create_networks

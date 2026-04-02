@@ -29,7 +29,7 @@ def _make_cfg(n_task_types=2, n_agents=4, pick_mode=PickMode.FORCED):
     return EnvConfig(
         height=5, width=5, n_agents=n_agents, n_tasks=3,
         gamma=0.99, r_picker=1.0,
-        n_task_types=n_task_types, r_high=1.0, r_low=0.0,
+        n_task_types=n_task_types, r_low=0.0,
         task_assignments=tuple(
             tuple((i + j) % n_task_types for j in range(1))
             for i in range(n_agents)
@@ -96,7 +96,7 @@ class TestEncodeAllAgents:
 
         grids, scalars = enc.encode_all_agents(s)
 
-        assert grids.shape == (4, cfg.n_task_types + 3, 5, 5)
+        assert grids.shape == (4, cfg.n_task_types + 4, 5, 5)
         assert scalars.shape == (4, 2)
 
         for i in range(4):
@@ -489,7 +489,7 @@ class TestBatchedTrainerScaling:
         cfg = EnvConfig(
             height=5, width=5, n_agents=n_agents, n_tasks=3,
             gamma=0.99, r_picker=1.0,
-            n_task_types=2, r_high=1.0, r_low=0.0,
+            n_task_types=2, r_low=0.0,
             task_assignments=tuple(
                 ((i % 2,),) for i in range(n_agents)
             ),

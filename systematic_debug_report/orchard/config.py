@@ -67,6 +67,8 @@ _ENCODER_TYPE_MAP: dict[str, EncoderType] = {
     "no_redundant_agent_grid": EncoderType.NO_REDUNDANT_AGENT_GRID,
     "task_cnn_grid": EncoderType.TASK_CNN_GRID,
     "centralized_task_cnn_grid": EncoderType.CENTRALIZED_TASK_CNN_GRID,
+    "blind_task_cnn_grid": EncoderType.BLIND_TASK_CNN_GRID,
+    "filtered_task_cnn_grid": EncoderType.FILTERED_TASK_CNN_GRID,
 }
 
 _LEARNING_TYPE_MAP: dict[str, LearningType] = {
@@ -182,7 +184,6 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
 
     # --- Task specialization fields ---
     n_task_types = int(d.get("n_task_types", 1))
-    r_high = float(d.get("r_high", 1.0))
     r_low = float(d.get("r_low", 0.0))
     n_agents = int(d["n_agents"])
 
@@ -196,63 +197,62 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
 
     max_tasks_per_type = int(d.get("max_tasks_per_type", 3))
 
-    # --- Task assignments ---
+    # --- Task assignments (always populated) ---
     has_rho = "rho" in d
     has_assignments = "task_assignments" in d
 
     if has_rho and has_assignments:
         raise ValueError("Specify either 'rho' or 'task_assignments', not both.")
 
-    task_assignments: tuple[tuple[int, ...], ...] | None = None
-    if n_task_types > 1:
-        if has_assignments:
-            raw_assignments = d["task_assignments"]
-            task_assignments = tuple(tuple(int(t) for t in g) for g in raw_assignments)
-        elif has_rho:
-            rho = float(d["rho"])
-            # Validate rho bounds
-            min_rho = 1.0 / n_task_types  # at least 1 type per agent
-            if rho < min_rho - 1e-9 or rho > 1.0 + 1e-9:
-                raise ValueError(
-                    f"rho={rho} out of bounds [{min_rho}, 1.0] for "
-                    f"n_task_types={n_task_types}"
-                )
-            # Validate round(rho * T) is near-integer
-            g_size_raw = rho * n_task_types
-            if abs(g_size_raw - round(g_size_raw)) > 0.01:
-                raise ValueError(
-                    f"rho * n_task_types = {g_size_raw} is not near an integer. "
-                    f"Choose rho so that rho * {n_task_types} is an integer."
-                )
-            task_assignments = compute_task_assignments(n_agents, n_task_types, rho)
-        else:
-            # Default: all agents care about all types (rho=1)
-            task_assignments = tuple(
-                tuple(range(n_task_types)) for _ in range(n_agents)
+    if has_assignments:
+        raw_assignments = d["task_assignments"]
+        task_assignments = tuple(tuple(int(t) for t in g) for g in raw_assignments)
+    elif has_rho:
+        rho = float(d["rho"])
+        # Validate rho bounds
+        min_rho = 1.0 / n_task_types  # at least 1 type per agent
+        if rho < min_rho - 1e-9 or rho > 1.0 + 1e-9:
+            raise ValueError(
+                f"rho={rho} out of bounds [{min_rho}, 1.0] for "
+                f"n_task_types={n_task_types}"
             )
+        # Validate round(rho * T) is near-integer
+        g_size_raw = rho * n_task_types
+        if abs(g_size_raw - round(g_size_raw)) > 0.01:
+            raise ValueError(
+                f"rho * n_task_types = {g_size_raw} is not near an integer. "
+                f"Choose rho so that rho * {n_task_types} is an integer."
+            )
+        task_assignments = compute_task_assignments(n_agents, n_task_types, rho)
+    elif n_task_types == 1:
+        # Single task type: all agents form one big group
+        task_assignments = tuple((0,) for _ in range(n_agents))
+    else:
+        # Default for n_task_types > 1: all agents care about all types (rho=1)
+        task_assignments = tuple(
+            tuple(range(n_task_types)) for _ in range(n_agents)
+        )
 
-        # Validate: all type indices in range
-        for i, g in enumerate(task_assignments):
-            for t in g:
-                if t < 0 or t >= n_task_types:
-                    raise ValueError(
-                        f"task_assignments[{i}] contains type {t}, "
-                        f"but n_task_types={n_task_types} (valid: 0..{n_task_types-1})"
-                    )
+    # Validate: all type indices in range
+    for i, g in enumerate(task_assignments):
+        for t in g:
+            if t < 0 or t >= n_task_types:
+                raise ValueError(
+                    f"task_assignments[{i}] contains type {t}, "
+                    f"but n_task_types={n_task_types} (valid: 0..{n_task_types-1})"
+                )
 
-        # Validate: every type covered by at least one agent
-        covered = set()
-        for g in task_assignments:
-            covered.update(g)
-        if covered != set(range(n_task_types)):
-            missing = set(range(n_task_types)) - covered
-            raise ValueError(f"task_assignments do not cover all types. Missing: {missing}")
+    # Validate: every type covered by at least one agent
+    covered = set()
+    for g in task_assignments:
+        covered.update(g)
+    if covered != set(range(n_task_types)):
+        missing = set(range(n_task_types)) - covered
+        raise ValueError(f"task_assignments do not cover all types. Missing: {missing}")
 
     # Validation
     if n_task_types < 1:
         raise ValueError(f"n_task_types must be >= 1, got {n_task_types}")
-    if pick_mode == PickMode.CHOICE and n_task_types == 1:
-        raise ValueError("pick_mode=CHOICE requires n_task_types > 1")
 
     # n_tasks: backward compat with n_apples
     n_tasks = int(d.get("n_tasks", d.get("n_apples", 4)))
@@ -267,7 +267,6 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         gamma=float(d["gamma"]),
         r_picker=float(d.get("r_picker", 1.0)),
         n_task_types=n_task_types,
-        r_high=r_high,
         r_low=r_low,
         task_assignments=task_assignments,
         pick_mode=pick_mode,

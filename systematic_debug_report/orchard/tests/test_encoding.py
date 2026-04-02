@@ -14,7 +14,7 @@ def _make_cfg(n_task_types=4, n_agents=4, pick_mode=PickMode.FORCED, **overrides
     defaults = dict(
         height=5, width=5, n_agents=n_agents, n_tasks=3,
         gamma=0.99, r_picker=1.0,
-        n_task_types=n_task_types, r_high=1.0, r_low=0.0,
+        n_task_types=n_task_types, r_low=0.0,
         task_assignments=tuple((i,) for i in range(n_task_types)) if n_task_types == n_agents else
             tuple(tuple(range(n_task_types)) for _ in range(n_agents)),
         pick_mode=pick_mode,
@@ -42,7 +42,7 @@ class TestTaskGridEncoder:
     def test_channel_count(self):
         cfg = _make_cfg(n_task_types=4)
         enc = TaskGridEncoder(cfg)
-        assert enc.grid_channels() == 7  # T+3 = 4+3
+        assert enc.grid_channels() == 8  # T+4 = 4+4
         assert enc.scalar_dim() == 2  # is_actor + phase2_pending
 
     def test_encode_task_channels(self):
@@ -82,12 +82,15 @@ class TestTaskGridEncoder:
         T = 4
 
         out = enc.encode(s, agent_idx=0)
-        # Others: agents 1,2,3 at (0,1),(0,2),(0,3)
-        assert out.grid[T + 1, 0, 1].item() == 1.0
-        assert out.grid[T + 1, 0, 2].item() == 1.0
-        assert out.grid[T + 1, 0, 3].item() == 1.0
+        # With assignments ((0,),(1,),(2,),(3,)), agent 0 has no teammates.
+        # T+1 (teammates) should be empty
+        assert out.grid[T + 1].sum().item() == 0.0
+        # T+2 (others): agents 1,2,3 at (0,1),(0,2),(0,3)
+        assert out.grid[T + 2, 0, 1].item() == 1.0
+        assert out.grid[T + 2, 0, 2].item() == 1.0
+        assert out.grid[T + 2, 0, 3].item() == 1.0
         # Self position should NOT be in others
-        assert out.grid[T + 1, 0, 0].item() == 0.0
+        assert out.grid[T + 2, 0, 0].item() == 0.0
 
     def test_encode_actor_channel(self):
         cfg = _make_cfg()
@@ -96,7 +99,7 @@ class TestTaskGridEncoder:
         T = 4
 
         out = enc.encode(s, agent_idx=1)
-        assert out.grid[T + 2, 0, 0].item() == 1.0  # actor at (0,0)
+        assert out.grid[T + 3, 0, 0].item() == 1.0  # actor at (0,0)
 
     def test_encode_scalar(self):
         cfg = _make_cfg()
@@ -242,7 +245,7 @@ class TestChannelDimensions:
     def test_dec_channels(self, T, N):
         cfg = _make_cfg(n_task_types=T, n_agents=N)
         enc = TaskGridEncoder(cfg)
-        assert enc.grid_channels() == T + 3
+        assert enc.grid_channels() == T + 4
         assert enc.scalar_dim() == 2  # is_actor + phase2_pending
 
     @pytest.mark.parametrize("T,N", [(2, 2), (4, 4), (8, 4), (4, 7)])
@@ -260,11 +263,11 @@ class TestGlobalEncoderAPI:
     def test_init_and_use_task_encoder(self):
         cfg = _make_cfg()
         init_encoder(EncoderType.TASK_CNN_GRID, cfg)
-        assert get_grid_channels() == 7  # 4+3
+        assert get_grid_channels() == 8  # 4+4
         assert get_scalar_dim() == 2
 
         out = encode(_make_state(), agent_idx=0)
-        assert out.grid.shape == (7, 5, 5)
+        assert out.grid.shape == (8, 5, 5)
 
     def test_init_and_use_centralized_task_encoder(self):
         cfg = _make_cfg()
@@ -282,6 +285,7 @@ class TestGlobalEncoderAPI:
             height=3, width=3, n_agents=2, n_tasks=1,
             gamma=0.9, r_picker=1.0, max_tasks=4,
             env_type=EnvType.DETERMINISTIC,
+            task_assignments=((0,), (0,)),
         )
         init_encoder(EncoderType.CNN_GRID, cfg)
         assert get_grid_channels() == 4
@@ -294,3 +298,334 @@ class TestGlobalEncoderAPI:
         )
         out = encode(s, agent_idx=0)
         assert out.grid.shape == (4, 3, 3)
+
+# ---------------------------------------------------------------------------
+# BlindTaskGridEncoder (O(1) decentralized)
+# ---------------------------------------------------------------------------
+
+from orchard.encoding.grid import BlindTaskGridEncoder, FilteredTaskGridEncoder
+
+
+def _make_teammate_cfg():
+    """4 agents, 2 task types, group_size=2 → pairs: {0,1} share type 0, {2,3} share type 1."""
+    return _make_cfg(
+        n_task_types=2, n_agents=4,
+        task_assignments=((0,), (0,), (1,), (1,)),
+        pick_mode=PickMode.CHOICE,
+    )
+
+
+def _make_teammate_state():
+    """State matching _make_teammate_cfg: tasks of type 0 and 1."""
+    return State(
+        agent_positions=(Grid(0, 0), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
+        task_positions=(Grid(1, 0), Grid(1, 1), Grid(2, 0)),
+        actor=0,
+        task_types=(0, 1, 1),
+    )
+
+
+class TestBlindTaskGridEncoder:
+    def test_channel_count_is_constant(self):
+        """Grid channels = 4 regardless of T or N."""
+        for T, N in [(2, 4), (4, 8), (8, 16)]:
+            cfg = _make_cfg(
+                n_task_types=T, n_agents=N,
+                task_assignments=tuple((i % T,) for i in range(N)),
+            )
+            enc = BlindTaskGridEncoder(cfg)
+            assert enc.grid_channels() == 4, f"Expected 4 channels, got {enc.grid_channels()} for T={T}, N={N}"
+            assert enc.scalar_dim() == 3
+
+    def test_my_tasks_channel(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        # Agent 0 assigned type 0 → sees only type-0 task at (1,0)
+        out0 = enc.encode(s, agent_idx=0)
+        assert out0.grid[0, 1, 0].item() == 1.0
+        assert out0.grid[0, 1, 1].item() == 0.0  # type 1 task invisible
+        assert out0.grid[0, 2, 0].item() == 0.0  # type 1 task invisible
+
+        # Agent 2 assigned type 1 → sees type-1 tasks at (1,1) and (2,0)
+        out2 = enc.encode(s, agent_idx=2)
+        assert out2.grid[0, 1, 1].item() == 1.0
+        assert out2.grid[0, 2, 0].item() == 1.0
+        assert out2.grid[0, 1, 0].item() == 0.0  # type 0 invisible
+
+    def test_strangers_invisible(self):
+        """Blind encoder: strangers don't appear anywhere in the grid."""
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        # Agent 0's teammates = {1}. Strangers = {2, 3}.
+        out0 = enc.encode(s, agent_idx=0)
+        # Ch2 (teammates): only agent 1 at (0,1)
+        assert out0.grid[2, 0, 1].item() == 1.0
+        assert out0.grid[2].sum().item() == 1.0  # only 1 teammate
+        # Strangers at (0,2) and (0,3) should be nowhere in grid
+        # (no strangers channel exists)
+
+    def test_self_channel(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        out0 = enc.encode(s, agent_idx=0)
+        assert out0.grid[1, 0, 0].item() == 1.0
+        assert out0.grid[1].sum().item() == 1.0
+
+    def test_actor_channel(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()  # actor=0 at (0,0)
+
+        out2 = enc.encode(s, agent_idx=2)
+        assert out2.grid[3, 0, 0].item() == 1.0
+
+    def test_scalars(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()  # actor=0
+
+        # Agent 0 IS actor → is_self_actor=1, is_teammate_actor=0
+        out0 = enc.encode(s, agent_idx=0)
+        assert out0.scalar[0].item() == 1.0
+        assert out0.scalar[1].item() == 0.0
+
+        # Agent 1 is teammate of actor 0 → is_self_actor=0, is_teammate_actor=1
+        out1 = enc.encode(s, agent_idx=1)
+        assert out1.scalar[0].item() == 0.0
+        assert out1.scalar[1].item() == 1.0
+
+        # Agent 2 is stranger to actor 0 → is_self_actor=0, is_teammate_actor=0
+        out2 = enc.encode(s, agent_idx=2)
+        assert out2.scalar[0].item() == 0.0
+        assert out2.scalar[1].item() == 0.0
+
+    def test_phase2_scalar(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
+            task_positions=(Grid(1, 0),),
+            actor=0, task_types=(0,), phase2_pending=True,
+        )
+        out = enc.encode(s, agent_idx=0)
+        assert out.scalar[2].item() == 1.0
+
+    def test_batch_matches_loop(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        batch = enc.encode_batch_for_actions(s, agent_idx=0, after_states=after_states)
+        for k, s_after in enumerate(after_states):
+            single = enc.encode(s_after, agent_idx=0)
+            assert torch.allclose(batch.grid[k], single.grid), f"Grid mismatch at action {k}"
+            assert torch.allclose(batch.scalar[k], single.scalar), f"Scalar mismatch at action {k}"
+
+    def test_batch_matches_loop_non_actor(self):
+        """Batch consistency from a non-actor agent's perspective."""
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()  # actor=0
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        for agent_idx in [1, 2, 3]:
+            batch = enc.encode_batch_for_actions(s, agent_idx=agent_idx, after_states=after_states)
+            for k, s_after in enumerate(after_states):
+                single = enc.encode(s_after, agent_idx=agent_idx)
+                assert torch.allclose(batch.grid[k], single.grid), \
+                    f"Grid mismatch agent {agent_idx} action {k}"
+                assert torch.allclose(batch.scalar[k], single.scalar), \
+                    f"Scalar mismatch agent {agent_idx} action {k}"
+
+    def test_encode_all_agents(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        grids, scalars = enc.encode_all_agents(s)
+        assert grids.shape == (4, 4, 5, 5)
+        assert scalars.shape == (4, 3)
+
+        # Verify matches per-agent encode
+        for i in range(4):
+            single = enc.encode(s, agent_idx=i)
+            assert torch.allclose(grids[i], single.grid), f"encode_all_agents mismatch agent {i}"
+            assert torch.allclose(scalars[i], single.scalar), f"encode_all_agents scalar mismatch agent {i}"
+
+    def test_encode_all_agents_for_actions(self):
+        cfg = _make_teammate_cfg()
+        enc = BlindTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        grids, scalars = enc.encode_all_agents_for_actions(s, after_states)
+        assert grids.shape == (4, 5, 4, 5, 5)
+        assert scalars.shape == (4, 5, 3)
+
+        for i in range(4):
+            for k, s_after in enumerate(after_states):
+                single = enc.encode(s_after, agent_idx=i)
+                assert torch.allclose(grids[i, k], single.grid), \
+                    f"encode_all_agents_for_actions mismatch agent {i} action {k}"
+
+
+# ---------------------------------------------------------------------------
+# FilteredTaskGridEncoder (O(1) decentralized)
+# ---------------------------------------------------------------------------
+
+class TestFilteredTaskGridEncoder:
+    def test_channel_count_is_constant(self):
+        """Grid channels = 6 regardless of T or N."""
+        for T, N in [(2, 4), (4, 8), (8, 16)]:
+            cfg = _make_cfg(
+                n_task_types=T, n_agents=N,
+                task_assignments=tuple((i % T,) for i in range(N)),
+            )
+            enc = FilteredTaskGridEncoder(cfg)
+            assert enc.grid_channels() == 6, f"Expected 6 channels, got {enc.grid_channels()} for T={T}, N={N}"
+            assert enc.scalar_dim() == 3
+
+    def test_task_channels(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        # Agent 0 assigned type 0
+        out0 = enc.encode(s, agent_idx=0)
+        # Ch0 (my tasks): type 0 at (1,0)
+        assert out0.grid[0, 1, 0].item() == 1.0
+        assert out0.grid[0].sum().item() == 1.0
+        # Ch1 (irrelevant tasks): type 1 at (1,1) and (2,0)
+        assert out0.grid[1, 1, 1].item() == 1.0
+        assert out0.grid[1, 2, 0].item() == 1.0
+        assert out0.grid[1].sum().item() == 2.0
+
+    def test_agent_channels(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        out0 = enc.encode(s, agent_idx=0)
+        # Ch2 (self): agent 0 at (0,0)
+        assert out0.grid[2, 0, 0].item() == 1.0
+        # Ch3 (teammates): agent 1 at (0,1)
+        assert out0.grid[3, 0, 1].item() == 1.0
+        assert out0.grid[3].sum().item() == 1.0
+        # Ch4 (strangers): agents 2,3 at (0,2),(0,3)
+        assert out0.grid[4, 0, 2].item() == 1.0
+        assert out0.grid[4, 0, 3].item() == 1.0
+        assert out0.grid[4].sum().item() == 2.0
+
+    def test_actor_channel(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        out2 = enc.encode(s, agent_idx=2)
+        assert out2.grid[5, 0, 0].item() == 1.0  # actor=0 at (0,0)
+
+    def test_scalars(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        s = _make_teammate_state()  # actor=0
+
+        out0 = enc.encode(s, agent_idx=0)
+        assert out0.scalar[0].item() == 1.0  # is_self_actor
+        assert out0.scalar[1].item() == 0.0  # is_teammate_actor (actor is self, not teammate)
+
+        out1 = enc.encode(s, agent_idx=1)
+        assert out1.scalar[0].item() == 0.0
+        assert out1.scalar[1].item() == 1.0  # actor 0 is teammate of 1
+
+        out2 = enc.encode(s, agent_idx=2)
+        assert out2.scalar[0].item() == 0.0
+        assert out2.scalar[1].item() == 0.0  # actor 0 is stranger to 2
+
+    def test_batch_matches_loop(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        batch = enc.encode_batch_for_actions(s, agent_idx=0, after_states=after_states)
+        for k, s_after in enumerate(after_states):
+            single = enc.encode(s_after, agent_idx=0)
+            assert torch.allclose(batch.grid[k], single.grid), f"Grid mismatch at action {k}"
+            assert torch.allclose(batch.scalar[k], single.scalar), f"Scalar mismatch at action {k}"
+
+    def test_batch_matches_loop_non_actor(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        for agent_idx in [1, 2, 3]:
+            batch = enc.encode_batch_for_actions(s, agent_idx=agent_idx, after_states=after_states)
+            for k, s_after in enumerate(after_states):
+                single = enc.encode(s_after, agent_idx=agent_idx)
+                assert torch.allclose(batch.grid[k], single.grid), \
+                    f"Grid mismatch agent {agent_idx} action {k}"
+
+    def test_encode_all_agents(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        s = _make_teammate_state()
+
+        grids, scalars = enc.encode_all_agents(s)
+        assert grids.shape == (4, 6, 5, 5)
+        assert scalars.shape == (4, 3)
+
+        for i in range(4):
+            single = enc.encode(s, agent_idx=i)
+            assert torch.allclose(grids[i], single.grid), f"encode_all_agents mismatch agent {i}"
+            assert torch.allclose(scalars[i], single.scalar), f"encode_all_agents scalar mismatch agent {i}"
+
+    def test_encode_all_agents_for_actions(self):
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        s = _make_teammate_state()
+
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        grids, scalars = enc.encode_all_agents_for_actions(s, after_states)
+        assert grids.shape == (4, 5, 6, 5, 5)
+        assert scalars.shape == (4, 5, 3)
+
+        for i in range(4):
+            for k, s_after in enumerate(after_states):
+                single = enc.encode(s_after, agent_idx=i)
+                assert torch.allclose(grids[i, k], single.grid), \
+                    f"encode_all_agents_for_actions mismatch agent {i} action {k}"
+
+    def test_batch_with_pick(self):
+        """Pick after-states update both my-tasks and irrelevant-tasks channels."""
+        cfg = _make_teammate_cfg()
+        enc = FilteredTaskGridEncoder(cfg)
+        env = DeterministicEnv(cfg)
+        # Put agent 0 on type-0 task at (1,0)
+        s = State(
+            agent_positions=(Grid(1, 0), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
+            task_positions=(Grid(1, 0), Grid(1, 1)),
+            actor=0, task_types=(0, 1),
+        )
+        after_states = [env.apply_action(s, Action(a)) for a in range(5)]
+        s_picked, _ = env.resolve_pick(s, pick_type=0)
+        after_states.append(s_picked)
+
+        batch = enc.encode_batch_for_actions(s, agent_idx=0, after_states=after_states)
+        # After pick: type 0 at (1,0) is gone
+        assert batch.grid[5, 0, 1, 0].item() == 0.0  # my task removed
+        # Type 1 at (1,1) still there as irrelevant
+        assert batch.grid[5, 1, 1, 1].item() == 1.0

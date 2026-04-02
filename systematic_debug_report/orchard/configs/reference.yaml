@@ -15,7 +15,6 @@ env:
 
   # --- Task specialization (n_task_types > 1) ---
   n_task_types: 4              # int — T, number of distinct task types (default: 1 = legacy mode)
-  r_high: 1.0                  # float — reward for picking correct task type (τ ∈ G_actor)
   r_low: 0.0                   # float — reward for picking wrong task type (τ ∉ G_actor)
                                #   0.0 = soft obstacle; -1.0 = punishment
   max_tasks_per_type: 3        # int — n_τ^max, max tasks of each type on grid
@@ -37,8 +36,12 @@ env:
                                #   choice — explicit pick(τ) action required. Multiple types per cell allowed.
                                #   Backward compat: "force_pick: true/false" also accepted
 
-  # --- Legacy reward (n_task_types == 1 only) ---
-  r_picker: 1.0                # float — reward to picker. Others get (1 - r_picker) / (N-1).
+  # --- Reward ---
+  r_picker: 1.0                # float — reward to picker on correct pick.
+                               #   Groupmates (agents sharing the same task type) each get
+                               #   (1 - r_picker) / (n_τ - 1) where n_τ = |G_τ|.
+                               #   r_picker=1  → only picker rewarded (groupmates get 0).
+                               #   r_picker=-1 → picker penalized, groupmates get +2/(n_τ-1).
   max_tasks: 12                # int — total hard cap on tasks on grid (legacy mode)
                                #   Backward compat: "max_apples" also accepted
 
@@ -59,6 +62,8 @@ model:
                                #   "relative"              — sorted relative dists (MLP only)
                                #   "relative_k"            — K-nearest relative dists (MLP only)
                                #   "grid_mlp"              — flattened 4-channel grid as MLP input
+                               #   "blind_task_cnn_grid"    — other agent and other tasks, not known to self
+                               #   "filtered_task_cnn_grid" — the "fair" input that is similar to cen.
                                # --- Centralized ---
                                #   "centralized_cnn_grid"      — 3 channels (legacy: apples/agents/actor)
                                #   "centralized_task_cnn_grid" — T+N+1 channels (per-type/per-agent/actor)

@@ -20,25 +20,6 @@ class DeterministicEnv(BaseEnv):
             for c in range(self.cfg.width)
         ]
 
-        if self.cfg.n_task_types == 1:
-            # --- Legacy path ---
-            total_needed = self.cfg.n_agents + self.cfg.n_tasks
-            assert total_needed <= len(cells), (
-                f"Need {total_needed} cells but grid is "
-                f"{self.cfg.height}x{self.cfg.width} = {len(cells)} cells"
-            )
-            agent_positions = tuple(cells[:self.cfg.n_agents])
-            task_positions = tuple(sorted(
-                cells[self.cfg.n_agents:total_needed]
-            ))
-            return State(
-                agent_positions=agent_positions,
-                task_positions=task_positions,
-                actor=0,
-                task_types=None,
-            )
-
-        # --- Task specialization path ---
         agent_positions = tuple(cells[:self.cfg.n_agents])
         occupied = set(agent_positions)
 
@@ -66,34 +47,9 @@ class DeterministicEnv(BaseEnv):
         )
 
     def spawn_and_despawn(self, state: State) -> State:
-        """If task count < n_tasks, spawn at first empty cell row-major. No despawn."""
-        if self.cfg.n_task_types == 1:
-            return self._spawn_legacy(state)
-        return self._spawn_multi(state)
-
-    def _spawn_legacy(self, state: State) -> State:
-        """Legacy spawn for n_task_types == 1."""
-        if len(state.task_positions) >= self.cfg.n_tasks:
-            return state
-
-        occupied = set(state.agent_positions) | set(state.task_positions)
-        for r in range(self.cfg.height):
-            for c in range(self.cfg.width):
-                pos = Grid(r, c)
-                if pos not in occupied:
-                    new_tasks = tuple(sorted(state.task_positions + (pos,)))
-                    return State(
-                        agent_positions=state.agent_positions,
-                        task_positions=new_tasks,
-                        actor=state.actor,
-                        task_types=None,
-                    )
-        return state
-
-    def _spawn_multi(self, state: State) -> State:
-        """Spawn for n_task_types > 1: one task per under-capacity type."""
+        """If task count < n_tasks per type, spawn at first empty cell. No despawn."""
         positions = list(state.task_positions)
-        types = list(state.task_types)
+        types = list(state.task_types) if state.task_types is not None else [0] * len(positions)
 
         for tau in range(self.cfg.n_task_types):
             n_tau = sum(1 for t in types if t == tau)

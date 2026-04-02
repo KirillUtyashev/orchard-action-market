@@ -294,6 +294,7 @@ def evaluate_policy_metrics(
     For n_task_types > 1 only. Uses task_assignments to classify picks.
     """
     total_reward = 0.0
+    total_team_reward = 0.0
     correct_picks = 0
     wrong_picks = 0
 
@@ -301,23 +302,38 @@ def evaluate_policy_metrics(
         actor = t.s_t.actor
         actor_reward = t.rewards[actor]
         total_reward += actor_reward
+        total_team_reward += sum(t.rewards)
 
-        if env.cfg.task_assignments is not None and t.action.is_pick():
+        # Detect picks: CHOICE mode uses explicit pick actions;
+        # FORCED mode detects picks via task removal.
+        picked = False
+        tau = None
+        if t.action.is_pick():
+            # CHOICE mode: action encodes the pick type
+            picked = True
             tau = t.action.pick_type()
+        elif len(t.s_t_after.task_positions) < len(t.s_t.task_positions):
+            # FORCED mode: a task was removed → pick happened
+            picked = True
+            # Determine which type was picked by finding the removed task
+            old_tasks = list(zip(t.s_t.task_positions,
+                                 t.s_t.task_types if t.s_t.task_types else [0]*len(t.s_t.task_positions)))
+            new_positions_set = set(t.s_t_after.task_positions)
+            for pos, tt in old_tasks:
+                if pos not in new_positions_set:
+                    tau = tt
+                    break
+
+        if picked and tau is not None:
             g_actor = set(env.cfg.task_assignments[actor])
             if tau in g_actor:
-                correct_picks += 1
-            else:
-                wrong_picks += 1
-        elif env.cfg.task_assignments is None and actor_reward != 0.0:
-            # Legacy path: no task types, detect picks by nonzero reward
-            if actor_reward > 0:
                 correct_picks += 1
             else:
                 wrong_picks += 1
 
     return {
         "rps": total_reward / n_steps if n_steps > 0 else 0.0,
+        "team_rps": total_team_reward / n_steps if n_steps > 0 else 0.0,
         "correct_pps": correct_picks / n_steps if n_steps > 0 else 0.0,
         "wrong_pps": wrong_picks / n_steps if n_steps > 0 else 0.0,
     }
@@ -423,24 +439,18 @@ def evaluate_policy_learning(
 
     heuristic_name = heuristic.name.lower()
 
-    if env.cfg.n_task_types > 1:
-        greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_steps)
-        baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_steps)
-        return {
-            "greedy_rps": greedy_metrics["rps"],
-            "greedy_correct_pps": greedy_metrics["correct_pps"],
-            "greedy_wrong_pps": greedy_metrics["wrong_pps"],
-            f"{heuristic_name}_rps": baseline_metrics["rps"],
-            f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-            f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
-        }
-    else:
-        greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_steps)
-        baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_steps)
-        return {
-            "greedy_rps": greedy_metrics["rps"],
-            f"{heuristic_name}_rps": baseline_metrics["rps"],
-        }
+    greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_steps)
+    baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_steps)
+    return {
+        "greedy_rps": greedy_metrics["rps"],
+        "greedy_team_rps": greedy_metrics["team_rps"],
+        "greedy_correct_pps": greedy_metrics["correct_pps"],
+        "greedy_wrong_pps": greedy_metrics["wrong_pps"],
+        f"{heuristic_name}_rps": baseline_metrics["rps"],
+        f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
+        f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
+        f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -460,79 +470,70 @@ def compute_reward_ground_truth(
     ground_truth: list[list[float]] = []
     categories: list[list[str]] = []
 
-    if env_cfg.n_task_types == 1:
-        # --- Legacy path ---
-        r_picker = env_cfg.r_picker
-        n_agents = env_cfg.n_agents
-        r_other = (1.0 - r_picker) / (n_agents - 1) if n_agents > 1 else 0.0
-        r_sum = r_picker + r_other * (n_agents - 1)
+    # Unified reward ground truth using task_assignments (always populated).
+    for s in test_states:
+        actor = s.actor
+        on_task = s.is_agent_on_task(actor)
+        gt_row: list[float] = []
+        cat_row: list[str] = []
 
-        for s in test_states:
-            actor = s.actor
-            on_task = s.is_agent_on_task(actor)
-            gt_row: list[float] = []
-            cat_row: list[str] = []
-
+        if not on_task:
+            # No pick — all zeros
             if centralized:
-                if on_task:
-                    gt_row.append(r_sum)
-                    cat_row.append("pick")
-                else:
-                    gt_row.append(0.0)
-                    cat_row.append("zero")
+                gt_row.append(0.0)
+                cat_row.append("no_pick")
             else:
                 for i in range(n_networks):
-                    if not on_task:
-                        gt_row.append(0.0)
-                        cat_row.append("zero")
-                    elif i == actor:
-                        gt_row.append(r_picker)
-                        cat_row.append("picker")
-                    else:
-                        gt_row.append(r_other)
-                        cat_row.append("other")
-
-            ground_truth.append(gt_row)
-            categories.append(cat_row)
-    else:
-        # --- Task specialization path ---
-        for s in test_states:
-            actor = s.actor
-            on_task = s.is_agent_on_task(actor)
-            gt_row = []
-            cat_row = []
-
-            if centralized:
-                if not on_task:
                     gt_row.append(0.0)
                     cat_row.append("no_pick")
-                else:
-                    # What type is at actor's position?
-                    tau = s.task_type_at(s.agent_positions[actor])
-                    g_actor = set(env_cfg.task_assignments[actor])
-                    reward = env_cfg.r_high if tau in g_actor else env_cfg.r_low
-                    gt_row.append(reward)
-                    cat_row.append("pick")
-            else:
-                for i in range(n_networks):
-                    if not on_task:
-                        gt_row.append(0.0)
-                        cat_row.append("no_pick")
-                    elif i == actor:
-                        tau = s.task_type_at(s.agent_positions[actor])
-                        g_actor = set(env_cfg.task_assignments[actor])
-                        if tau in g_actor:
-                            gt_row.append(env_cfg.r_high)
-                            cat_row.append("my_task")
-                        else:
-                            gt_row.append(env_cfg.r_low)
-                            cat_row.append("other_task")
-                    else:
-                        gt_row.append(0.0)
-                        cat_row.append("no_pick")
+        else:
+            # Pick occurs — determine type and correctness
+            tau = s.task_type_at(s.agent_positions[actor])
+            g_actor = set(env_cfg.task_assignments[actor])
+            is_correct = tau in g_actor
 
-            ground_truth.append(gt_row)
-            categories.append(cat_row)
+            if centralized:
+                # Cen sum: +1 for correct, r_low for wrong
+                if is_correct:
+                    gt_row.append(1.0)
+                else:
+                    gt_row.append(env_cfg.r_low)
+                cat_row.append("pick")
+            else:
+                # Decentralized: per-agent rewards
+                if is_correct:
+                    # Compute G_τ
+                    group_tau = set(
+                        j for j in range(env_cfg.n_agents)
+                        if tau in env_cfg.task_assignments[j]
+                    )
+                    n_tau = len(group_tau)
+                    groupmate_r = (
+                        (1.0 - env_cfg.r_picker) / (n_tau - 1)
+                        if n_tau > 1 else 0.0
+                    )
+                    for i in range(n_networks):
+                        if i == actor:
+                            gt_row.append(env_cfg.r_picker)
+                            cat_row.append("picker")
+                        elif i in group_tau:
+                            gt_row.append(groupmate_r)
+                            cat_row.append("groupmate")
+                        else:
+                            gt_row.append(0.0)
+                            cat_row.append("no_pick")
+                else:
+                    # Wrong pick: actor gets r_low, everyone else 0
+                    for i in range(n_networks):
+                        if i == actor:
+                            gt_row.append(env_cfg.r_low)
+                            cat_row.append("wrong_pick")
+                        else:
+                            gt_row.append(0.0)
+                            cat_row.append("no_pick")
+
+        ground_truth.append(gt_row)
+        categories.append(cat_row)
 
     return ground_truth, categories
 

@@ -26,6 +26,7 @@ python -m orchard.viz configs/my_config.yaml --no-html --steps 500
 --policy nearest_correct_task  Move toward nearest task with τ ∈ G_actor
 --policy random                Random actions (including pick actions in choice mode)
 --policy learned               Greedy from checkpoint (requires --checkpoint)
+--policy nearest_correct_task_stay_wrong     This one is for non-forced pick
 ```
 
 **Default:** `learned` if `--checkpoint` is provided, otherwise auto-detects:

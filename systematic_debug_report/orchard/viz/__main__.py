@@ -31,6 +31,7 @@ from orchard.viz.rollout import generate_frames
 _HEURISTIC_MAP = {
     "nearest_task": Heuristic.NEAREST_TASK,
     "nearest_correct_task": Heuristic.NEAREST_CORRECT_TASK,
+    "nearest_correct_task_stay_wrong": Heuristic.NEAREST_CORRECT_TASK_STAY_WRONG,
     "nearest": Heuristic.NEAREST_TASK,  # backward compat alias
 }
 
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("config", type=str, help="Path to YAML config file")
     p.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt)")
-    p.add_argument("--policy", choices=["nearest_task", "nearest_correct_task", "nearest", "random"],
+    p.add_argument("--policy", choices=["nearest_task", "nearest_correct_task", "nearest_correct_task_stay_wrong", "nearest", "random"],
                    default=None,
                    help="Policy to visualize (default: learned if --checkpoint, else auto-detect heuristic from config)")
     p.add_argument("--compare", nargs="?", const="auto", default=None,
@@ -245,7 +246,7 @@ def main() -> None:
     # Print task specialization info
     if n_task_types > 1:
         print(f"Task specialization: {n_task_types} types, assignments={task_assignments}")
-        print(f"Pick mode: {cfg.env.pick_mode.name}, R_high={cfg.env.r_high}, R_low={cfg.env.r_low}")
+        print(f"Pick mode: {cfg.env.pick_mode.name}, r_picker={cfg.env.r_picker}, R_low={cfg.env.r_low}")
 
     # --- Generate initial state ---
     init_state = env.init_state()

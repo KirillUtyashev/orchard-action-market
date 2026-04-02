@@ -24,7 +24,7 @@ def _make_cfg(n_task_types=4, n_agents=4, pick_mode=PickMode.FORCED):
     return EnvConfig(
         height=5, width=5, n_agents=n_agents, n_tasks=3,
         gamma=0.99, r_picker=1.0,
-        n_task_types=n_task_types, r_high=1.0, r_low=0.0,
+        n_task_types=n_task_types, r_low=0.0,
         task_assignments=tuple((i,) for i in range(n_task_types)),
         pick_mode=pick_mode,
         max_tasks_per_type=3, max_tasks=12,
@@ -47,6 +47,7 @@ def _make_legacy_cfg():
         gamma=0.9, r_picker=1.0,
         pick_mode=PickMode.FORCED,
         max_tasks=4, env_type=EnvType.DETERMINISTIC,
+        task_assignments=((0,), (0,)),
     )
 
 

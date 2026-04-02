@@ -62,18 +62,19 @@ class TestBackwardCompat:
         assert cfg.env.n_apples == 1  # backward compat alias
         assert cfg.env.r_picker == -1.0
         assert cfg.env.n_task_types == 1
-        assert cfg.env.task_assignments is None  # not set for legacy
+        assert cfg.env.task_assignments == ((0,), (0,))  # auto-generated for n_task_types=1
         assert cfg.env.pick_mode == PickMode.FORCED
         assert cfg.env.force_pick is True  # backward compat alias
         assert cfg.train.heuristic == Heuristic.NEAREST_TASK  # default for n_task_types=1
         os.unlink(path)
 
     def test_force_pick_false_legacy(self):
-        """force_pick: false should NOT work with n_task_types=1 since choice requires >1."""
+        """force_pick: false with n_task_types=1 is now valid (choice mode with 1 type)."""
         yaml_str = LEGACY_YAML.replace("type: deterministic", "type: deterministic\n  force_pick: false")
         path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="CHOICE requires n_task_types > 1"):
-            load_config(path)
+        cfg = load_config(path)
+        assert cfg.env.pick_mode == PickMode.CHOICE
+        assert cfg.env.n_task_types == 1
         os.unlink(path)
 
     def test_n_apples_maps_to_n_tasks(self):
@@ -117,7 +118,6 @@ env:
   n_task_types: 4
   gamma: 0.99
   r_picker: 1.0
-  r_high: 1.0
   r_low: 0.0
   max_tasks_per_type: 3
   pick_mode: forced
@@ -273,14 +273,15 @@ class TestPickMode:
         assert cfg.env.pick_mode == PickMode.CHOICE
         os.unlink(path)
 
-    def test_choice_requires_multi_types(self):
-        """pick_mode=choice with n_task_types=1 should fail."""
+    def test_choice_with_single_type(self):
+        """pick_mode=choice with n_task_types=1 is now valid."""
         yaml_str = TASK_SPEC_YAML.replace("n_task_types: 4", "n_task_types: 1").replace(
             "pick_mode: forced", "pick_mode: choice"
         )
         path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="CHOICE requires n_task_types > 1"):
-            load_config(path)
+        cfg = load_config(path)
+        assert cfg.env.pick_mode == PickMode.CHOICE
+        assert cfg.env.n_task_types == 1
         os.unlink(path)
 
 

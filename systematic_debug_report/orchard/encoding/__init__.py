@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import BasicGridEncoder, CentralizedGridEncoder, EgoCentricGridEncoder, GridMLPEncoder, NoRedundantAgentGridEncoder, TaskGridEncoder, CentralizedTaskGridEncoder
+from orchard.encoding.grid import BasicGridEncoder, BlindTaskGridEncoder, CentralizedGridEncoder, EgoCentricGridEncoder, FilteredTaskGridEncoder, GridMLPEncoder, NoRedundantAgentGridEncoder, TaskGridEncoder, CentralizedTaskGridEncoder
 from orchard.encoding.relative import RelativeEncoder, RelativeKEncoder
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, EnvConfig, State
@@ -33,6 +33,10 @@ def _create_encoder(encoder_type, env_cfg, k=None, use_vec_encode=True):
         return TaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
     elif encoder_type == EncoderType.CENTRALIZED_TASK_CNN_GRID:
         return CentralizedTaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
+    elif encoder_type == EncoderType.BLIND_TASK_CNN_GRID:
+        return BlindTaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
+    elif encoder_type == EncoderType.FILTERED_TASK_CNN_GRID:
+        return FilteredTaskGridEncoder(env_cfg, use_vec_encode=use_vec_encode)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 

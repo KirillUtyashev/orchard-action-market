@@ -24,24 +24,6 @@ class StochasticEnv(BaseEnv):
             for c in range(self.cfg.width)
         ]
 
-        if self.cfg.n_task_types == 1:
-            # --- Legacy path ---
-            total_needed = self.cfg.n_agents + self.cfg.n_tasks
-            assert total_needed <= len(cells), (
-                f"Need {total_needed} cells but grid is "
-                f"{self.cfg.height}x{self.cfg.width}"
-            )
-            chosen = rng.sample(cells, total_needed)
-            agent_positions = tuple(chosen[:self.cfg.n_agents])
-            task_positions = tuple(sorted(chosen[self.cfg.n_agents:]))
-            return State(
-                agent_positions=agent_positions,
-                task_positions=task_positions,
-                actor=0,
-                task_types=None,
-            )
-
-        # --- Task specialization path ---
         # Place agents first
         agent_positions = tuple(rng.sample(cells, self.cfg.n_agents))
         occupied = set(agent_positions)
@@ -70,41 +52,7 @@ class StochasticEnv(BaseEnv):
 
     def spawn_and_despawn(self, state: State) -> State:
         """Despawn phase then spawn phase."""
-
-        if self.cfg.n_task_types == 1:
-            return self._spawn_and_despawn_legacy(state)
-
         return self._spawn_and_despawn_multi(state)
-
-    def _spawn_and_despawn_legacy(self, state: State) -> State:
-        """Legacy spawn/despawn for n_task_types == 1."""
-        tasks = list(state.task_positions)
-
-        # --- Despawn phase ---
-        if self.stoch.despawn_mode == DespawnMode.PROBABILITY:
-            tasks = [t for t in tasks if rng.random() >= self.stoch.despawn_prob]
-
-        # --- Spawn phase ---
-        occupied = set(state.agent_positions) | set(tasks)
-        empty_cells = [
-            Grid(r, c)
-            for r in range(self.cfg.height)
-            for c in range(self.cfg.width)
-            if Grid(r, c) not in occupied
-        ]
-
-        for cell in empty_cells:
-            if len(tasks) >= self.cfg.max_tasks:
-                break
-            if rng.random() < self.stoch.spawn_prob:
-                tasks.append(cell)
-
-        return State(
-            agent_positions=state.agent_positions,
-            task_positions=tuple(sorted(tasks)),
-            actor=state.actor,
-            task_types=None,
-        )
 
     def _spawn_and_despawn_multi(self, state: State) -> State:
         """Spawn/despawn for n_task_types > 1."""

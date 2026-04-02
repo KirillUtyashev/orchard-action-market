@@ -14,6 +14,7 @@ def _make_cfg(**overrides) -> EnvConfig:
         gamma=0.99, r_picker=-1.0, pick_mode=PickMode.FORCED,
         max_tasks=9, env_type=EnvType.STOCHASTIC,
         stochastic=None,
+        task_assignments=((0,), (0,)),
     )
     defaults.update(overrides)
     return EnvConfig(**defaults)
@@ -24,6 +25,7 @@ def _make_small_cfg(**overrides) -> EnvConfig:
         height=3, width=3, n_agents=2, n_tasks=1,
         gamma=0.99, r_picker=-1.0, pick_mode=PickMode.FORCED,
         max_tasks=1, env_type=EnvType.DETERMINISTIC,
+        task_assignments=((0,), (0,)),
     )
     defaults.update(overrides)
     return EnvConfig(**defaults)
@@ -357,3 +359,4 @@ class TestNoRedundantAgentGridEncoder:
         assert torch.equal(out_b.grid[0], out_n.grid[0])
         # Ch3 (actor) should be identical
         assert torch.equal(out_b.grid[3], out_n.grid[3])
+

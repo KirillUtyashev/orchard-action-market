@@ -151,14 +151,15 @@ class EnvConfig:
     n_agents: int
     n_tasks: int                    # was n_apples; starting count per type (or total if n_task_types=1)
     gamma: float
-    # --- Legacy reward (n_task_types == 1) ---
-    r_picker: float                 # kept for backward compat
-    # --- Task specialization reward (n_task_types > 1) ---
-    n_task_types: int = 1           # T. When 1, use legacy reward.
-    r_high: float = 1.0             # reward for picking correct task type
-    r_low: float = 0.0              # reward for picking wrong task type
+    # --- Unified reward ---
+    r_picker: float                 # reward to picker on correct pick; groupmates
+                                    # get (1 - r_picker) / (n_τ - 1) each
+    # --- Task specialization ---
+    n_task_types: int = 1           # T
+    r_low: float = 0.0              # reward for picking wrong task type (τ ∉ G_actor)
     task_assignments: tuple[tuple[int, ...], ...] | None = None
-    # task_assignments[i] = G_i. Auto-generated from n_task_types if None.
+    # task_assignments[i] = G_i.  Always populated (for n_task_types==1: every
+    # agent is assigned to type 0, forming one big group).
     # rho is DERIVED from assignments: rho = |G_i| / T. Not a config field.
     # --- Pick mode ---
     pick_mode: PickMode = PickMode.FORCED
