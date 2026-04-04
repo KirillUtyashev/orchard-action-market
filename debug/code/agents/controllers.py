@@ -1,12 +1,11 @@
-import copy
 from abc import abstractmethod
 
 import numpy as np
 import random
 import torch
 
-from debug.code.nn.encoders import BaseEncoder, EncoderOutput
-from debug.code.core.enums import W
+from debug.code.agents.actor_critic_agent import ACAgent
+from debug.code.nn.encoders import BaseEncoder, EncoderOutput, stack_encoder_outputs
 from debug.code.env.environment import MoveAction
 from debug.code.training.helpers import random_policy
 
@@ -45,36 +44,92 @@ class AgentControllerValue(AgentController):
     def get_collective_value(self, encoded_states: list[EncoderOutput], agent_id: int) -> float:
         pass
 
-    def get_best_action(self, env, actor_id):
-        best_action = env.agent_positions[actor_id]
-        best_val = -1_000_000
-        position = env.agent_positions[actor_id]
+    @abstractmethod
+    def _score_candidate_positions(
+        self,
+        base_state: dict,
+        actor_id: int,
+        candidate_positions: np.ndarray,
+    ) -> np.ndarray:
+        raise NotImplementedError
+
+    def _candidate_positions(self, env, actor_id: int) -> tuple[np.ndarray, np.ndarray]:
+        position = np.asarray(env.agent_positions[actor_id], dtype=np.int64)
+        candidate_positions: list[np.ndarray] = []
 
         for act in MoveAction:
-            curr_state = copy.deepcopy(env.get_state())
-            r, c = curr_state["agent_positions"][actor_id]
-            nr, nc = r + act.vector[0], c + act.vector[1]
-            if not (0 <= nr < W and 0 <= nc < W):
-                continue
+            nr = int(position[0] + act.vector[0])
+            nc = int(position[1] + act.vector[1])
+            if 0 <= nr < env.width and 0 <= nc < env.length:
+                candidate_positions.append(np.array([nr, nc], dtype=np.int64))
 
-            new_pos = np.array([nr, nc])
-            curr_state["agents"][tuple(new_pos)] += 1
-            curr_state["agents"][tuple(position)] -= 1
-            curr_state["agent_positions"][actor_id] = new_pos
-            curr_state["actor_id"] = actor_id
+        return position.copy(), np.asarray(candidate_positions, dtype=np.int64)
 
-            encoded_states = self.get_all_agent_obs(curr_state)
-            val = self.discount * self.get_collective_value(encoded_states, actor_id)
-            if val > best_val:
-                best_action = new_pos
-                best_val = val
+    def _build_candidate_states(
+        self,
+        base_state: dict,
+        actor_id: int,
+        position: np.ndarray,
+        candidate_positions: np.ndarray,
+    ) -> list[dict]:
+        base_agents = base_state["agents"]
+        base_apples = base_state["apples"]
+        base_positions = base_state["agent_positions"]
+        pr, pc = map(int, position)
 
-        return best_action
+        states: list[dict] = []
+        for new_pos in candidate_positions:
+            nr, nc = map(int, new_pos)
+            agents = base_agents.copy()
+            agent_positions = base_positions.copy()
+            agents[nr, nc] += 1
+            agents[pr, pc] -= 1
+            agent_positions[actor_id] = new_pos
+            states.append(
+                {
+                    "agents": agents,
+                    "apples": base_apples,
+                    "agent_positions": agent_positions,
+                    "actor_id": actor_id,
+                }
+            )
+        return states
+
+    def _encode_candidate_batch(
+        self,
+        base_state: dict,
+        actor_id: int,
+        position: np.ndarray,
+        candidate_positions: np.ndarray,
+        observer_id: int,
+        candidate_states: list[dict] | None,
+    ) -> tuple[EncoderOutput, list[dict] | None]:
+        fast_batch = getattr(self.encoder, "encode_candidate_positions", None)
+        if callable(fast_batch):
+            return fast_batch(base_state, observer_id, candidate_positions), candidate_states
+
+        if candidate_states is None:
+            candidate_states = self._build_candidate_states(base_state, actor_id, position, candidate_positions)
+
+        outputs = [self.encoder.encode(state, observer_id) for state in candidate_states]
+        return stack_encoder_outputs(outputs), candidate_states
+
+    def get_best_action(self, env, actor_id):
+        position, candidate_positions = self._candidate_positions(env, actor_id)
+        if candidate_positions.size == 0:
+            return position
+
+        base_state = env.get_state()
+        base_state["actor_id"] = actor_id
+
+        values = self.discount * self._score_candidate_positions(base_state, actor_id, candidate_positions)
+        best_idx = int(np.argmax(values))
+        return candidate_positions[best_idx]
 
     def agent_get_action(self, env, agent_id, epsilon=None):
         eps = epsilon if epsilon is not None else self.epsilon
         if random.random() < eps:
-            return random_policy(env.agent_positions[agent_id])
+            return random_policy(env.agent_positions[agent_id], width=env.width, length=env.length)
         with torch.no_grad():
             return self.get_best_action(env, agent_id)
 
@@ -86,6 +141,29 @@ class AgentControllerDecentralized(AgentControllerValue):
             total += agent.policy_value.get_value_function(enc)
         return total
 
+    def _score_candidate_positions(
+        self,
+        base_state: dict,
+        actor_id: int,
+        candidate_positions: np.ndarray,
+    ) -> np.ndarray:
+        position = np.asarray(base_state["agent_positions"][actor_id], dtype=np.int64)
+        values = np.zeros(int(candidate_positions.shape[0]), dtype=np.float64)
+        candidate_states = None
+
+        for observer_id, agent in enumerate(self.agents_list):
+            batched_enc, candidate_states = self._encode_candidate_batch(
+                base_state,
+                actor_id,
+                position,
+                candidate_positions,
+                observer_id,
+                candidate_states,
+            )
+            values += np.asarray(agent.policy_value.get_value_function_batch(batched_enc), dtype=np.float64)
+
+        return values
+
 
 class AgentControllerCentralized(AgentControllerValue):
     def get_collective_value(self, states, agent_id):
@@ -93,3 +171,82 @@ class AgentControllerCentralized(AgentControllerValue):
 
     def get_all_agent_obs(self, state: dict) -> list[EncoderOutput]:
         return [self.encoder.encode(state, 0)]
+
+    def _score_candidate_positions(
+        self,
+        base_state: dict,
+        actor_id: int,
+        candidate_positions: np.ndarray,
+    ) -> np.ndarray:
+        position = np.asarray(base_state["agent_positions"][actor_id], dtype=np.int64)
+        batched_enc, _ = self._encode_candidate_batch(
+            base_state,
+            actor_id,
+            position,
+            candidate_positions,
+            observer_id=0,
+            candidate_states=None,
+        )
+        return np.asarray(self.agents_list[0].policy_value.get_value_function_batch(batched_enc), dtype=np.float64)
+
+
+class AgentControllerActorCritic(AgentController):
+    def __init__(self, agents, encoder: BaseEncoder, discount: float, epsilon: float):
+        super().__init__(agents, encoder, discount, epsilon)
+
+    @staticmethod
+    def legal_action_mask_from_position(position: np.ndarray, width: int, length: int) -> np.ndarray:
+        r, c = map(int, position)
+        mask = np.zeros(len(MoveAction), dtype=bool)
+        for action in MoveAction:
+            nr = r + int(action.vector[0])
+            nc = c + int(action.vector[1])
+            if 0 <= nr < width and 0 <= nc < length:
+                mask[action.idx] = True
+        return mask
+
+    @staticmethod
+    def action_to_position(position: np.ndarray, action_idx: int) -> np.ndarray:
+        action = MoveAction.from_idx(int(action_idx))
+        return np.asarray(position, dtype=np.int64) + action.vector.astype(np.int64)
+
+    def _encode_actor_state(self, state: dict, agent_id: int) -> EncoderOutput:
+        state_with_actor = dict(state)
+        state_with_actor["actor_id"] = int(agent_id)
+        return self.encoder.encode(state_with_actor, agent_id)
+
+    def get_collective_value(self, encoded_states: list[EncoderOutput], agent_id: int) -> float:
+        total = 0.0
+        for agent, enc in zip(self.agents_list, encoded_states):
+            total += float(agent.policy_value.get_value_function(enc))
+        return total
+
+    def get_action_probabilities_from_state(self, state: dict, agent_id: int) -> np.ndarray:
+        agent = self.agents_list[agent_id]
+        if not isinstance(agent, ACAgent):
+            raise TypeError("Actor-critic controller requires ACAgent instances.")
+        position = np.asarray(state["agent_positions"][agent_id], dtype=np.int64)
+        mask = self.legal_action_mask_from_position(position, state["agents"].shape[0], state["agents"].shape[1])
+        encoded = self._encode_actor_state(state, agent_id)
+        return np.asarray(agent.policy_network.get_action_probabilities(encoded, mask), dtype=np.float64)
+
+    def sample_action(self, env, agent_id: int) -> tuple[np.ndarray, int, np.ndarray]:
+        agent = self.agents_list[agent_id]
+        if not isinstance(agent, ACAgent):
+            raise TypeError("Actor-critic controller requires ACAgent instances.")
+        state = env.get_state()
+        position = np.asarray(state["agent_positions"][agent_id], dtype=np.int64)
+        legal_mask = self.legal_action_mask_from_position(position, env.width, env.length)
+        encoded = self._encode_actor_state(state, agent_id)
+        action_idx, _ = agent.policy_network.sample_action(encoded, legal_mask)
+        new_pos = self.action_to_position(position, action_idx)
+        return new_pos, int(action_idx), legal_mask
+
+    def get_best_action(self, env, agent_id):
+        probs = self.get_action_probabilities_from_state(env.get_state(), agent_id)
+        position = np.asarray(env.agent_positions[agent_id], dtype=np.int64)
+        return self.action_to_position(position, int(np.argmax(probs)))
+
+    def agent_get_action(self, env, agent_id, epsilon=None):
+        new_pos, _, _ = self.sample_action(env, agent_id)
+        return new_pos

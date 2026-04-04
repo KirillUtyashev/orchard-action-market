@@ -4,7 +4,7 @@ import time
 import numpy as np
 import torch
 
-from debug.code.core.enums import L, NUM_AGENTS, W
+from debug.code.agents.actor_critic_agent import ACAgentRates
 from debug.code.env.environment import MoveAction, Orchard
 from debug.code.training.helpers import env_step, random_policy, set_all_seeds
 from debug.code.core.log import CSVLogger, build_weight_sample_csv_fieldnames
@@ -14,6 +14,83 @@ DELTA_TO_ACTION = {tuple(a.vector.tolist()): a.name for a in MoveAction}
 
 
 class LearningDiagnosticsMixin:
+    def _following_rate_agents(self) -> list[ACAgentRates]:
+        return [agent for agent in self.agents if isinstance(agent, ACAgentRates)]
+
+    def _effective_follow_weight(self, observer: ACAgentRates, target_id: int) -> float:
+        influencer = getattr(self, "external_influencer", None)
+        return float(observer.get_effective_observing_probability(target_id, influencer))
+
+    def _compute_following_rate_stats(self) -> dict[str, float | None]:
+        rate_agents = self._following_rate_agents()
+        if not rate_agents:
+            return {
+                "alpha_mean": None,
+                "alpha_positive_frac": None,
+                "following_weight_mean": None,
+                "active_follow_edges_mean": None,
+                "beta_mean": None,
+                "influencer_weight_mean": None,
+                "follower_to_influencer_weight_mean": None,
+                "effective_follow_weight_mean": None,
+            }
+
+        alpha_rows = np.stack([np.asarray(agent.agent_alphas, dtype=float) for agent in rate_agents], axis=0)
+        weight_rows = np.stack(
+            [np.asarray(agent.agent_observing_probabilities, dtype=float) for agent in rate_agents],
+            axis=0,
+        )
+        flat_alphas = []
+        flat_weights = []
+        for observer_id in range(alpha_rows.shape[0]):
+            mask = np.ones(self.num_agents, dtype=bool)
+            mask[observer_id] = False
+            flat_alphas.append(alpha_rows[observer_id, mask])
+            flat_weights.append(weight_rows[observer_id, mask])
+        flat_alphas = np.concatenate(flat_alphas) if flat_alphas else np.array([], dtype=float)
+        flat_weights = np.concatenate(flat_weights) if flat_weights else np.array([], dtype=float)
+        flat_effective_weights = []
+        for agent in rate_agents:
+            for target_id in range(self.num_agents):
+                if target_id == agent.id:
+                    continue
+                flat_effective_weights.append(self._effective_follow_weight(agent, target_id))
+        flat_effective_weights = np.asarray(flat_effective_weights, dtype=float)
+        follower_to_influencer_weights = np.asarray(
+            [agent.influencer_observing_probability for agent in rate_agents],
+            dtype=float,
+        )
+        influencer = getattr(self, "external_influencer", None)
+        influencer_weights = (
+            np.asarray(influencer.outgoing_weights, dtype=float) if influencer is not None else np.array([], dtype=float)
+        )
+        influencer_beta = np.asarray(influencer.beta, dtype=float) if influencer is not None else np.array([], dtype=float)
+
+        # Count active off-diagonal edges per observer.
+        per_observer_active = []
+        for observer_id, row in enumerate(weight_rows):
+            mask = np.ones(self.num_agents, dtype=bool)
+            mask[observer_id] = False
+            per_observer_active.append(float(np.count_nonzero(row[mask] > 1e-12)))
+
+        return {
+            "alpha_mean": float(np.mean(flat_alphas)) if flat_alphas.size else None,
+            "alpha_positive_frac": float(np.mean(flat_alphas > 0.0)) if flat_alphas.size else None,
+            "following_weight_mean": float(np.mean(flat_weights)) if flat_weights.size else None,
+            "active_follow_edges_mean": float(np.mean(per_observer_active)) if per_observer_active else None,
+            "beta_mean": float(np.mean(influencer_beta)) if influencer_beta.size else None,
+            "influencer_weight_mean": float(np.mean(influencer_weights)) if influencer_weights.size else None,
+            "follower_to_influencer_weight_mean": (
+                float(np.mean(follower_to_influencer_weights)) if follower_to_influencer_weights.size else None
+            ),
+            "effective_follow_weight_mean": (
+                float(np.mean(flat_effective_weights)) if flat_effective_weights.size else None
+            ),
+        }
+
+    def _refresh_following_rate_stats(self) -> None:
+        self._last_following_rate_stats = self._compute_following_rate_stats()
+
     def _stable_tensor_seed(self, agent_id: int, tensor_name: str) -> int:
         digest = hashlib.blake2b(tensor_name.encode("utf-8"), digest_size=8).digest()
         name_hash = int.from_bytes(digest, byteorder="little", signed=False)
@@ -117,9 +194,9 @@ class LearningDiagnosticsMixin:
 
     def _build_env_from_state(self, state: dict) -> Orchard:
         return Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple=self.env.p_apple,
             d_apple=self.env.d_apple,
@@ -129,15 +206,14 @@ class LearningDiagnosticsMixin:
             start_agent_positions=state["agent_positions"],
         )
 
-    @staticmethod
-    def _preferred_cells() -> list[tuple[int, int]]:
+    def _preferred_cells(self) -> list[tuple[int, int]]:
         cells = []
-        for r in range(1, W - 1):
-            for c in range(1, L - 1):
+        for r in range(1, self.width - 1):
+            for c in range(1, self.length - 1):
                 cells.append((r, c))
-        for r in range(W):
-            for c in range(L):
-                if r in {0, W - 1} or c in {0, L - 1}:
+        for r in range(self.width):
+            for c in range(self.length):
+                if r in {0, self.width - 1} or c in {0, self.length - 1}:
                     cells.append((r, c))
         return cells
 
@@ -152,11 +228,11 @@ class LearningDiagnosticsMixin:
             other_anchor_positions = []
 
         actor_pos = (int(actor_pos[0]), int(actor_pos[1]))
-        agent_positions = np.full((NUM_AGENTS, 2), -1, dtype=int)
+        agent_positions = np.full((self.num_agents, 2), -1, dtype=int)
         agent_positions[actor_id] = np.array(actor_pos, dtype=int)
         used_positions = {actor_pos}
 
-        other_ids = [i for i in range(NUM_AGENTS) if i != actor_id]
+        other_ids = [i for i in range(self.num_agents) if i != actor_id]
         for other_id, pos in zip(other_ids, other_anchor_positions):
             pos_t = (int(pos[0]), int(pos[1]))
             if pos_t in used_positions:
@@ -177,13 +253,13 @@ class LearningDiagnosticsMixin:
         if np.any(agent_positions < 0):
             raise RuntimeError("Could not assign valid positions for all agents in value-tracking state.")
 
-        agents = np.zeros((W, L), dtype=int)
+        agents = np.zeros((self.width, self.length), dtype=int)
         for r, c in agent_positions:
             agents[r, c] += 1
 
-        apples = np.zeros((W, L), dtype=int)
+        apples = np.zeros((self.width, self.length), dtype=int)
         for r, c in apple_positions:
-            if 0 <= r < W and 0 <= c < L:
+            if 0 <= r < self.width and 0 <= c < self.length:
                 apples[r, c] = 1
 
         return {
@@ -205,25 +281,25 @@ class LearningDiagnosticsMixin:
         return out
 
     def _generate_value_tracking_states_for_agent(self, agent_id: int) -> list[dict]:
-        mid_r = max(1, min(W - 2, W // 2))
-        mid_c = max(1, min(L - 2, L // 2))
+        mid_r = max(1, min(self.width - 2, self.width // 2))
+        mid_c = max(1, min(self.length - 2, self.length // 2))
         actor_mid = (mid_r, mid_c)
-        right_1 = (mid_r, min(L - 1, mid_c + 1))
-        right_2 = (mid_r, min(L - 1, mid_c + 2))
+        right_1 = (mid_r, min(self.length - 1, mid_c + 1))
+        right_2 = (mid_r, min(self.length - 1, mid_c + 2))
         up_1 = (max(0, mid_r - 1), mid_c)
         left_1 = (mid_r, max(0, mid_c - 1))
         corner = (0, 0)
-        corner_right = (0, 1 if L > 1 else 0)
+        corner_right = (0, 1 if self.length > 1 else 0)
         edge_top = (0, mid_c)
-        far_bottom = (W - 1, mid_c)
-        other_far = (max(0, W - 2), max(0, L - 2))
+        far_bottom = (self.width - 1, mid_c)
+        other_far = (max(0, self.width - 2), max(0, self.length - 2))
 
         states = [
             self._build_tracking_state(agent_id, actor_mid, [], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [actor_mid], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [other_far], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [right_1], [other_far]),
-            self._build_tracking_state(agent_id, (1, 1), [(W - 1, L - 1)], [other_far]),
+            self._build_tracking_state(agent_id, (1, 1), [(self.width - 1, self.length - 1)], [other_far]),
             self._build_tracking_state(agent_id, actor_mid, [right_1], [right_2]),
             self._build_tracking_state(agent_id, actor_mid, [up_1, left_1], [other_far]),
             self._build_tracking_state(agent_id, corner, [corner_right], [other_far]),
@@ -231,7 +307,7 @@ class LearningDiagnosticsMixin:
             self._build_tracking_state(agent_id, actor_mid, [], [other_far]),
         ]
 
-        dense_excluded = {tuple(states[-1]["agent_positions"][i]) for i in range(NUM_AGENTS)}
+        dense_excluded = {tuple(states[-1]["agent_positions"][i]) for i in range(self.num_agents)}
         states[-1]["apples"][:, :] = 0
         for r, c in self._dense_apple_positions(dense_excluded):
             states[-1]["apples"][r, c] = 1
@@ -242,10 +318,10 @@ class LearningDiagnosticsMixin:
         if self.value_track_states_by_agent is not None:
             return
         if self.value_track_num_states <= 0:
-            self.value_track_states_by_agent = {agent_id: [] for agent_id in range(NUM_AGENTS)}
+            self.value_track_states_by_agent = {agent_id: [] for agent_id in range(self.num_agents)}
             return
         self.value_track_states_by_agent = {
-            agent_id: self._generate_value_tracking_states_for_agent(agent_id) for agent_id in range(NUM_AGENTS)
+            agent_id: self._generate_value_tracking_states_for_agent(agent_id) for agent_id in range(self.num_agents)
         }
 
     def _predict_state_value(self, state: dict, agent_id: int) -> float:
@@ -265,7 +341,7 @@ class LearningDiagnosticsMixin:
         wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
 
         with torch.no_grad():
-            for agent_id in range(NUM_AGENTS):
+            for agent_id in range(self.num_agents):
                 logger = self.value_track_loggers.get(agent_id)
                 if logger is None:
                     continue
@@ -283,14 +359,63 @@ class LearningDiagnosticsMixin:
             return
         self.evaluate_tracked_state_values(step=step)
 
+    def _log_following_rate_snapshots(self, step: int) -> None:
+        if not getattr(self, "following_rate_loggers", None):
+            return
+        wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+        for observer_id, agent in enumerate(self.agents):
+            if not isinstance(agent, ACAgentRates):
+                continue
+            logger = self.following_rate_loggers.get(observer_id)
+            if logger is None:
+                continue
+            row = {"step": int(step), "wall_time": wall_time}
+            alphas = np.asarray(agent.agent_alphas, dtype=float)
+            rates = np.asarray(agent.following_rates, dtype=float)
+            weights = np.asarray(agent.agent_observing_probabilities, dtype=float)
+            for target_id in range(self.num_agents):
+                row[f"alpha_to_{target_id}"] = float(alphas[target_id])
+            for target_id in range(self.num_agents):
+                row[f"lambda_to_{target_id}"] = float(rates[target_id])
+            for target_id in range(self.num_agents):
+                row[f"weight_to_{target_id}"] = float(weights[target_id])
+            row["lambda_to_influencer"] = float(agent.following_rate_to_influencer)
+            row["weight_to_influencer"] = float(agent.influencer_observing_probability)
+            row["influencer_value"] = float(agent.influencer_value)
+            logger.log(row)
+
+    def _log_influencer_snapshot(self, step: int) -> None:
+        logger = getattr(self, "influencer_logger", None)
+        influencer = getattr(self, "external_influencer", None)
+        if logger is None or influencer is None:
+            return
+        wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+        row = {"step": int(step), "wall_time": wall_time}
+        beta = np.asarray(influencer.beta, dtype=float)
+        rates = np.asarray(influencer.outgoing_rates, dtype=float)
+        weights = np.asarray(influencer.outgoing_weights, dtype=float)
+        for target_id in range(self.num_agents):
+            row[f"beta_to_actor_{target_id}"] = float(beta[target_id])
+        for target_id in range(self.num_agents):
+            row[f"lambda_to_actor_{target_id}"] = float(rates[target_id])
+        for target_id in range(self.num_agents):
+            row[f"weight_to_actor_{target_id}"] = float(weights[target_id])
+        logger.log(row)
+
+    def _maybe_log_following_rate_snapshots(self, step: int) -> None:
+        if self.exp_config.reward.reward_learning:
+            return
+        self._log_following_rate_snapshots(step=step)
+        self._log_influencer_snapshot(step=step)
+
     def _sample_action_probability_states(self, num_states: int) -> list[dict]:
         if num_states <= 0:
             return []
 
         sample_env = Orchard(
-            W,
-            L,
-            NUM_AGENTS,
+            self.length,
+            self.width,
+            self.num_agents,
             self.reward_module,
             p_apple=self.env.p_apple,
             d_apple=self.env.d_apple,
@@ -306,8 +431,12 @@ class LearningDiagnosticsMixin:
         total_steps = burnin + stride * num_states
 
         for t in range(total_steps):
-            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
-            _, s_next, _, _, actor_idx = env_step(sample_env, actor_idx, new_pos, NUM_AGENTS)
+            new_pos = random_policy(
+                curr_state["agent_positions"][actor_idx],
+                width=self.width,
+                length=self.length,
+            )
+            _, s_next, _, _, actor_idx = env_step(sample_env, actor_idx, new_pos, self.num_agents)
             curr_state = s_next
             if t >= burnin and ((t - burnin) % stride == 0):
                 states.append(self._snapshot_state(curr_state))
@@ -339,12 +468,40 @@ class LearningDiagnosticsMixin:
         if not sampled_states:
             return
 
-        counts_by_agent = {agent_id: {name: 0 for name in ACTION_NAMES} for agent_id in range(NUM_AGENTS)}
-        decisions_by_agent = {agent_id: 0 for agent_id in range(NUM_AGENTS)}
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            summed_probs_by_agent = {agent_id: np.zeros(len(MoveAction), dtype=np.float64) for agent_id in range(self.num_agents)}
+            with torch.no_grad():
+                for state in sampled_states:
+                    for agent_id in range(self.num_agents):
+                        probs = np.asarray(
+                            self.agent_controller.get_action_probabilities_from_state(state, agent_id),
+                            dtype=np.float64,
+                        )
+                        summed_probs_by_agent[agent_id] += probs
+
+            wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
+            denom = float(len(sampled_states))
+            for agent_id in range(self.num_agents):
+                probs = summed_probs_by_agent[agent_id] / denom
+                self.action_prob_loggers[agent_id].log(
+                    {
+                        "step": int(step),
+                        "wall_time": wall_time,
+                        "left": probs[MoveAction.LEFT.idx],
+                        "right": probs[MoveAction.RIGHT.idx],
+                        "up": probs[MoveAction.UP.idx],
+                        "down": probs[MoveAction.DOWN.idx],
+                        "stay": probs[MoveAction.STAY.idx],
+                    }
+                )
+            return
+
+        counts_by_agent = {agent_id: {name: 0 for name in ACTION_NAMES} for agent_id in range(self.num_agents)}
+        decisions_by_agent = {agent_id: 0 for agent_id in range(self.num_agents)}
 
         with torch.no_grad():
             for state in sampled_states:
-                for agent_id in range(NUM_AGENTS):
+                for agent_id in range(self.num_agents):
                     env_for_eval = self._build_env_from_state(state)
                     old_pos = env_for_eval.agent_positions[agent_id].copy()
                     new_pos = self.agent_controller.agent_get_action(env_for_eval, agent_id, epsilon=0.0)
@@ -353,7 +510,7 @@ class LearningDiagnosticsMixin:
                     decisions_by_agent[agent_id] += 1
 
         wall_time = round(float(time.time() - self.train_start_time), 3) if self.train_start_time else 0.0
-        for agent_id in range(NUM_AGENTS):
+        for agent_id in range(self.num_agents):
             decisions = decisions_by_agent[agent_id]
             if decisions == 0:
                 continue
@@ -377,8 +534,8 @@ class LearningDiagnosticsMixin:
 
     def _save_greedy_eval_positions(self, *, step: int, positions: np.ndarray) -> None:
         arr = np.asarray(positions, dtype=np.int16)
-        if arr.ndim != 3 or arr.shape[1] != NUM_AGENTS or arr.shape[2] != 2:
-            raise ValueError(f"Unexpected greedy position shape: {arr.shape}, expected (T, {NUM_AGENTS}, 2)")
+        if arr.ndim != 3 or arr.shape[1] != self.num_agents or arr.shape[2] != 2:
+            raise ValueError(f"Unexpected greedy position shape: {arr.shape}, expected (T, {self.num_agents}, 2)")
 
         out_path = self.agent_positions_dir / f"greedy_eval_step_{int(step):09d}.npz"
         np.savez_compressed(out_path, positions=arr)
@@ -392,15 +549,15 @@ class LearningDiagnosticsMixin:
         with np.load(self.last_greedy_positions_path) as data:
             positions = np.asarray(data["positions"], dtype=np.int64)
 
-        if positions.ndim != 3 or positions.shape[1] != NUM_AGENTS or positions.shape[2] != 2:
+        if positions.ndim != 3 or positions.shape[1] != self.num_agents or positions.shape[2] != 2:
             return
 
         import matplotlib.pyplot as plt
 
-        for agent_id in range(NUM_AGENTS):
-            visits = np.zeros((W, L), dtype=np.int64)
+        for agent_id in range(self.num_agents):
+            visits = np.zeros((self.width, self.length), dtype=np.int64)
             for r, c in positions[:, agent_id]:
-                if 0 <= r < W and 0 <= c < L:
+                if 0 <= r < self.width and 0 <= c < self.length:
                     visits[r, c] += 1
 
             fig, ax = plt.subplots(figsize=(6, 5))

@@ -25,6 +25,19 @@ class EncoderOutput:
             raise ValueError("EncoderOutput must have at least one of grid or scalar")
 
 
+def stack_encoder_outputs(outputs: list[EncoderOutput]) -> EncoderOutput:
+    """Stack single-example encoder outputs into a batched EncoderOutput."""
+    if not outputs:
+        raise ValueError("Cannot stack an empty list of encoder outputs.")
+
+    grids = [out.grid for out in outputs if out.grid is not None]
+    scalars = [out.scalar for out in outputs if out.scalar is not None]
+
+    grid = torch.stack(grids, dim=0) if grids else None
+    scalar = torch.stack(scalars, dim=0) if scalars else None
+    return EncoderOutput(grid=grid, scalar=scalar)
+
+
 # ---------------------------------------------------------------------------
 # Base classes
 # ---------------------------------------------------------------------------
@@ -104,6 +117,116 @@ class DecGridEncoder(GridEncoder):
         # Ch 3: actor
         ar, ac = agent_pos[actor_idx]
         grid[3, ar, ac] = 1.0
+
+        is_actor = 1.0 if agent_idx == actor_idx else 0.0
+        return EncoderOutput(grid=grid, scalar=torch.tensor([is_actor]))
+
+    def encode_candidate_positions(
+        self,
+        state: dict,
+        agent_idx: int,
+        candidate_positions: np.ndarray,
+    ) -> EncoderOutput:
+        apples = state["apples"]
+        agent_pos = state["agent_positions"]
+        actor_idx = int(state["actor_id"])
+
+        cand = np.asarray(candidate_positions, dtype=np.int64)
+        if cand.ndim != 2 or cand.shape[1] != 2:
+            raise ValueError("candidate_positions must have shape (B, 2).")
+
+        batch_size = int(cand.shape[0])
+        grid = torch.zeros((batch_size, 4, self.H, self.W), dtype=torch.float32)
+        grid[:, 0] = torch.from_numpy((apples >= 1).astype(np.float32))
+
+        rr = torch.as_tensor(cand[:, 0], dtype=torch.long)
+        cc = torch.as_tensor(cand[:, 1], dtype=torch.long)
+        batch_idx = torch.arange(batch_size, dtype=torch.long)
+
+        sr, sc = map(int, agent_pos[agent_idx])
+        if agent_idx == actor_idx:
+            for i, (r, c) in enumerate(agent_pos):
+                if i != agent_idx:
+                    grid[:, 2, int(r), int(c)] += 1.0
+            grid[batch_idx, 1, rr, cc] = 1.0
+            grid[batch_idx, 3, rr, cc] = 1.0
+            is_actor = 1.0
+        else:
+            grid[:, 1, sr, sc] = 1.0
+            for i, (r, c) in enumerate(agent_pos):
+                if i != agent_idx and i != actor_idx:
+                    grid[:, 2, int(r), int(c)] += 1.0
+            grid[batch_idx, 2, rr, cc] += 1.0
+            grid[batch_idx, 3, rr, cc] = 1.0
+            is_actor = 0.0
+
+        scalar = torch.full((batch_size, 1), is_actor, dtype=torch.float32)
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+
+class DecCenteredGridEncoder(GridEncoder):
+    """Self-centered grid encoder for decentralized critic.
+
+    Output grid shape is (2H-1, 2W-1), where H/W are the orchard dimensions.
+    The encoded agent is always at the center, so there is no self channel.
+
+    Channels:
+      0 — apples
+      1 — other agents (excludes self and actor)
+      2 — actor position
+
+    Cell semantics in every channel:
+      1 — feature present
+      0 — valid orchard cell, feature absent
+     -1 — outside orchard
+
+    Scalar: [is_actor]
+    """
+
+    def __init__(self, orchard_h: int, orchard_w: int, n_agents: int):
+        self.orchard_h = int(orchard_h)
+        self.orchard_w = int(orchard_w)
+        self.center_r = self.orchard_h - 1
+        self.center_c = self.orchard_w - 1
+        super().__init__(2 * self.orchard_h - 1, 2 * self.orchard_w - 1, n_agents)
+
+    def grid_channels(self) -> int:
+        return 3
+
+    def scalar_dim(self) -> int:
+        return 1
+
+    def encode(self, state: dict, agent_idx: int) -> EncoderOutput:
+        apples = state["apples"]
+        agent_pos = state["agent_positions"]
+        actor_idx = int(state["actor_id"])
+
+        grid = torch.full((3, self.H, self.W), -1.0, dtype=torch.float32)
+
+        sr, sc = agent_pos[agent_idx]
+        row0 = self.center_r - int(sr)
+        col0 = self.center_c - int(sc)
+
+        # Valid orchard footprint relative to the centered agent.
+        grid[:, row0:row0 + self.orchard_h, col0:col0 + self.orchard_w] = 0.0
+
+        apple_rc = np.argwhere(apples >= 1)
+        if apple_rc.size:
+            rr = row0 + apple_rc[:, 0]
+            cc = col0 + apple_rc[:, 1]
+            grid[0, rr, cc] = 1.0
+
+        for i, (r, c) in enumerate(agent_pos):
+            rr = row0 + int(r)
+            cc = col0 + int(c)
+            if i == agent_idx:
+                continue
+            if i == actor_idx:
+                grid[2, rr, cc] = 1.0
+            grid[1, rr, cc] = 1.0
+
+        if actor_idx == agent_idx:
+            grid[2, self.center_r, self.center_c] = 1.0
 
         is_actor = 1.0 if agent_idx == actor_idx else 0.0
         return EncoderOutput(grid=grid, scalar=torch.tensor([is_actor]))
@@ -215,6 +338,38 @@ class CenGridEncoder(GridEncoder):
 
         for i, (r, c) in enumerate(agent_pos):
             grid[2, r, c] += 1.0
+
+        return EncoderOutput(grid=grid)
+
+    def encode_candidate_positions(
+        self,
+        state: dict,
+        agent_idx: int,
+        candidate_positions: np.ndarray,
+    ) -> EncoderOutput:
+        del agent_idx
+
+        apples = state["apples"]
+        agent_pos = state["agent_positions"]
+        actor_idx = int(state["actor_id"])
+
+        cand = np.asarray(candidate_positions, dtype=np.int64)
+        if cand.ndim != 2 or cand.shape[1] != 2:
+            raise ValueError("candidate_positions must have shape (B, 2).")
+
+        batch_size = int(cand.shape[0])
+        grid = torch.zeros((batch_size, 3, self.H, self.W), dtype=torch.float32)
+        grid[:, 0] = torch.from_numpy((apples >= 1).astype(np.float32))
+
+        for i, (r, c) in enumerate(agent_pos):
+            if i != actor_idx:
+                grid[:, 2, int(r), int(c)] += 1.0
+
+        rr = torch.as_tensor(cand[:, 0], dtype=torch.long)
+        cc = torch.as_tensor(cand[:, 1], dtype=torch.long)
+        batch_idx = torch.arange(batch_size, dtype=torch.long)
+        grid[batch_idx, 1, rr, cc] = 1.0
+        grid[batch_idx, 2, rr, cc] += 1.0
 
         return EncoderOutput(grid=grid)
 

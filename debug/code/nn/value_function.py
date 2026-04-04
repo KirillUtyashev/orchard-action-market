@@ -2,7 +2,6 @@ import numpy as np
 import torch
 
 from debug.code.nn.encoders import BaseEncoder, EncoderOutput
-from debug.code.training.helpers import ten
 from debug.code.core.enums import DEVICE
 from debug.code.nn.network import NetworkWrapper
 
@@ -23,10 +22,13 @@ class VNetwork(NetworkWrapper):
             conv_channels: list[int] = None,
             kernel_size: int = 3,
             reward_learning: bool = False,
+            supervised: bool = False,
+            use_mlp: bool = True,
     ):
         super().__init__(
             encoder, output_dim, alpha, discount,
             mlp_dims=mlp_dims,
+            use_mlp=use_mlp,
             schedule=schedule,
             decay_steps=num_training_steps,
             conv_channels=conv_channels,
@@ -34,11 +36,12 @@ class VNetwork(NetworkWrapper):
         )
 
         self.reward_learning = bool(reward_learning)
+        self.supervised = bool(supervised)
         self.lam = float(lam)
 
         self.batch_rewards = []
         self.batch_discounts = []
-        self.theoretical_vals = []
+        self.batch_true_values = []
 
         # eligibility traces over parameters (initialized lazily or via reset_traces())
         self._traces = None
@@ -123,6 +126,7 @@ class VNetwork(NetworkWrapper):
         self.batch_new_states = []
         self.batch_rewards = []
         self.batch_discounts = []
+        self.batch_true_values = []
 
         return total_abs_delta / len(batch)
 
@@ -152,12 +156,15 @@ class VNetwork(NetworkWrapper):
         self.batch_new_states = []
         self.batch_rewards = []
         self.batch_discounts = []
+        self.batch_true_values = []
 
         return total_loss / len(batch)
 
     def train(self):
         if self.reward_learning:
             return self.reward_supervised()
+        if self.supervised:
+            return self.train_supervised()
         if self.lam == -1:
             return self.train_td0()
         else:
@@ -185,49 +192,58 @@ class VNetwork(NetworkWrapper):
         self.batch_new_states = []
         self.batch_rewards = []
         self.batch_discounts = []
+        self.batch_true_values = []
         return total_loss / len(batch)
 
     def train_reward_supervised(self):
         return self.reward_supervised()
 
-    def add_experience(self, state, new_state, reward, discount_factor, theoretical_val=None):
+    def add_experience(
+            self,
+            state,
+            new_state,
+            reward,
+            discount_factor,
+            theoretical_val=None,
+            true_value=None,
+    ):
         self.batch_states.append(state)
         self.batch_new_states.append(new_state)
         self.batch_rewards.append(reward)
         self.batch_discounts.append(discount_factor)  # Store per-transition discount
-        if theoretical_val:
-            self.theoretical_vals.append(theoretical_val)
+        if self.supervised:
+            if true_value is None:
+                raise ValueError("In supervised mode, add_experience requires true_value.")
+            self.batch_true_values.append(float(true_value))
+        elif theoretical_val is not None:
+            self.batch_true_values.append(float(theoretical_val))
 
     def train_supervised(self):
-        # 1) Batch states -> tensor [B, obs_dim]
-        states_np = np.stack(self.batch_states, axis=0).squeeze()
-        states = ten(states_np, DEVICE)
-        states = states.view(states.size(0), -1)
-
-        # 2) Forward pass: approx V(s)
-        approx = self.model(states)          # [B, 1] (assumed)
-        approx = approx.squeeze(1)           # [B]
-
-        # 3) Supervised targets: theoretical V*(s) (or your analytic V(s))
-        #    Compute per-state, ignore next states entirely.
-        with torch.no_grad():
-            y_np = np.array(
-                self.theoretical_vals
+        if len(self.batch_states) == 0:
+            return 0.0
+        if len(self.batch_true_values) != len(self.batch_states):
+            raise RuntimeError(
+                f"Supervised targets count ({len(self.batch_true_values)}) "
+                f"does not match batch size ({len(self.batch_states)})."
             )
-            y = ten(y_np, DEVICE)            # [B]
 
-        # 4) Loss + update
-        criterion = torch.nn.MSELoss(reduction="mean")  # mean squared error
-        self.optimizer.zero_grad()
-        loss = criterion(approx, y)
-        loss.backward()
-        self.optimizer.step()
+        total_loss = 0.0
+        batch = list(zip(self.batch_states, self.batch_true_values))
+
+        for state, true_value in batch:
+            self.optimizer.zero_grad()
+            pred = self.model(state).squeeze()
+            target = torch.as_tensor(float(true_value), device=DEVICE, dtype=pred.dtype)
+            loss = (pred - target) ** 2
+            total_loss += float(loss.item())
+            loss.backward()
+            self.optimizer.step()
+
         self._after_update()
 
-        # 5) Clear batch buffers
         self.batch_states = []
-        self.batch_new_states = []   # optional: keep if other code expects it
-        self.batch_rewards = []      # optional: keep if other code expects it
-        self.theoretical_vals = []
-
-        return loss.item()
+        self.batch_new_states = []
+        self.batch_rewards = []
+        self.batch_discounts = []
+        self.batch_true_values = []
+        return total_loss / len(batch)

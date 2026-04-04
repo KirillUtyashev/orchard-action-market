@@ -43,3 +43,5 @@ out/
 
 # other
 data
+
+debug/code/supervised_copy.py

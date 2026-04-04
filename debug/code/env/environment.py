@@ -5,7 +5,7 @@ import numpy as np
 import random
 from enum import Enum, auto
 
-from debug.code.reward import Reward
+from debug.code.env.reward import Reward
 
 """
 The Orchard environment. Includes provisions for transition actions, spawning, and despawning.

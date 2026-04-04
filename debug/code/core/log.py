@@ -108,7 +108,15 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(*, reward_learning: bool) -> list[str]:
+def build_main_csv_fieldnames(
+    *,
+    reward_learning: bool,
+    supervised: bool = False,
+    actor_critic: bool = False,
+    following_rates: bool = False,
+    influencer: bool = False,
+    critic_smoke: bool = False,
+) -> list[str]:
     """Build column names for metrics.csv based on training mode."""
     fields = ["step", "current_lr"]
     if reward_learning:
@@ -125,12 +133,71 @@ def build_main_csv_fieldnames(*, reward_learning: bool) -> list[str]:
             "total_apples",
             "nearest_total_apples",
         ])
+        if supervised:
+            fields.extend([
+                "supervised_mae_mean",
+                "supervised_rmse_mean",
+            ])
+        if actor_critic:
+            fields.extend([
+                "actor_lr",
+                "actor_loss_mean",
+                "advantage_mean",
+                "policy_entropy_mean",
+            ])
+        if following_rates:
+            fields.extend([
+                "alpha_mean",
+                "alpha_positive_frac",
+                "following_weight_mean",
+                "active_follow_edges_mean",
+                "beta_mean",
+                "influencer_weight_mean",
+                "follower_to_influencer_weight_mean",
+                "effective_follow_weight_mean",
+            ])
+        if critic_smoke:
+            fields.extend([
+                "loaded_critic_smoke_greedy_pps",
+                "loaded_critic_smoke_greedy_ratio",
+                "loaded_critic_smoke_nearest_pps",
+                "loaded_critic_smoke_nearest_ratio",
+                "loaded_critic_smoke_total_apples",
+                "loaded_critic_smoke_nearest_total_apples",
+            ])
     return fields
 
 
 def build_action_prob_csv_fieldnames() -> list[str]:
     """Build column names for action_probabilities.csv."""
     return ["step", "wall_time", "left", "right", "up", "down", "stay"]
+
+
+def build_following_rate_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"alpha_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_{target_id}")
+    fields.extend([
+        "lambda_to_influencer",
+        "weight_to_influencer",
+        "influencer_value",
+    ])
+    return fields
+
+
+def build_influencer_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"beta_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_actor_{target_id}")
+    return fields
 
 
 def build_value_track_csv_fieldnames(num_states: int) -> list[str]:
@@ -143,6 +210,31 @@ def build_value_track_csv_fieldnames(num_states: int) -> list[str]:
 def build_weight_sample_csv_fieldnames() -> list[str]:
     """Build column names for sampled weight trajectories."""
     return ["step", "wall_time", "tensor_name", "sample_id", "flat_index", "value"]
+
+
+def build_pipeline_profile_csv_fieldnames() -> list[str]:
+    """Build column names for stage-level pipeline timing snapshots."""
+    return [
+        "step",
+        "wall_time",
+        "steps_since_last",
+        "wall_since_last",
+        "steps_per_second",
+        "avg_step_seconds",
+        "action_select_s",
+        "env_step_s",
+        "train_update_s",
+        "diagnostics_s",
+        "eval_s",
+        "other_s",
+        "loop_total_s",
+        "action_select_pct",
+        "env_step_pct",
+        "train_update_pct",
+        "diagnostics_pct",
+        "eval_pct",
+        "other_pct",
+    ]
 
 
 def build_detail_csv_fieldnames(n_agents: int, networks: list[Any]) -> list[str]:

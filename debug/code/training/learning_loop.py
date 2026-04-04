@@ -1,17 +1,129 @@
 import os
 import random
 import time
+import cProfile
+import pstats
 
 import torch
 
-from debug.code.core.enums import NUM_AGENTS
-from debug.code.training.helpers import env_step, random_policy
+from debug.code.agents.actor_critic_agent import ACAgentRates
+from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy
 from debug.code.core.log import finalize_logging
 
 
 class LearningLoopMixin:
+    _PIPELINE_PROFILE_STAGES = (
+        "action_select",
+        "env_step",
+        "train_update",
+        "diagnostics",
+        "eval",
+        "other",
+        "loop_total",
+    )
+
+    def _reset_pipeline_profile(self) -> None:
+        self.pipeline_profile_stage_totals = {stage: 0.0 for stage in self._PIPELINE_PROFILE_STAGES}
+        self.pipeline_profile_stage_snapshot = {stage: 0.0 for stage in self._PIPELINE_PROFILE_STAGES}
+        self.pipeline_profile_last_step = 0
+        self.pipeline_profile_last_wall_time = 0.0
+
+    def _pipeline_wall_time(self) -> float:
+        if self.train_start_time is None:
+            return 0.0
+        return max(0.0, float(time.time() - self.train_start_time))
+
+    def _add_pipeline_time(self, stage: str, elapsed_seconds: float) -> None:
+        if not self.pipeline_profile_enabled:
+            return
+        if stage not in self.pipeline_profile_stage_totals:
+            return
+        self.pipeline_profile_stage_totals[stage] += max(0.0, float(elapsed_seconds))
+
+    def _maybe_log_pipeline_profile(self, *, step: int, force: bool = False) -> None:
+        if not self.pipeline_profile_enabled or self.pipeline_profile_logger is None:
+            return
+        freq = max(1, int(self.pipeline_profile_freq))
+        if not force and step > 0 and step % freq != 0:
+            return
+
+        wall_time = self._pipeline_wall_time()
+        delta_by_stage = {
+            stage: self.pipeline_profile_stage_totals[stage] - self.pipeline_profile_stage_snapshot[stage]
+            for stage in self._PIPELINE_PROFILE_STAGES
+        }
+        loop_total = max(0.0, delta_by_stage["loop_total"])
+
+        steps_since_last = max(0, int(step) - int(self.pipeline_profile_last_step))
+        wall_since_last = max(0.0, wall_time - self.pipeline_profile_last_wall_time)
+        steps_per_second = (steps_since_last / wall_since_last) if wall_since_last > 0 else 0.0
+        avg_step_seconds = (loop_total / steps_since_last) if steps_since_last > 0 else 0.0
+
+        def _pct(stage_name: str) -> float:
+            if loop_total <= 0:
+                return 0.0
+            return 100.0 * delta_by_stage[stage_name] / loop_total
+
+        self.pipeline_profile_logger.log(
+            {
+                "step": int(step),
+                "wall_time": round(wall_time, 6),
+                "steps_since_last": int(steps_since_last),
+                "wall_since_last": round(wall_since_last, 6),
+                "steps_per_second": round(steps_per_second, 6),
+                "avg_step_seconds": round(avg_step_seconds, 6),
+                "action_select_s": round(delta_by_stage["action_select"], 6),
+                "env_step_s": round(delta_by_stage["env_step"], 6),
+                "train_update_s": round(delta_by_stage["train_update"], 6),
+                "diagnostics_s": round(delta_by_stage["diagnostics"], 6),
+                "eval_s": round(delta_by_stage["eval"], 6),
+                "other_s": round(delta_by_stage["other"], 6),
+                "loop_total_s": round(loop_total, 6),
+                "action_select_pct": round(_pct("action_select"), 3),
+                "env_step_pct": round(_pct("env_step"), 3),
+                "train_update_pct": round(_pct("train_update"), 3),
+                "diagnostics_pct": round(_pct("diagnostics"), 3),
+                "eval_pct": round(_pct("eval"), 3),
+                "other_pct": round(_pct("other"), 3),
+            }
+        )
+
+        self.pipeline_profile_stage_snapshot = dict(self.pipeline_profile_stage_totals)
+        self.pipeline_profile_last_step = int(step)
+        self.pipeline_profile_last_wall_time = wall_time
+
+    def _save_cprofile_outputs(self, profiler: cProfile.Profile) -> None:
+        stats_path = self.data_dir / "cprofile.pstats"
+        top_path = self.data_dir / "cprofile_top.txt"
+        profiler.dump_stats(str(stats_path))
+
+        sort_by = str(self.cprofile_sort_by)
+        with open(top_path, "w") as f:
+            stats = pstats.Stats(profiler, stream=f)
+            try:
+                stats.sort_stats(sort_by)
+            except KeyError:
+                f.write(f"Invalid cprofile_sort_by='{sort_by}'. Falling back to 'cumulative'.\n\n")
+                stats.sort_stats("cumulative")
+            stats.print_stats(int(self.cprofile_top_n))
+
+    def _supervised_target(self, encoded_state, network_idx: int):
+        if not self.supervised_enabled:
+            return None
+        if network_idx < 0 or network_idx >= len(self.supervised_networks):
+            raise IndexError(
+                f"Missing supervised teacher for student index {network_idx}. "
+                f"Teachers={len(self.supervised_networks)}."
+            )
+        with torch.no_grad():
+            pred = self.supervised_networks[network_idx].model(encoded_state).squeeze()
+        return float(pred.item())
+
     def _run_initial_evaluation(self) -> None:
-        if self.exp_config.algorithm.random_policy:
+        self._refresh_following_rate_stats()
+        if self.supervised_enabled:
+            self.eval_performance(0)
+        elif self.exp_config.algorithm.random_policy:
             self.evaluate_networks(step=0, plot=True, store_last=True)
         elif self.exp_config.reward.reward_learning:
             self.evaluate_networks_reward(step=0, plot=True, store_last=True)
@@ -19,33 +131,129 @@ class LearningLoopMixin:
             self.eval_performance(0)
         self._maybe_log_action_probabilities(step=0)
         self._maybe_log_tracked_state_values(step=0)
+        self._maybe_log_following_rate_snapshots(step=0)
         self._maybe_log_weight_samples(step=0)
 
+    def _critics_trainable(self) -> bool:
+        return not bool(getattr(self.exp_config.train, "freeze_critics", False))
+
+    def _following_rate_rho(self) -> float:
+        return float(getattr(self.exp_config.train, "following_rate_rho", 0.0))
+
+    def _fixed_following_rates(self) -> bool:
+        return bool(getattr(self.exp_config.train, "fixed_following_rates", False))
+
+    def _should_reallocate_following_rates(self, step: int | None) -> bool:
+        if not self._following_rates_enabled() or self._fixed_following_rates() or step is None:
+            return False
+        freq = max(1, int(getattr(self.exp_config.train, "following_rate_reallocation_freq", 1)))
+        return (int(step) + 1) % freq == 0
+
+    def _rate_agents(self) -> list[ACAgentRates]:
+        return [agent for agent in self.agents if isinstance(agent, ACAgentRates)]
+
+    def _refresh_influencer_beta(self) -> None:
+        if not self._influencer_enabled() or self.external_influencer is None:
+            return
+        self.external_influencer.recompute_beta(self._rate_agents())
+
+    def _refresh_follower_influencer_values(self) -> None:
+        rate_agents = self._rate_agents()
+        if not self._influencer_enabled() or self.external_influencer is None:
+            for agent in rate_agents:
+                agent.set_influencer_value(0.0)
+            return
+
+        outgoing_weights = self.external_influencer.outgoing_weights
+        for agent in rate_agents:
+            agent.set_influencer_value(float((outgoing_weights * agent.agent_alphas).sum()))
+
+    def _effective_observer_weight(self, observer_id: int, actor_id: int) -> float:
+        agent = self.agents[observer_id]
+        if not isinstance(agent, ACAgentRates):
+            return 0.0
+        influencer = self.external_influencer if self._influencer_enabled() else None
+        return float(agent.get_effective_observing_probability(actor_id, influencer))
+
+    def _reallocate_following_rates(self) -> None:
+        rate_agents = self._rate_agents()
+        if self._influencer_enabled() and self.external_influencer is not None:
+            self._refresh_influencer_beta()
+            self.external_influencer.update_outgoing_rates()
+            self._refresh_follower_influencer_values()
+            for agent in rate_agents:
+                agent.update_following_rates(influencer_value=agent.influencer_value)
+            self._refresh_influencer_beta()
+            self._refresh_follower_influencer_values()
+            return
+
+        for agent in rate_agents:
+            agent.update_following_rates()
+
     def _select_training_action(self, curr_state: dict, actor_idx: int):
-        if self.exp_config.algorithm.random_policy or self.exp_config.reward.reward_learning:
-            return random_policy(curr_state["agent_positions"][actor_idx])
-        return self.agent_controller.agent_get_action(self.env, actor_idx)
+        if self.exp_config.reward.reward_learning:
+            new_pos = nearest_apple_policy(
+                curr_state["agent_positions"][actor_idx],
+                curr_state["apples"],
+            )
+            return new_pos, None, None
+        if self.exp_config.algorithm.random_policy:
+            new_pos = random_policy(
+                curr_state["agent_positions"][actor_idx],
+                width=self.width,
+                length=self.length,
+            )
+            return new_pos, None, None
+        if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+            return self.agent_controller.sample_action(self.env, actor_idx)
+        return self.agent_controller.agent_get_action(self.env, actor_idx), None, None
 
     def _train_centralized_transition(self, curr_state, s_moved, s_next, pick_rewards, on_apple):
+        if not self._critics_trainable():
+            return
         enc_t = self.encoder.encode(curr_state, 0)
         enc_moved = self.encoder.encode(s_moved, 0)
         enc_next = self.encoder.encode(s_next, 0)
         net = self.critic_networks[0]
         reward = sum(pick_rewards)
+        true_t = self._supervised_target(enc_t, 0)
+        true_moved = self._supervised_target(enc_moved, 0)
 
         if on_apple:
-            net.add_experience(enc_t, enc_moved, 0, discount_factor=self.discount_factor)
-            net.add_experience(enc_moved, enc_next, reward, discount_factor=1.0)
+            net.add_experience(
+                enc_t,
+                enc_moved,
+                0,
+                discount_factor=self.discount_factor,
+                true_value=true_t,
+            )
+            net.add_experience(
+                enc_moved,
+                enc_next,
+                reward,
+                discount_factor=1.0,
+                true_value=true_moved,
+            )
         else:
-            net.add_experience(enc_t, enc_next, reward, discount_factor=self.discount_factor)
+            net.add_experience(
+                enc_t,
+                enc_next,
+                reward,
+                discount_factor=self.discount_factor,
+                true_value=true_t,
+            )
 
         net.train()
 
     def _train_decentralized_transition(self, curr_state, s_moved, s_next, pick_rewards, on_apple):
+        if not self._critics_trainable():
+            return
         for i in range(len(self.critic_networks)):
             enc_t = self.encoder.encode(curr_state, i)
             enc_moved = self.encoder.encode(s_moved, i)
             enc_next = self.encoder.encode(s_next, i)
+            true_t = self._supervised_target(enc_t, i)
+            true_moved = self._supervised_target(enc_moved, i)
 
             if on_apple:
                 self.critic_networks[i].add_experience(
@@ -53,12 +261,14 @@ class LearningLoopMixin:
                     enc_moved,
                     0,
                     discount_factor=self.discount_factor,
+                    true_value=true_t,
                 )
                 self.critic_networks[i].add_experience(
                     enc_moved,
                     enc_next,
                     pick_rewards[i],
                     discount_factor=1.0,
+                    true_value=true_moved,
                 )
             else:
                 self.critic_networks[i].add_experience(
@@ -66,13 +276,132 @@ class LearningLoopMixin:
                     enc_next,
                     pick_rewards[i],
                     discount_factor=self.discount_factor,
+                    true_value=true_t,
                 )
 
             self.critic_networks[i].train()
 
+    def _train_actor_critic_transition(
+        self,
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards,
+        on_apple,
+        actor_idx: int,
+        action_idx: int,
+        legal_mask,
+        step: int | None = None,
+    ):
+        critic_losses = []
+        enc_t_by_agent = []
+        enc_moved_by_agent = []
+        enc_next_by_agent = []
+
+        for i in range(len(self.critic_networks)):
+            enc_t = self.encoder.encode(curr_state, i)
+            enc_moved = self.encoder.encode(s_moved, i)
+            enc_next = self.encoder.encode(s_next, i)
+            enc_t_by_agent.append(enc_t)
+            enc_moved_by_agent.append(enc_moved)
+            enc_next_by_agent.append(enc_next)
+
+        with torch.no_grad():
+            v_t_by_agent = []
+            q_hat_by_agent = []
+            v_soc = 0.0
+            q_soc = 0.0
+            for i, critic in enumerate(self.critic_networks):
+                reward_i = float(pick_rewards[i]) if on_apple else 0.0
+                value_t = float(critic.get_value_function(enc_t_by_agent[i]))
+                q_hat = reward_i + self.discount_factor * float(critic.get_value_function(enc_next_by_agent[i]))
+                v_t_by_agent.append(value_t)
+                q_hat_by_agent.append(q_hat)
+                v_soc += value_t
+                q_soc += q_hat
+
+        if self._following_rates_enabled():
+            rho = self._following_rate_rho()
+            for observer_id, agent in enumerate(self.agents):
+                if not isinstance(agent, ACAgentRates) or observer_id == actor_idx:
+                    continue
+                agent.update_alpha(actor_idx, q_hat_by_agent[observer_id], rho)
+
+            self._refresh_influencer_beta()
+            self._refresh_follower_influencer_values()
+            if self._should_reallocate_following_rates(step):
+                self._reallocate_following_rates()
+
+            q_rate = float(q_hat_by_agent[actor_idx])
+            v_rate = float(v_t_by_agent[actor_idx])
+            for observer_id, agent in enumerate(self.agents):
+                if not isinstance(agent, ACAgentRates) or observer_id == actor_idx:
+                    continue
+                weight = self._effective_observer_weight(observer_id, actor_idx)
+                q_rate += weight * float(q_hat_by_agent[observer_id])
+                v_rate += weight * float(v_t_by_agent[observer_id])
+            advantage = q_rate - v_rate
+            self._refresh_following_rate_stats()
+        else:
+            advantage = q_soc - v_soc
+
+        actor_state = self.encoder.encode(curr_state, actor_idx)
+        self.policy_networks[actor_idx].add_experience(actor_state, legal_mask, action_idx, advantage)
+
+        if self._critics_trainable():
+            for i, critic in enumerate(self.critic_networks):
+                true_t = self._supervised_target(enc_t_by_agent[i], i)
+                true_moved = self._supervised_target(enc_moved_by_agent[i], i)
+                reward_i = float(pick_rewards[i]) if on_apple else 0.0
+
+                if on_apple:
+                    critic.add_experience(
+                        enc_t_by_agent[i],
+                        enc_moved_by_agent[i],
+                        0,
+                        discount_factor=self.discount_factor,
+                        true_value=true_t,
+                    )
+                    critic.add_experience(
+                        enc_moved_by_agent[i],
+                        enc_next_by_agent[i],
+                        reward_i,
+                        discount_factor=1.0,
+                        true_value=true_moved,
+                    )
+                else:
+                    critic.add_experience(
+                        enc_t_by_agent[i],
+                        enc_next_by_agent[i],
+                        reward_i,
+                        discount_factor=self.discount_factor,
+                        true_value=true_t,
+                    )
+
+                loss = critic.train()
+                critic_losses.append(float(loss) if loss is not None else 0.0)
+
+        actor_metrics = self.policy_networks[actor_idx].train()
+        if actor_metrics is None:
+            actor_metrics = {
+                "loss": None,
+                "advantage_mean": float(advantage),
+                "entropy_mean": None,
+            }
+
+        self._last_actor_training_stats = {
+            "actor_loss_mean": actor_metrics.get("loss"),
+            "advantage_mean": actor_metrics.get("advantage_mean", float(advantage)),
+            "policy_entropy_mean": actor_metrics.get("entropy_mean"),
+        }
+        return critic_losses
+
     def _run_periodic_evaluation(self, step: int) -> None:
         print(f"Running evaluation at step {step}/{self.trajectory_length}")
-        if not self.exp_config.reward.reward_learning:
+        self._refresh_following_rate_stats()
+        if self.supervised_enabled:
+            self.eval_performance(step)
+        elif not self.exp_config.reward.reward_learning:
             if self.exp_config.algorithm.random_policy:
                 plot = step == self.trajectory_length
                 self.evaluate_networks(step=step, plot=plot, store_last=True)
@@ -84,53 +413,147 @@ class LearningLoopMixin:
 
         self._maybe_log_action_probabilities(step=step)
         self._maybe_log_tracked_state_values(step=step)
+        self._maybe_log_following_rate_snapshots(step=step)
 
     def step_and_collect_observation(self) -> None:
+        start = time.perf_counter()
         self._run_initial_evaluation()
+        dt = time.perf_counter() - start
+        eval_stage = "eval" if self.pipeline_profile_include_eval else "other"
+        self._add_pipeline_time(eval_stage, dt)
+        self._add_pipeline_time("loop_total", dt)
+        self._maybe_log_pipeline_profile(step=0, force=True)
 
         curr_state = dict(self.env.get_state())
         curr_state["actor_id"] = 0
         actor_idx = 0
 
         for sec in range(self.trajectory_length):
-            new_pos = self._select_training_action(curr_state, actor_idx)
+            step_start = time.perf_counter()
+            measured = 0.0
+
+            start = time.perf_counter()
+            new_pos, action_idx, legal_mask = self._select_training_action(curr_state, actor_idx)
+            dt = time.perf_counter() - start
+            measured += dt
+            self._add_pipeline_time("action_select", dt)
+
+            start = time.perf_counter()
             s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
                 self.env,
                 actor_idx,
                 new_pos,
-                NUM_AGENTS,
+                self.num_agents,
             )
+            dt = time.perf_counter() - start
+            measured += dt
+            self._add_pipeline_time("env_step", dt)
 
-            if self.exp_config.algorithm.centralized:
+            start = time.perf_counter()
+            if bool(getattr(self.exp_config.algorithm, "actor_critic", False)):
+                self._train_actor_critic_transition(
+                    curr_state,
+                    s_moved,
+                    s_next,
+                    pick_rewards,
+                    on_apple,
+                    actor_idx=actor_idx,
+                    action_idx=action_idx,
+                    legal_mask=legal_mask,
+                    step=sec,
+                )
+            elif self.exp_config.algorithm.centralized:
                 self._train_centralized_transition(curr_state, s_moved, s_next, pick_rewards, on_apple)
             else:
                 self._train_decentralized_transition(curr_state, s_moved, s_next, pick_rewards, on_apple)
+            dt = time.perf_counter() - start
+            measured += dt
+            self._add_pipeline_time("train_update", dt)
 
             curr_state = s_next
             actor_idx = next_actor_idx
+
+            start = time.perf_counter()
             self._maybe_log_weight_samples(step=(sec + 1))
+            dt = time.perf_counter() - start
+            measured += dt
+            self._add_pipeline_time("diagnostics", dt)
 
             if (sec + 1) % self.exp_config.logging.main_csv_freq == 0:
+                start = time.perf_counter()
                 self._run_periodic_evaluation(step=(sec + 1))
+                dt = time.perf_counter() - start
+                measured += dt
+                eval_stage = "eval" if self.pipeline_profile_include_eval else "other"
+                self._add_pipeline_time(eval_stage, dt)
+
+            step_elapsed = time.perf_counter() - step_start
+            self._add_pipeline_time("loop_total", step_elapsed)
+            self._add_pipeline_time("other", max(0.0, step_elapsed - measured))
+            self._maybe_log_pipeline_profile(step=(sec + 1))
 
     def _close_loggers(self) -> None:
         self.main_logger.close()
         for logger in self.action_prob_loggers.values():
             logger.close()
+        for logger in self.following_rate_loggers.values():
+            logger.close()
+        if getattr(self, "influencer_logger", None) is not None:
+            self.influencer_logger.close()
         for logger in self.value_track_loggers.values():
             logger.close()
         for logger in self.weight_sample_loggers.values():
             logger.close()
+        if self.pipeline_profile_logger is not None:
+            self.pipeline_profile_logger.close()
 
     def train(self):
         start_time = time.time()
         self.train_start_time = start_time
-        self.build_experiment()
-        self.step_and_collect_observation()
-        self._write_last_greedy_position_heatmaps()
-        self.save_networks(self.data_dir / "weights")
-        finalize_logging(self.data_dir, start_time)
-        self._close_loggers()
+        self._reset_pipeline_profile()
+        profiler = cProfile.Profile() if self.cprofile_enabled else None
+        if profiler is not None:
+            profiler.enable()
+
+        try:
+            start = time.perf_counter()
+            self.build_experiment()
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+
+            start = time.perf_counter()
+            self._maybe_run_loaded_critic_smoke_test()
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+
+            self.step_and_collect_observation()
+
+            start = time.perf_counter()
+            self._write_last_greedy_position_heatmaps()
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+
+            start = time.perf_counter()
+            self.save_networks(self.data_dir / "weights")
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+
+            start = time.perf_counter()
+            finalize_logging(self.data_dir, start_time)
+            dt = time.perf_counter() - start
+            self._add_pipeline_time("other", dt)
+            self._add_pipeline_time("loop_total", dt)
+        finally:
+            if profiler is not None:
+                profiler.disable()
+            self._maybe_log_pipeline_profile(step=self.trajectory_length, force=True)
+            if profiler is not None:
+                self._save_cprofile_outputs(profiler)
+            self._close_loggers()
 
     def save_networks(self, path):
         os.makedirs(path, exist_ok=True)
@@ -138,6 +561,29 @@ class LearningLoopMixin:
         payload = {"critics": []}
         for crit in self.critic_networks:
             payload["critics"].append({"blob": crit.export_net_state()})
+        if self.policy_networks:
+            payload["actors"] = []
+            for actor in self.policy_networks:
+                payload["actors"].append({"blob": actor.export_net_state()})
+        if any(isinstance(agent, ACAgentRates) for agent in self.agents):
+            payload["following_rate_agents"] = []
+            for agent in self.agents:
+                if not isinstance(agent, ACAgentRates):
+                    continue
+                payload["following_rate_agents"].append(
+                    {
+                        "agent_alphas": agent.agent_alphas.copy(),
+                        "following_rates": agent.following_rates.copy(),
+                        "following_rate_to_influencer": float(agent.following_rate_to_influencer),
+                        "influencer_observing_probability": float(agent.influencer_observing_probability),
+                    }
+                )
+        if self.external_influencer is not None:
+            payload["external_influencer"] = {
+                "outgoing_rates": self.external_influencer.outgoing_rates.copy(),
+                "outgoing_weights": self.external_influencer.outgoing_weights.copy(),
+                "beta": self.external_influencer.beta.copy(),
+            }
 
         dst = path / "weights.pt"
         torch.save(payload, dst)

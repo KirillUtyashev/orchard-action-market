@@ -2,13 +2,19 @@ import random
 import torch
 import os
 import numpy as np
+from pathlib import Path
 
-from debug.code.core.enums import NUM_AGENTS, W
+from debug.code.core.config import load_config
 from debug.code.env.environment import Orchard
 
 same_cell_no_reward = 0
 count = 0
 UP, DOWN, LEFT, RIGHT, STAY = 0, 1, 2, 3, 4
+
+_DEFAULT_CONFIG = load_config(Path(__file__).resolve().parents[1] / "configs" / "base.yaml")
+DEFAULT_NUM_AGENTS = int(_DEFAULT_CONFIG.env.num_agents)
+DEFAULT_WIDTH = int(_DEFAULT_CONFIG.env.width)
+DEFAULT_LENGTH = int(_DEFAULT_CONFIG.env.length)
 
 
 def ten(c: np.ndarray, device: torch.device) -> torch.Tensor:
@@ -56,13 +62,15 @@ def set_all_seeds(seed: int = 42, deterministic: bool = False) -> None:
         torch.backends.cudnn.benchmark = False
 
 
-def teleport(n):
-    new_i = np.random.randint(0, n - 1)
-    new_j = np.random.randint(0, n - 1)
+def teleport(width, length=None):
+    length = width if length is None else int(length)
+    width = int(width)
+    new_i = np.random.randint(0, width - 1)
+    new_j = np.random.randint(0, length - 1)
     return np.array([new_i, new_j])
 
 
-def random_policy(agent_pos):
+def random_policy(agent_pos, width=DEFAULT_WIDTH, length=DEFAULT_LENGTH):
     """
     Returns the *new (r, c) position* after taking a uniformly random action
     from {UP, DOWN, LEFT, RIGHT, STAY}. If the sampled move would go off-grid,
@@ -84,7 +92,7 @@ def random_policy(agent_pos):
         pass
 
     # If illegal, "pick stay" (i.e., revert)
-    if not (0 <= nr < W and 0 <= nc < W):
+    if not (0 <= nr < width and 0 <= nc < length):
         nr, nc = r, c
 
     return np.array([nr, nc])
@@ -148,8 +156,19 @@ def env_step(env, actor_idx, new_pos, num_agents):
     return s_moved, s_next, pick_rewards, on_apple, next_actor_idx
 
 
-def make_env(reward_module, p_apple, d_apple, apples=None, agents=None, agent_positions=None, max_apples=9.0):
-    return Orchard(W, W, NUM_AGENTS, reward_module, p_apple=p_apple, d_apple=d_apple,
+def make_env(
+    reward_module,
+    p_apple,
+    d_apple,
+    apples=None,
+    agents=None,
+    agent_positions=None,
+    max_apples=9.0,
+    num_agents=DEFAULT_NUM_AGENTS,
+    width=DEFAULT_WIDTH,
+    length=DEFAULT_LENGTH,
+):
+    return Orchard(length, width, num_agents, reward_module, p_apple=p_apple, d_apple=d_apple,
                    start_apples_map=apples, start_agents_map=agents, start_agent_positions=agent_positions, 
                    max_apples=max_apples)
 
@@ -184,11 +203,21 @@ def eval_performance(
         p_apple,
         d_apple,
         timesteps=10000,
-        num_agents=NUM_AGENTS,
+        num_agents=DEFAULT_NUM_AGENTS,
+        width=DEFAULT_WIDTH,
+        length=DEFAULT_LENGTH,
         max_apples=9.0,
         capture_greedy_positions: bool = False,
 ):
-    env = make_env(reward_module, p_apple, d_apple, max_apples=max_apples)
+    env = make_env(
+        reward_module,
+        p_apple,
+        d_apple,
+        max_apples=max_apples,
+        num_agents=num_agents,
+        width=width,
+        length=length,
+    )
     env.set_positions()
 
     initial_state = env.get_state()
@@ -197,7 +226,10 @@ def eval_performance(
         apples=initial_state["apples"],
         agents=initial_state["agents"],
         agent_positions=initial_state["agent_positions"],
-        max_apples=max_apples
+        max_apples=max_apples,
+        num_agents=num_agents,
+        width=width,
+        length=length,
     )
 
     greedy_positions = None
@@ -228,7 +260,7 @@ def eval_performance(
 
     print("Results")
     print("Reward: ", reward)
-    print("Apples per agent:", reward / NUM_AGENTS)
+    print("Apples per agent:", reward / num_agents)
     print("Average Reward: ", reward / env.apples_spawned)
     print("Total apples: ", env.apples_spawned)
 

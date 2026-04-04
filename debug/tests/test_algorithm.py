@@ -22,25 +22,56 @@ pytestmark = pytest.mark.skipif(
 )
 
 if TORCH_AVAILABLE:
+    from debug.code.agents.actor_critic_agent import (
+        ACAgent,
+        ACAgentRates,
+        ExternalInfluencer,
+    )
+    from debug.code.agents.rate_allocators import FollowingRateUpdater, is_scipy_rate_solver_available
+    from debug.code.agents.controllers import (
+        AgentControllerActorCritic,
+        AgentControllerCentralized,
+        AgentControllerDecentralized,
+    )
     import debug.code.training.learning as learning_mod
+    import debug.code.training.learning_eval as learning_eval_mod
+    import debug.code.training.learning_loop as learning_loop_mod
+    import debug.code.training.learning_setup as learning_setup_mod
     from debug.code.core.config import load_config
-    from debug.code.core.enums import L, NUM_AGENTS, W
     from debug.code.env.environment import MoveAction, Orchard
+    from debug.code.nn.encoders import CenGridEncoder, DecCenteredGridEncoder, DecGridEncoder
+    from debug.code.nn.policy_network import PolicyNetwork
     from debug.code.training.helpers import set_all_seeds
     from debug.code.training.learning import Learning
 
 
 BASE_CONFIG = Path(__file__).resolve().parents[1] / "code" / "configs" / "base.yaml"
+if TORCH_AVAILABLE:
+    BASE_CFG = load_config(BASE_CONFIG)
+    NUM_AGENTS = int(BASE_CFG.env.num_agents)
+    W = int(BASE_CFG.env.width)
+    L = int(BASE_CFG.env.length)
+else:
+    NUM_AGENTS = 2
+    W = 6
+    L = 6
 
 
 def _write_test_yaml(path: Path, output_dir: Path) -> None:
     yaml_text = f"""
-network:
+critic_network:
   mlp_dims: [64, 64]
   conv_channels: [16, 32]
   kernel_size: 3
   CNN: false
-  input_dim: 0
+  self_centered_grid: false
+
+actor_network:
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+  CNN: false
+  self_centered_grid: false
 
 train:
   alpha: 0.01
@@ -77,6 +108,7 @@ eval:
   value_track_num_states: 10
 
 env:
+  num_agents: 2
   length: 6
   width: 6
   apple_life: 10.0
@@ -94,12 +126,19 @@ logging:
 
 def _write_reward_learning_yaml(path: Path, output_dir: Path) -> None:
     yaml_text = f"""
-network:
+critic_network:
   mlp_dims: [64, 64]
   conv_channels: [16, 32]
   kernel_size: 3
   CNN: false
-  input_dim: 0
+  self_centered_grid: false
+
+actor_network:
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+  CNN: false
+  self_centered_grid: false
 
 train:
   alpha: 0.01
@@ -131,12 +170,86 @@ eval:
   variance: 0.0
   debug: true
   reward_eval_num_states: 1000
+  reward_eval_zero_frac: 0.25
   action_prob_num_states: 0
   action_prob_burnin: 0
   action_prob_stride: 1
   value_track_num_states: 0
 
 env:
+  num_agents: 2
+  length: 6
+  width: 6
+  apple_life: 10.0
+  max_apples: 9
+
+logging:
+  output_dir: "{output_dir}"
+  main_csv_freq: 2
+  weight_samples_enabled: false
+  weight_samples_per_tensor: 16
+  weight_samples_freq: 0
+"""
+    path.write_text(yaml_text.strip() + "\n")
+
+
+def _write_supervised_learning_yaml(path: Path, output_dir: Path, weights_path: Path) -> None:
+    yaml_text = f"""
+critic_network:
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+  CNN: false
+  self_centered_grid: false
+
+actor_network:
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+  CNN: false
+  self_centered_grid: false
+
+train:
+  alpha: 0.01
+  timesteps: 4
+  seed: 1234
+  epsilon: 0.05
+  lmda: -1.0
+  schedule_lr: false
+  load_weights: false
+
+algorithm:
+  random_policy: false
+  q_agent: 0.4
+  centralized: false
+  concat: false
+
+reward:
+  picker_r: -1
+  supervised: true
+  reward_learning: false
+  top_k_num_apples: 1
+
+supervised:
+  weights_path: "{weights_path}"
+  CNN: false
+  mlp_dims: [64, 64]
+  conv_channels: [16, 32]
+  kernel_size: 3
+
+eval:
+  num_eval_states: 0
+  num_seeds: 10
+  variance: 0.0
+  debug: true
+  supervised_eval_num_states: 25
+  action_prob_num_states: 0
+  action_prob_burnin: 0
+  action_prob_stride: 1
+  value_track_num_states: 0
+
+env:
+  num_agents: 2
   length: 6
   width: 6
   apple_life: 10.0
@@ -195,6 +308,101 @@ class CyclingController:
         action = self._actions[self._idx % len(self._actions)]
         self._idx += 1
         return env.agent_positions[agent_id] + action.vector
+
+
+class DummyEnvState:
+    def __init__(self, state: dict, width: int, length: int):
+        self._state = {
+            "agents": state["agents"].copy(),
+            "apples": state["apples"].copy(),
+            "agent_positions": state["agent_positions"].copy(),
+        }
+        self.width = int(width)
+        self.length = int(length)
+        self.agent_positions = self._state["agent_positions"].copy()
+
+    def get_state(self) -> dict:
+        return {
+            "agents": self._state["agents"].copy(),
+            "apples": self._state["apples"].copy(),
+            "agent_positions": self._state["agent_positions"].copy(),
+        }
+
+
+class DummyValueNet:
+    def __init__(self, grid_shape: tuple[int, int, int], scalar_dim: int):
+        size = int(np.prod(grid_shape))
+        self.grid_weights = torch.arange(1, size + 1, dtype=torch.float32).reshape(grid_shape) / float(max(size, 1))
+        self.scalar_weights = (
+            torch.arange(1, scalar_dim + 1, dtype=torch.float32) / float(max(scalar_dim, 1))
+            if scalar_dim > 0
+            else None
+        )
+
+    def get_value_function(self, enc):
+        value = torch.tensor(0.0, dtype=torch.float32)
+        if enc.grid is not None:
+            value = value + (enc.grid.float() * self.grid_weights).sum()
+        if enc.scalar is not None and self.scalar_weights is not None:
+            value = value + (enc.scalar.float() * self.scalar_weights).sum()
+        return float(value.item())
+
+    def get_value_function_batch(self, enc):
+        if enc.grid is not None:
+            grid = enc.grid.float()
+            if grid.dim() == 3:
+                grid = grid.unsqueeze(0)
+            values = (grid * self.grid_weights).sum(dim=(1, 2, 3))
+        else:
+            if enc.scalar is None:
+                raise ValueError("Expected grid or scalar inputs.")
+            scalar = enc.scalar.float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)
+            values = torch.zeros(scalar.shape[0], dtype=torch.float32)
+
+        if enc.scalar is not None and self.scalar_weights is not None:
+            scalar = enc.scalar.float()
+            if scalar.dim() == 1:
+                scalar = scalar.unsqueeze(0)
+            values = values + (scalar * self.scalar_weights).sum(dim=1)
+
+        return values.detach().cpu().numpy()
+
+
+class DummyPolicyAgent:
+    def __init__(self, value_net):
+        self.policy_value = value_net
+
+    def get_value_function(self, enc):
+        return self.policy_value.get_value_function(enc)
+
+
+def _manual_best_action(controller, env, actor_id: int):
+    best_action = env.agent_positions[actor_id].copy()
+    best_val = -1_000_000.0
+    position = env.agent_positions[actor_id].copy()
+
+    for act in MoveAction:
+        curr_state = env.get_state()
+        r, c = curr_state["agent_positions"][actor_id]
+        nr, nc = r + act.vector[0], c + act.vector[1]
+        if not (0 <= nr < env.width and 0 <= nc < env.length):
+            continue
+
+        new_pos = np.array([nr, nc], dtype=np.int64)
+        curr_state["agents"][tuple(new_pos)] += 1
+        curr_state["agents"][tuple(position)] -= 1
+        curr_state["agent_positions"][actor_id] = new_pos
+        curr_state["actor_id"] = actor_id
+
+        encoded_states = controller.get_all_agent_obs(curr_state)
+        val = controller.discount * controller.get_collective_value(encoded_states, actor_id)
+        if val > best_val:
+            best_action = new_pos
+            best_val = val
+
+    return best_action
 
 
 @pytest.fixture
@@ -349,6 +557,11 @@ def _close_learning_loggers(learning: Learning) -> None:
     learning.main_logger.close()
     for logger in learning.action_prob_loggers.values():
         logger.close()
+    for logger in getattr(learning, "following_rate_loggers", {}).values():
+        logger.close()
+    influencer_logger = getattr(learning, "influencer_logger", None)
+    if influencer_logger is not None:
+        influencer_logger.close()
     for logger in learning.value_track_loggers.values():
         logger.close()
     for logger in learning.weight_sample_loggers.values():
@@ -372,11 +585,257 @@ def test_weight_sampling_config_overrides_are_loaded(tmp_path):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_separate_actor_and_critic_schedule_flags_are_loaded(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "train.schedule_lr=false",
+            "train.critic_schedule_lr=false",
+            "train.actor_schedule_lr=true",
+        ],
+    )
+
+    assert cfg.train.schedule_lr is False
+    assert cfg.train.critic_schedule_lr is False
+    assert cfg.train.actor_schedule_lr is True
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_can_use_separate_lr_schedulers(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "train.schedule_lr=false",
+            "train.critic_schedule_lr=false",
+            "train.actor_schedule_lr=true",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert learning.critic_networks
+    assert learning.policy_networks
+    assert all(net.scheduler is None for net in learning.critic_networks)
+    assert all(net.scheduler is not None for net in learning.policy_networks)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_separate_actor_and_critic_network_configs_are_loaded(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "critic_network.CNN=true",
+            "critic_network.MLP=false",
+            "critic_network.conv_channels=[4]",
+            "actor_network.CNN=true",
+            "actor_network.MLP=true",
+            "actor_network.conv_channels=[4,8]",
+            "actor_network.mlp_dims=[32]",
+        ],
+    )
+
+    assert list(cfg.critic_network.conv_channels) == [4]
+    assert bool(cfg.critic_network.MLP) is False
+    assert list(cfg.actor_network.conv_channels) == [4, 8]
+    assert bool(cfg.actor_network.MLP) is True
+    assert list(cfg.actor_network.mlp_dims) == [32]
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_networks_can_use_different_architectures(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "critic_network.CNN=true",
+            "critic_network.self_centered_grid=false",
+            "critic_network.MLP=false",
+            "critic_network.conv_channels=[4]",
+            "critic_network.mlp_dims=[0]",
+            "actor_network.CNN=true",
+            "actor_network.self_centered_grid=false",
+            "actor_network.MLP=true",
+            "actor_network.conv_channels=[4,8]",
+            "actor_network.mlp_dims=[32]",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    critic_model = learning.critic_networks[0].model
+    actor_model = learning.policy_networks[0].model
+
+    critic_conv_layers = [m for m in critic_model.cnn if isinstance(m, torch.nn.Conv2d)]
+    actor_conv_layers = [m for m in actor_model.cnn if isinstance(m, torch.nn.Conv2d)]
+
+    assert len(critic_conv_layers) == 1
+    assert len(actor_conv_layers) == 2
+    assert isinstance(critic_model.head, torch.nn.Linear)
+    assert isinstance(actor_model.head, torch.nn.Sequential)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_actor_and_critic_must_share_encoder_style(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "critic_network.CNN=true",
+            "actor_network.CNN=false",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="actor_network.CNN"):
+        Learning(cfg)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_dec_centered_grid_encoder_centers_self_and_marks_outside():
+    encoder = DecCenteredGridEncoder(3, 4, 3)
+    state = {
+        "apples": np.zeros((3, 4), dtype=int),
+        "agents": np.zeros((3, 4), dtype=int),
+        "agent_positions": np.array([[0, 0], [1, 2], [2, 1]], dtype=int),
+        "actor_id": 2,
+    }
+    state["apples"][2, 3] = 1
+
+    encoded = encoder.encode(state, agent_idx=0)
+    grid = encoded.grid.numpy()
+
+    assert grid.shape == (3, 5, 7)
+    assert encoded.scalar.tolist() == pytest.approx([0.0])
+
+    assert np.all(grid[:, 0, 0] == -1.0)
+    assert np.all(grid[:, 2, 3] == 0.0)
+    assert grid[0, 4, 6] == pytest.approx(1.0)
+    assert grid[1, 3, 5] == pytest.approx(1.0)
+    assert grid[2, 4, 4] == pytest.approx(1.0)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_dec_centered_grid_encoder_marks_actor_at_center_when_self_is_actor():
+    encoder = DecCenteredGridEncoder(4, 4, 2)
+    state = {
+        "apples": np.zeros((4, 4), dtype=int),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 2], [0, 0]], dtype=int),
+        "actor_id": 0,
+    }
+
+    encoded = encoder.encode(state, agent_idx=0)
+    grid = encoded.grid.numpy()
+
+    assert encoded.scalar.tolist() == pytest.approx([1.0])
+    assert grid[2, encoder.center_r, encoder.center_c] == pytest.approx(1.0)
+    assert grid[1, encoder.center_r, encoder.center_c] == pytest.approx(0.0)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_decentralized_grid_controller_batched_action_selection_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 1, 0, 0],
+                [0, 0, 0, 1],
+                [1, 0, 0, 0],
+                [0, 0, 1, 0],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [2, 2]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = DecGridEncoder(4, 4, 2)
+    agents = [
+        DummyPolicyAgent(DummyValueNet((4, 4, 4), 1)),
+        DummyPolicyAgent(DummyValueNet((4, 4, 4), 1)),
+    ]
+    controller = AgentControllerDecentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_centralized_grid_controller_batched_action_selection_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 0, 1, 0],
+                [1, 0, 0, 0],
+                [0, 0, 0, 1],
+                [0, 1, 0, 0],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [0, 3]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = CenGridEncoder(4, 4, 2)
+    agents = [DummyPolicyAgent(DummyValueNet((3, 4, 4), 0))]
+    controller = AgentControllerCentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_controller_batched_forward_fallback_matches_manual():
+    state = {
+        "apples": np.array(
+            [
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [1, 0, 0, 0],
+                [0, 0, 0, 1],
+            ],
+            dtype=int,
+        ),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[1, 1], [2, 3]], dtype=int),
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    encoder = DecCenteredGridEncoder(4, 4, 2)
+    agents = [
+        DummyPolicyAgent(DummyValueNet((3, encoder.H, encoder.W), 1)),
+        DummyPolicyAgent(DummyValueNet((3, encoder.H, encoder.W), 1)),
+    ]
+    controller = AgentControllerDecentralized(agents, encoder, discount=0.99, epsilon=0.0)
+    env = DummyEnvState(state, width=4, length=4)
+
+    expected = _manual_best_action(controller, env, actor_id=0)
+    actual = controller.get_best_action(env, actor_id=0)
+    assert np.array_equal(actual, expected)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
 def test_weight_sample_indices_initialized_for_cnn_and_mlp(tmp_path):
     cfg = _make_cfg(
         tmp_path,
         [
-            "network.CNN=true",
+            "critic_network.CNN=true",
+            "actor_network.CNN=true",
             "algorithm.centralized=true",
             "logging.weight_samples_enabled=true",
             "logging.weight_samples_per_tensor=16",
@@ -410,11 +869,52 @@ def test_weight_sample_indices_initialized_for_cnn_and_mlp(tmp_path):
 
 
 @pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_grid_encoder_is_selected_for_decentralized_cnn(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "critic_network.CNN=true",
+            "critic_network.self_centered_grid=true",
+            "actor_network.CNN=true",
+            "actor_network.self_centered_grid=true",
+            "algorithm.centralized=false",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert isinstance(learning.encoder, DecCenteredGridEncoder)
+    assert learning.encoder.grid_channels() == 3
+    assert learning.encoder.H == (2 * learning.width - 1)
+    assert learning.encoder.W == (2 * learning.length - 1)
+
+    _close_learning_loggers(learning)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
+def test_self_centered_grid_flag_requires_decentralized_cnn(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "critic_network.CNN=false",
+            "critic_network.self_centered_grid=true",
+            "actor_network.CNN=false",
+            "actor_network.self_centered_grid=true",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="self_centered_grid"):
+        Learning(cfg)
+
+
+@pytest.mark.skipif(not TORCH_AVAILABLE, reason="torch is required for algorithm/network tests")
 def test_weight_sample_logging_respects_frequency(tmp_path):
     cfg = _make_cfg(
         tmp_path,
         [
-            "network.CNN=true",
+            "critic_network.CNN=true",
+            "actor_network.CNN=true",
             "algorithm.centralized=true",
             "logging.weight_samples_enabled=true",
             "logging.weight_samples_per_tensor=8",
@@ -501,6 +1001,1261 @@ def reward_learning_learner(tmp_path):
         logger.close()
     for logger in learner.weight_sample_loggers.values():
         logger.close()
+
+
+@pytest.fixture
+def actor_critic_learner(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.centralized=false",
+            "train.actor_alpha=0.02",
+            "reward.reward_learning=false",
+        ],
+    )
+
+    set_all_seeds(seed=cfg.train.seed)
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    yield learner
+
+    _close_learning_loggers(learner)
+
+
+@pytest.fixture
+def following_rates_learner(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.centralized=false",
+            "algorithm.following_rates=true",
+            "train.actor_alpha=0.02",
+            "train.following_rate_budget=1.0",
+            "train.following_rate_rho=0.5",
+            "train.following_rate_reallocation_freq=1",
+            "reward.reward_learning=false",
+        ],
+    )
+
+    set_all_seeds(seed=cfg.train.seed)
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    yield learner
+
+    _close_learning_loggers(learner)
+
+
+@pytest.fixture
+def influencer_learner(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.centralized=false",
+            "algorithm.following_rates=true",
+            "algorithm.influencer=true",
+            "train.actor_alpha=0.02",
+            "train.following_rate_budget=1.0",
+            "train.influencer_budget=1.0",
+            "train.following_rate_rho=0.5",
+            "train.following_rate_reallocation_freq=5",
+            "reward.reward_learning=false",
+        ],
+    )
+
+    set_all_seeds(seed=cfg.train.seed)
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    yield learner
+
+    _close_learning_loggers(learner)
+
+
+def test_policy_network_masks_illegal_actions_and_normalizes():
+    encoder = DecGridEncoder(4, 4, 2)
+    network = PolicyNetwork(
+        encoder,
+        output_dim=len(MoveAction),
+        alpha=0.01,
+        discount=0.99,
+        mlp_dims=(16,),
+        num_training_steps=10,
+    )
+    state = {
+        "apples": np.zeros((4, 4), dtype=int),
+        "agents": np.zeros((4, 4), dtype=int),
+        "agent_positions": np.array([[0, 0], [2, 2]], dtype=int),
+        "actor_id": 0,
+    }
+    for r, c in state["agent_positions"]:
+        state["agents"][r, c] += 1
+
+    enc = encoder.encode(state, 0)
+    mask = AgentControllerActorCritic.legal_action_mask_from_position(state["agent_positions"][0], 4, 4)
+    probs = network.get_action_probabilities(enc, mask)
+
+    assert probs.shape == (len(MoveAction),)
+    assert probs.sum() == pytest.approx(1.0, abs=1e-9)
+    assert probs[MoveAction.LEFT.idx] == pytest.approx(0.0, abs=1e-12)
+    assert probs[MoveAction.UP.idx] == pytest.approx(0.0, abs=1e-12)
+    assert probs[MoveAction.RIGHT.idx] > 0.0
+    assert probs[MoveAction.DOWN.idx] > 0.0
+    assert probs[MoveAction.STAY.idx] > 0.0
+
+
+def test_actor_critic_controller_masks_corner_actions():
+    class DummyPolicy:
+        def __init__(self):
+            self.last_mask = None
+
+        def sample_action(self, enc, legal_mask):
+            self.last_mask = np.asarray(legal_mask, dtype=bool)
+            return MoveAction.RIGHT.idx, np.asarray(legal_mask, dtype=float)
+
+        def get_action_probabilities(self, enc, legal_mask):
+            probs = np.zeros(len(MoveAction), dtype=float)
+            probs[MoveAction.RIGHT.idx] = 1.0
+            return probs
+
+    class DummyValue:
+        @staticmethod
+        def get_value_function(enc):
+            return 0.0
+
+    encoder = DecGridEncoder(4, 4, 2)
+    actor = DummyPolicy()
+    agents = [
+        ACAgent(lambda pos: pos, 0, DummyValue(), actor, np.zeros(2, dtype=float)),
+        ACAgent(lambda pos: pos, 1, DummyValue(), DummyPolicy(), np.zeros(2, dtype=float)),
+    ]
+    controller = AgentControllerActorCritic(agents, encoder, discount=0.99, epsilon=0.0)
+
+    env = DummyEnvState(
+        {
+            "apples": np.zeros((4, 4), dtype=int),
+            "agents": np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], dtype=int),
+            "agent_positions": np.array([[0, 0], [1, 1]], dtype=int),
+        },
+        width=4,
+        length=4,
+    )
+
+    new_pos, action_idx, legal_mask = controller.sample_action(env, 0)
+
+    assert action_idx == MoveAction.RIGHT.idx
+    assert np.array_equal(new_pos, np.array([0, 1], dtype=np.int64))
+    assert not bool(legal_mask[MoveAction.LEFT.idx])
+    assert not bool(legal_mask[MoveAction.UP.idx])
+    assert bool(legal_mask[MoveAction.RIGHT.idx])
+    assert bool(legal_mask[MoveAction.DOWN.idx])
+    assert bool(legal_mask[MoveAction.STAY.idx])
+    assert np.array_equal(actor.last_mask, legal_mask)
+
+
+def test_actor_critic_build_experiment_initializes_actors(actor_critic_learner):
+    learner = actor_critic_learner
+    learner.build_experiment()
+
+    assert len(learner.policy_networks) == learner.num_agents
+    assert len(learner.agents) == learner.num_agents
+    assert all(isinstance(agent, ACAgent) for agent in learner.agents)
+    assert isinstance(learner.agent_controller, AgentControllerActorCritic)
+    assert learner._networks_for_eval == learner.policy_networks
+
+
+def test_actor_critic_transition_stores_social_advantage(actor_critic_learner):
+    learner = actor_critic_learner
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(
+                {
+                    "state": state,
+                    "legal_mask": np.asarray(legal_mask, dtype=bool),
+                    "action": int(action),
+                    "advantage": float(advantage),
+                }
+            )
+
+        def train(self):
+            return {"loss": 0.25, "advantage_mean": self.experiences[-1]["advantage"], "entropy_mean": 0.5}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+
+    curr_state = {"tag": "curr", "actor_id": 0}
+    s_moved = {"tag": "moved", "actor_id": 0}
+    s_next = {"tag": "next", "actor_id": 1}
+    legal_mask = np.array([False, True, True, False, True], dtype=bool)
+
+    learner._train_actor_critic_transition(
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=legal_mask,
+    )
+
+    expected_advantage = learner.discount_factor * (3.0 + 4.0) - (1.0 + 2.0)
+    assert len(learner.policy_networks[0].experiences) == 1
+    assert len(learner.policy_networks[1].experiences) == 0
+    assert learner.policy_networks[0].experiences[0]["action"] == MoveAction.RIGHT.idx
+    assert learner.policy_networks[0].experiences[0]["advantage"] == pytest.approx(expected_advantage)
+    assert np.array_equal(learner.policy_networks[0].experiences[0]["legal_mask"], legal_mask)
+    assert len(learner.critic_networks[0].experiences) == 1
+    assert len(learner.critic_networks[1].experiences) == 1
+    assert learner._last_actor_training_stats["actor_loss_mean"] == pytest.approx(0.25)
+    assert learner._last_actor_training_stats["advantage_mean"] == pytest.approx(expected_advantage)
+    assert learner._last_actor_training_stats["policy_entropy_mean"] == pytest.approx(0.5)
+
+
+def test_actor_critic_metrics_header_includes_actor_columns(actor_critic_learner):
+    learner = actor_critic_learner
+    header = _read_header(learner.data_dir / "metrics.csv")
+    assert "current_lr" in header
+    assert "actor_lr" in header
+    assert "actor_loss_mean" in header
+    assert "advantage_mean" in header
+    assert "policy_entropy_mean" in header
+
+
+def test_actor_critic_action_probability_logging_uses_policy_probs(actor_critic_learner):
+    learner = actor_critic_learner
+    learner.action_prob_eval_states = [_build_interior_state(), _build_interior_state()]
+    learner.action_prob_num_states = 2
+    learner.env = object()
+
+    class DummyActorController:
+        def get_action_probabilities_from_state(self, state, agent_id):
+            probs = np.zeros(len(MoveAction), dtype=float)
+            probs[MoveAction.RIGHT.idx] = 0.6
+            probs[MoveAction.STAY.idx] = 0.4
+            return probs
+
+    learner.agent_controller = DummyActorController()
+    learner.evaluate_action_probabilities(step=9)
+
+    for agent_id in range(NUM_AGENTS):
+        rows = _read_rows(learner.data_dir / f"action_probabilities_agent_{agent_id}.csv")
+        assert rows
+        row = rows[-1]
+        assert float(row["left"]) == pytest.approx(0.0)
+        assert float(row["right"]) == pytest.approx(0.6)
+        assert float(row["up"]) == pytest.approx(0.0)
+        assert float(row["down"]) == pytest.approx(0.0)
+        assert float(row["stay"]) == pytest.approx(0.4)
+
+
+def test_actor_critic_save_networks_includes_actor_payload(actor_critic_learner, tmp_path):
+    learner = actor_critic_learner
+
+    class ExportOnlyNet:
+        def __init__(self, tag):
+            self.tag = tag
+
+        def export_net_state(self):
+            return {"tag": self.tag}
+
+    learner.critic_networks = [ExportOnlyNet("critic-0"), ExportOnlyNet("critic-1")]
+    learner.policy_networks = [ExportOnlyNet("actor-0"), ExportOnlyNet("actor-1")]
+
+    out_dir = tmp_path / "weights"
+    learner.save_networks(out_dir)
+
+    payload = torch.load(out_dir / "weights.pt", map_location="cpu")
+    assert [item["blob"]["tag"] for item in payload["critics"]] == ["critic-0", "critic-1"]
+    assert [item["blob"]["tag"] for item in payload["actors"]] == ["actor-0", "actor-1"]
+
+
+def test_following_rate_updater_respects_budget_and_alpha_ordering():
+    updater = FollowingRateUpdater(budget=1.5)
+    alphas = np.array([0.0, 4.0, 2.0, -1.0], dtype=float)
+
+    rates = updater.solve(alphas, self_id=0)
+
+    assert rates.shape == alphas.shape
+    assert rates[0] == pytest.approx(0.0)
+    assert rates[3] == pytest.approx(0.0)
+    assert rates.sum() == pytest.approx(1.5)
+    assert rates[1] > rates[2] > 0.0
+
+
+def test_following_rate_updater_keeps_previous_allocation_when_no_positive_alpha():
+    updater = FollowingRateUpdater(budget=2.0)
+    prev = np.array([0.0, 1.5, 0.5], dtype=float)
+
+    rates = updater.solve(np.array([0.0, 0.0, -1.0], dtype=float), self_id=0, prev_rates=prev)
+
+    assert rates[0] == pytest.approx(0.0)
+    assert rates.sum() == pytest.approx(2.0)
+    assert rates[1] == pytest.approx(1.5)
+    assert rates[2] == pytest.approx(0.5)
+
+
+@pytest.mark.skipif(
+    (not TORCH_AVAILABLE) or (not is_scipy_rate_solver_available()),
+    reason="scipy rate solver is not available in this environment",
+)
+def test_scipy_rate_updater_matches_closed_form_solution():
+    alphas = np.array([0.0, 4.0, 2.0, -1.0], dtype=float)
+    prev = np.array([0.0, 0.8, 0.7, 0.0], dtype=float)
+
+    closed_form = FollowingRateUpdater(budget=1.5, solver_name="closed_form").solve(alphas, self_id=0, prev_rates=prev)
+    scipy_rates = FollowingRateUpdater(budget=1.5, solver_name="scipy").solve(alphas, self_id=0, prev_rates=prev)
+
+    assert scipy_rates.shape == closed_form.shape
+    assert scipy_rates.sum() == pytest.approx(1.5, abs=1e-6)
+    assert scipy_rates[0] == pytest.approx(0.0, abs=1e-8)
+    assert scipy_rates == pytest.approx(closed_form, abs=1e-5)
+
+
+def test_following_rates_build_experiment_initializes_rate_agents(following_rates_learner):
+    learner = following_rates_learner
+    learner.build_experiment()
+
+    assert all(isinstance(agent, ACAgentRates) for agent in learner.agents)
+    assert all(agent.following_rates[agent.id] == pytest.approx(0.0) for agent in learner.agents)
+    assert learner.agents[0].following_rates[1] == pytest.approx(1.0)
+    assert learner._last_following_rate_stats["alpha_mean"] == pytest.approx(0.0)
+    assert learner._last_following_rate_stats["following_weight_mean"] == pytest.approx(1.0 - np.exp(-1.0))
+
+
+def test_following_rate_transition_updates_alpha_and_weighted_advantage(following_rates_learner):
+    learner = following_rates_learner
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(
+                {
+                    "state": state,
+                    "legal_mask": np.asarray(legal_mask, dtype=bool),
+                    "action": int(action),
+                    "advantage": float(advantage),
+                }
+            )
+
+        def train(self):
+            return {"loss": 0.5, "advantage_mean": self.experiences[-1]["advantage"], "entropy_mean": 0.25}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+    learner.agents = [
+        ACAgentRates(lambda pos: pos, 0, learner.critic_networks[0], learner.policy_networks[0], np.zeros(2), 1.0, [0.0, 1.0]),
+        ACAgentRates(lambda pos: pos, 1, learner.critic_networks[1], learner.policy_networks[1], np.zeros(2), 1.0, [1.0, 0.0]),
+    ]
+
+    curr_state = {"tag": "curr", "actor_id": 0}
+    s_moved = {"tag": "moved", "actor_id": 0}
+    s_next = {"tag": "next", "actor_id": 1}
+    legal_mask = np.array([False, True, True, False, True], dtype=bool)
+
+    learner._train_actor_critic_transition(
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=legal_mask,
+        step=0,
+    )
+
+    q0 = learner.discount_factor * 3.0
+    q1 = learner.discount_factor * 4.0
+    w10 = 1.0 - np.exp(-1.0)
+    expected_advantage = (q0 + w10 * q1) - (1.0 + w10 * 2.0)
+
+    assert learner.agents[0].agent_alphas[0] == pytest.approx(0.0)
+    assert learner.agents[1].agent_alphas[0] == pytest.approx(0.5 * q1)
+    assert learner.policy_networks[0].experiences[0]["advantage"] == pytest.approx(expected_advantage)
+    assert learner._last_following_rate_stats["alpha_positive_frac"] == pytest.approx(0.5)
+    assert learner._last_following_rate_stats["active_follow_edges_mean"] == pytest.approx(1.0)
+
+
+def test_following_rate_metrics_and_snapshot_headers_are_created(following_rates_learner):
+    learner = following_rates_learner
+    learner.build_experiment()
+
+    metrics_header = _read_header(learner.data_dir / "metrics.csv")
+    snapshot_header = _read_header(learner.data_dir / "following_rates_agent_0.csv")
+
+    assert "alpha_mean" in metrics_header
+    assert "alpha_positive_frac" in metrics_header
+    assert "following_weight_mean" in metrics_header
+    assert "active_follow_edges_mean" in metrics_header
+    assert "alpha_to_0" in snapshot_header
+    assert "lambda_to_1" in snapshot_header
+    assert "weight_to_1" in snapshot_header
+
+
+def test_following_rate_snapshots_log_current_agent_state(following_rates_learner):
+    learner = following_rates_learner
+    learner.build_experiment()
+    learner._maybe_log_following_rate_snapshots(step=7)
+
+    rows = _read_rows(learner.data_dir / "following_rates_agent_0.csv")
+    assert rows
+    row = rows[-1]
+    assert int(row["step"]) == 7
+    assert float(row["alpha_to_0"]) == pytest.approx(0.0)
+    assert float(row["lambda_to_1"]) == pytest.approx(1.0)
+    assert float(row["weight_to_1"]) == pytest.approx(1.0 - np.exp(-1.0))
+
+
+def test_fixed_following_rates_skip_reallocation_calls(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "train.fixed_following_rates=true",
+            "train.following_rate_reallocation_freq=1",
+        ],
+    )
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(float(advantage))
+
+        def train(self):
+            return {"loss": 0.1, "advantage_mean": self.experiences[-1], "entropy_mean": 0.2}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+    learner.agents = [
+        ACAgentRates(lambda pos: pos, 0, learner.critic_networks[0], learner.policy_networks[0], np.zeros(2), 1.0, [0.0, 1.0]),
+        ACAgentRates(lambda pos: pos, 1, learner.critic_networks[1], learner.policy_networks[1], np.zeros(2), 1.0, [1.0, 0.0]),
+    ]
+
+    def _raise():
+        raise AssertionError("following-rate reallocation should not be called when rates are fixed")
+
+    learner.agents[0].update_following_rates = _raise
+    learner.agents[1].update_following_rates = _raise
+
+    learner._train_actor_critic_transition(
+        {"tag": "curr", "actor_id": 0},
+        {"tag": "moved", "actor_id": 0},
+        {"tag": "next", "actor_id": 1},
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=np.array([False, True, True, False, True], dtype=bool),
+        step=0,
+    )
+
+    assert learner.agents[1].agent_alphas[0] == pytest.approx(0.5 * learner.discount_factor * 4.0)
+    assert learner.agents[0].following_rates[1] == pytest.approx(1.0)
+    assert learner.agents[1].following_rates[0] == pytest.approx(1.0)
+
+    _close_learning_loggers(learner)
+
+
+def test_following_rate_save_and_load_restores_agent_state(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_follow",
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "train.following_rate_budget=1.0",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source.agents[0].agent_alphas = np.array([0.0, 1.25], dtype=float)
+    source.agents[1].agent_alphas = np.array([2.5, 0.0], dtype=float)
+    source.agents[0].set_following_rates(np.array([0.0, 1.0], dtype=float))
+    source.agents[1].set_following_rates(np.array([1.0, 0.0], dtype=float))
+    source_weights_dir = tmp_path / "pretrained_follow" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_follow",
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.load_weights=true",
+        ],
+    )
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert isinstance(learning.agents[0], ACAgentRates)
+    assert learning.agents[0].agent_alphas[1] == pytest.approx(1.25)
+    assert learning.agents[1].agent_alphas[0] == pytest.approx(2.5)
+    assert learning.agents[0].following_rates[1] == pytest.approx(1.0)
+    assert learning.agents[1].following_rates[0] == pytest.approx(1.0)
+
+    _close_learning_loggers(learning)
+
+
+def test_external_influencer_allocator_respects_budget_and_beta_ordering():
+    influencer = ExternalInfluencer(
+        budget=1.5,
+        num_agents=3,
+        init_outgoing_rates=np.array([0.5, 0.5, 0.5], dtype=float),
+        init_beta=np.array([4.0, 2.0, -1.0], dtype=float),
+    )
+
+    influencer.update_outgoing_rates()
+
+    assert influencer.outgoing_rates.shape == (3,)
+    assert influencer.outgoing_rates.sum() == pytest.approx(1.5)
+    assert influencer.outgoing_rates[0] > influencer.outgoing_rates[1] > 0.0
+    assert influencer.outgoing_rates[2] == pytest.approx(0.0)
+
+
+def test_follower_with_influencer_reallocation_conserves_budget():
+    agent = ACAgentRates(
+        lambda pos: pos,
+        0,
+        object(),
+        object(),
+        np.array([0.0, 4.0, 2.0], dtype=float),
+        1.5,
+        np.array([0.0, 0.75, 0.75], dtype=float),
+        0.0,
+    )
+
+    agent.update_following_rates(influencer_value=3.0)
+
+    assert agent.following_rates[0] == pytest.approx(0.0)
+    assert agent.following_rates.sum() + agent.following_rate_to_influencer == pytest.approx(1.5)
+    assert agent.following_rates[1] > 0.0
+    assert agent.following_rate_to_influencer > 0.0
+
+
+def test_influencer_build_experiment_initializes_external_state(influencer_learner):
+    learner = influencer_learner
+    learner.build_experiment()
+
+    assert learner.external_influencer is not None
+    assert all(isinstance(agent, ACAgentRates) for agent in learner.agents)
+    assert learner.agents[0].following_rates[1] == pytest.approx(0.5)
+    assert learner.agents[0].following_rate_to_influencer == pytest.approx(0.5)
+    assert learner.external_influencer.outgoing_rates.tolist() == pytest.approx([0.5, 0.5])
+    assert learner._last_following_rate_stats["influencer_weight_mean"] == pytest.approx(1.0 - np.exp(-0.5))
+    assert learner._last_following_rate_stats["follower_to_influencer_weight_mean"] == pytest.approx(1.0 - np.exp(-0.5))
+
+
+def test_influencer_transition_updates_beta_and_direct_mediated_advantage(influencer_learner):
+    learner = influencer_learner
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(
+                {
+                    "state": state,
+                    "legal_mask": np.asarray(legal_mask, dtype=bool),
+                    "action": int(action),
+                    "advantage": float(advantage),
+                }
+            )
+
+        def train(self):
+            return {"loss": 0.5, "advantage_mean": self.experiences[-1]["advantage"], "entropy_mean": 0.25}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+    learner.agents = [
+        ACAgentRates(
+            lambda pos: pos,
+            0,
+            learner.critic_networks[0],
+            learner.policy_networks[0],
+            np.zeros(2),
+            1.0,
+            [0.0, 0.5],
+            0.5,
+        ),
+        ACAgentRates(
+            lambda pos: pos,
+            1,
+            learner.critic_networks[1],
+            learner.policy_networks[1],
+            np.zeros(2),
+            1.0,
+            [0.5, 0.0],
+            0.5,
+        ),
+    ]
+    learner.external_influencer = ExternalInfluencer(
+        budget=1.0,
+        num_agents=2,
+        init_outgoing_rates=np.array([0.5, 0.5], dtype=float),
+        init_beta=np.zeros(2, dtype=float),
+    )
+
+    curr_state = {"tag": "curr", "actor_id": 0}
+    s_moved = {"tag": "moved", "actor_id": 0}
+    s_next = {"tag": "next", "actor_id": 1}
+    legal_mask = np.array([False, True, True, False, True], dtype=bool)
+
+    learner._train_actor_critic_transition(
+        curr_state,
+        s_moved,
+        s_next,
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=legal_mask,
+        step=None,
+    )
+
+    q0 = learner.discount_factor * 3.0
+    q1 = learner.discount_factor * 4.0
+    w_direct = 1.0 - np.exp(-0.5)
+    w_influencer = 1.0 - np.exp(-0.5)
+    effective = w_direct + w_influencer * w_influencer
+    expected_advantage = (q0 + effective * q1) - (1.0 + effective * 2.0)
+    expected_alpha = 0.5 * q1
+    expected_beta = w_influencer * expected_alpha
+
+    assert learner.agents[1].agent_alphas[0] == pytest.approx(expected_alpha)
+    assert learner.external_influencer.beta[0] == pytest.approx(expected_beta)
+    assert learner.policy_networks[0].experiences[0]["advantage"] == pytest.approx(expected_advantage)
+    assert learner._last_following_rate_stats["beta_mean"] == pytest.approx(expected_beta / 2.0)
+    assert learner._last_following_rate_stats["effective_follow_weight_mean"] == pytest.approx(effective)
+
+
+def test_influencer_metrics_and_snapshots_are_created(influencer_learner):
+    learner = influencer_learner
+    learner.build_experiment()
+
+    metrics_header = _read_header(learner.data_dir / "metrics.csv")
+    snapshot_header = _read_header(learner.data_dir / "following_rates_agent_0.csv")
+    influencer_header = _read_header(learner.data_dir / "external_influencer.csv")
+
+    assert "beta_mean" in metrics_header
+    assert "influencer_weight_mean" in metrics_header
+    assert "follower_to_influencer_weight_mean" in metrics_header
+    assert "effective_follow_weight_mean" in metrics_header
+    assert "lambda_to_influencer" in snapshot_header
+    assert "weight_to_influencer" in snapshot_header
+    assert "influencer_value" in snapshot_header
+    assert "beta_to_actor_0" in influencer_header
+    assert "lambda_to_actor_1" in influencer_header
+    assert "weight_to_actor_1" in influencer_header
+
+    learner._maybe_log_following_rate_snapshots(step=7)
+
+    follower_rows = _read_rows(learner.data_dir / "following_rates_agent_0.csv")
+    influencer_rows = _read_rows(learner.data_dir / "external_influencer.csv")
+    assert follower_rows
+    assert influencer_rows
+    assert float(follower_rows[-1]["lambda_to_influencer"]) == pytest.approx(0.5)
+    assert float(influencer_rows[-1]["lambda_to_actor_0"]) == pytest.approx(0.5)
+
+
+def test_fixed_following_rates_skip_follower_and_influencer_reallocation_calls(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "algorithm.influencer=true",
+            "train.fixed_following_rates=true",
+            "train.following_rate_reallocation_freq=1",
+        ],
+    )
+    learner = Learning(cfg)
+    learner.train_start_time = time.time()
+
+    class DummyEncoder:
+        @staticmethod
+        def encode(state, agent_id):
+            return (state["tag"], int(agent_id))
+
+    class DummyCritic:
+        def __init__(self, values):
+            self.values = values
+            self.experiences = []
+
+        def get_value_function(self, enc):
+            tag, agent_id = enc
+            return float(self.values[tag][agent_id])
+
+        def add_experience(self, *args, **kwargs):
+            self.experiences.append((args, kwargs))
+
+        def train(self):
+            return 0.0
+
+    class DummyActor:
+        def __init__(self):
+            self.experiences = []
+
+        def add_experience(self, state, legal_mask, action, advantage):
+            self.experiences.append(float(advantage))
+
+        def train(self):
+            return {"loss": 0.1, "advantage_mean": self.experiences[-1], "entropy_mean": 0.2}
+
+    learner.encoder = DummyEncoder()
+    learner.critic_networks = [
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+        DummyCritic({"curr": {0: 1.0, 1: 2.0}, "next": {0: 3.0, 1: 4.0}}),
+    ]
+    learner.policy_networks = [DummyActor(), DummyActor()]
+    learner.discount_factor = 0.99
+    learner.agents = [
+        ACAgentRates(lambda pos: pos, 0, learner.critic_networks[0], learner.policy_networks[0], np.zeros(2), 1.0, [0.0, 0.5], 0.5),
+        ACAgentRates(lambda pos: pos, 1, learner.critic_networks[1], learner.policy_networks[1], np.zeros(2), 1.0, [0.5, 0.0], 0.5),
+    ]
+    learner.external_influencer = ExternalInfluencer(
+        budget=1.0,
+        num_agents=2,
+        init_outgoing_rates=np.array([0.5, 0.5], dtype=float),
+        init_beta=np.zeros(2, dtype=float),
+    )
+
+    def _raise():
+        raise AssertionError("reallocation should not be called when following rates are fixed")
+
+    learner.agents[0].update_following_rates = _raise
+    learner.agents[1].update_following_rates = _raise
+    learner.external_influencer.update_outgoing_rates = _raise
+
+    learner._train_actor_critic_transition(
+        {"tag": "curr", "actor_id": 0},
+        {"tag": "moved", "actor_id": 0},
+        {"tag": "next", "actor_id": 1},
+        pick_rewards=[0.0, 0.0],
+        on_apple=False,
+        actor_idx=0,
+        action_idx=MoveAction.RIGHT.idx,
+        legal_mask=np.array([False, True, True, False, True], dtype=bool),
+        step=0,
+    )
+
+    assert learner.agents[1].agent_alphas[0] == pytest.approx(0.5 * learner.discount_factor * 4.0)
+    assert learner.agents[0].following_rate_to_influencer == pytest.approx(0.5)
+    assert learner.external_influencer.outgoing_rates.tolist() == pytest.approx([0.5, 0.5])
+
+    _close_learning_loggers(learner)
+
+
+def test_influencer_save_and_load_restores_agent_and_external_state(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_influencer",
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "algorithm.influencer=true",
+            "train.following_rate_budget=1.0",
+            "train.influencer_budget=1.0",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source.agents[0].agent_alphas = np.array([0.0, 1.25], dtype=float)
+    source.agents[1].agent_alphas = np.array([2.5, 0.0], dtype=float)
+    source.agents[0].set_following_rates(np.array([0.0, 0.4], dtype=float))
+    source.agents[1].set_following_rates(np.array([0.6, 0.0], dtype=float))
+    source.agents[0].set_influencer_rate(0.6)
+    source.agents[1].set_influencer_rate(0.4)
+    source.external_influencer.set_outgoing_rates(np.array([0.2, 0.8], dtype=float))
+    source.external_influencer.set_beta(np.array([1.1, 0.3], dtype=float))
+    source_weights_dir = tmp_path / "pretrained_influencer" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_influencer",
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "algorithm.influencer=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.load_weights=true",
+        ],
+    )
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert isinstance(learning.agents[0], ACAgentRates)
+    assert learning.external_influencer is not None
+    assert learning.agents[0].agent_alphas[1] == pytest.approx(1.25)
+    assert learning.agents[1].agent_alphas[0] == pytest.approx(2.5)
+    assert learning.agents[0].following_rate_to_influencer == pytest.approx(0.6)
+    assert learning.agents[1].following_rate_to_influencer == pytest.approx(0.4)
+    assert learning.external_influencer.outgoing_rates.tolist() == pytest.approx([0.2, 0.8])
+    assert learning.external_influencer.beta.tolist() == pytest.approx([1.1, 0.3])
+
+    _close_learning_loggers(learning)
+
+
+def test_freeze_critics_requires_a_checkpoint_source(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+            "train.critic_weights_path=",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="freeze_critics"):
+        Learning(cfg)
+
+
+def test_policy_weight_loading_requires_checkpoint_source(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "train.load_weights=false",
+            "train.load_policy_weights=true",
+            "train.critic_weights_path=",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="load_policy_weights"):
+        Learning(cfg)
+
+
+def test_influencer_requires_following_rates(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=false",
+            "algorithm.influencer=true",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="algorithm.influencer"):
+        Learning(cfg)
+
+
+def test_influencer_budget_must_be_nonnegative(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "algorithm.actor_critic=true",
+            "algorithm.following_rates=true",
+            "algorithm.influencer=true",
+            "train.influencer_budget=-0.1",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="influencer_budget"):
+        Learning(cfg)
+
+
+def test_frozen_critics_load_from_explicit_weights_folder_and_disable_gradients(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source",
+        [
+            "algorithm.actor_critic=true",
+            "train.actor_schedule_lr=false",
+            "train.critic_schedule_lr=false",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source_weights_dir = tmp_path / "pretrained" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target",
+        [
+            "algorithm.actor_critic=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert learning.loaded_critic_checkpoint_path == source_weights_dir / "weights.pt"
+    assert len(learning.critic_networks) == NUM_AGENTS
+    assert len(learning.policy_networks) == NUM_AGENTS
+    for critic in learning.critic_networks:
+        assert critic.model.training is False
+        assert all(param.requires_grad is False for param in critic.model.parameters())
+    for actor in learning.policy_networks:
+        assert any(param.requires_grad is True for param in actor.model.parameters())
+
+    _close_learning_loggers(learning)
+
+
+def test_policy_weights_load_from_explicit_checkpoint_and_remain_trainable(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_policy",
+        [
+            "algorithm.actor_critic=true",
+            "train.actor_schedule_lr=false",
+            "train.critic_schedule_lr=false",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+
+    with torch.no_grad():
+        for idx, actor in enumerate(source.policy_networks):
+            for param in actor.model.parameters():
+                param.fill_(0.25 * float(idx + 1))
+
+    source_weights_dir = tmp_path / "pretrained_policy" / "weights"
+    source.save_networks(source_weights_dir)
+    source_actor_state = source.policy_networks[0].export_net_state()
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_policy",
+        [
+            "algorithm.actor_critic=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.load_weights=false",
+            "train.load_policy_weights=true",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    target_actor_state = learning.policy_networks[0].export_net_state()
+    for key, tensor in source_actor_state["weights"].items():
+        assert torch.equal(target_actor_state["weights"][key], tensor)
+    for actor in learning.policy_networks:
+        assert actor.model.training is True
+        assert all(param.requires_grad is True for param in actor.model.parameters())
+
+    _close_learning_loggers(learning)
+
+
+def test_reset_optimizer_on_load_restarts_actor_critic_learning_rates(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_reset_lr",
+        [
+            "algorithm.actor_critic=true",
+            "train.actor_alpha=0.02",
+            "train.actor_schedule_lr=false",
+            "train.critic_schedule_lr=false",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+
+    with torch.no_grad():
+        for idx, critic in enumerate(source.critic_networks):
+            for param in critic.model.parameters():
+                param.fill_(0.1 * float(idx + 1))
+        for idx, actor in enumerate(source.policy_networks):
+            for param in actor.model.parameters():
+                param.fill_(0.2 * float(idx + 1))
+
+    for critic in source.critic_networks:
+        critic.optimizer.param_groups[0]["lr"] = 1e-6
+    for actor in source.policy_networks:
+        actor.optimizer.param_groups[0]["lr"] = 2e-6
+
+    source_weights_dir = tmp_path / "pretrained_reset_lr" / "weights"
+    source.save_networks(source_weights_dir)
+    source_critic_state = source.critic_networks[0].export_net_state()
+    source_actor_state = source.policy_networks[0].export_net_state()
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_reset_lr",
+        [
+            "algorithm.actor_critic=true",
+            "train.alpha=0.123",
+            "train.actor_alpha=0.456",
+            "train.actor_schedule_lr=false",
+            "train.critic_schedule_lr=false",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.load_weights=true",
+            "train.reset_optimizer_on_load=true",
+        ],
+    )
+
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    assert learning.critic_networks[0].get_lr() == pytest.approx(0.123)
+    assert learning.policy_networks[0].get_lr() == pytest.approx(0.456)
+
+    target_critic_state = learning.critic_networks[0].export_net_state()
+    target_actor_state = learning.policy_networks[0].export_net_state()
+    for key, tensor in source_critic_state["weights"].items():
+        assert torch.equal(target_critic_state["weights"][key], tensor)
+    for key, tensor in source_actor_state["weights"].items():
+        assert torch.equal(target_actor_state["weights"][key], tensor)
+    assert target_critic_state["optimizer"]["param_groups"][0]["lr"] == pytest.approx(0.123)
+    assert target_actor_state["optimizer"]["param_groups"][0]["lr"] == pytest.approx(0.456)
+
+    _close_learning_loggers(learning)
+
+
+def test_loaded_frozen_critics_run_greedy_smoke_test_with_critic_controller(tmp_path):
+    source_cfg = _make_cfg(
+        tmp_path / "source_smoke",
+        [
+            "algorithm.actor_critic=true",
+        ],
+    )
+    source = Learning(source_cfg)
+    source.build_experiment()
+    source_weights_dir = tmp_path / "pretrained_smoke" / "weights"
+    source.save_networks(source_weights_dir)
+    _close_learning_loggers(source)
+
+    cfg = _make_cfg(
+        tmp_path / "target_smoke",
+        [
+            "algorithm.actor_critic=true",
+            f"train.critic_weights_path={source_weights_dir.as_posix()}",
+            "train.freeze_critics=true",
+            "train.load_weights=false",
+        ],
+    )
+    learning = Learning(cfg)
+    learning.build_experiment()
+
+    called = {"controller": None}
+    original_eval_performance = learning_eval_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        called["controller"] = kwargs["agent_controller"]
+        return {
+            "greedy_pps": 12.0,
+            "greedy_ratio": 0.6,
+            "nearest_pps": 10.0,
+            "nearest_ratio": 0.5,
+            "total_apples": 20,
+            "nearest_total_apples": 20,
+        }
+
+    learning_eval_mod.eval_performance = fake_eval_performance
+    try:
+        result = learning._maybe_run_loaded_critic_smoke_test()
+    finally:
+        learning_eval_mod.eval_performance = original_eval_performance
+
+    assert isinstance(called["controller"], AgentControllerDecentralized)
+    assert not isinstance(called["controller"], AgentControllerActorCritic)
+    assert result is not None
+    assert result["greedy_pps"] == pytest.approx(12.0)
+    assert learning.loaded_critic_smoke_test_result["greedy_ratio"] == pytest.approx(0.6)
+
+    _close_learning_loggers(learning)
+
+
+def test_frozen_critic_metrics_header_includes_smoke_columns(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=true",
+        ],
+    )
+    learner = Learning(cfg)
+
+    header = _read_header(learner.data_dir / "metrics.csv")
+    assert "loaded_critic_smoke_greedy_pps" in header
+    assert "loaded_critic_smoke_greedy_ratio" in header
+    assert "loaded_critic_smoke_nearest_pps" in header
+    assert "loaded_critic_smoke_nearest_ratio" in header
+
+    _close_learning_loggers(learner)
+
+
+def test_eval_performance_logs_loaded_critic_smoke_metrics_at_step_zero(tmp_path):
+    cfg = _make_cfg(
+        tmp_path,
+        [
+            "train.freeze_critics=true",
+            "train.load_weights=true",
+        ],
+    )
+    learner = Learning(cfg)
+
+    class DummyController:
+        epsilon = 0.05
+
+    class DummyCritic:
+        @staticmethod
+        def get_lr():
+            return 0.01
+
+    class DummyEnv:
+        d_apple = 0.1
+        p_apple = 0.1
+        max_apples = 9
+
+    learner.agent_controller = DummyController()
+    learner.critic_networks = [DummyCritic(), DummyCritic()]
+    learner.env = DummyEnv()
+    learner.loaded_critic_smoke_test_result = {
+        "greedy_pps": 12.0,
+        "greedy_ratio": 0.6,
+        "nearest_pps": 10.0,
+        "nearest_ratio": 0.5,
+        "total_apples": 20,
+        "nearest_total_apples": 20,
+    }
+
+    original_eval_performance = learning_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        return {
+            "greedy_pps": 9.0,
+            "total_apples": 18,
+            "greedy_ratio": 0.45,
+            "nearest_pps": 8.0,
+            "nearest_ratio": 0.4,
+            "nearest_total_apples": 18,
+            "greedy_agent_positions": np.zeros((2, NUM_AGENTS, 2), dtype=np.int16),
+        }
+
+    learning_mod.eval_performance = fake_eval_performance
+    try:
+        learner.eval_performance(step=0)
+    finally:
+        learning_mod.eval_performance = original_eval_performance
+
+    rows = _read_rows(learner.data_dir / "metrics.csv")
+    assert rows
+    row = rows[-1]
+    assert row["step"] == "0"
+    assert float(row["loaded_critic_smoke_greedy_pps"]) == pytest.approx(12.0)
+    assert float(row["loaded_critic_smoke_greedy_ratio"]) == pytest.approx(0.6)
+    assert float(row["loaded_critic_smoke_nearest_pps"]) == pytest.approx(10.0)
+    assert float(row["loaded_critic_smoke_nearest_ratio"]) == pytest.approx(0.5)
+
+    _close_learning_loggers(learner)
 
 
 def test_value_tracking_state_generation_per_agent(learner_with_config):
@@ -624,16 +2379,71 @@ def test_reward_learning_generates_1000_labeled_states(reward_learning_learner):
 
     assert isinstance(learner.evaluation_states, list)
     assert len(learner.evaluation_states) == 1000
+    expected_zero = int(round(learner.reward_eval_num_states * learner.reward_eval_zero_frac))
+    zero_count = 0
 
-    for st in learner.evaluation_states[:20]:
+    for st in learner.evaluation_states:
         assert "actor_id" in st
         assert "true_rewards" in st
+        assert st["reward_eval_source"] in {"curr_state", "s_moved"}
         true_rewards = np.asarray(st["true_rewards"], dtype=float)
         assert true_rewards.shape == (NUM_AGENTS,)
         actor_id = int(st["actor_id"])
         actor_pos = st["agent_positions"][actor_id]
         expected = learner.reward_module.get_reward(st, actor_id, actor_pos, mode=1)
         assert np.allclose(true_rewards, expected)
+        if np.allclose(true_rewards, 0.0):
+            zero_count += 1
+            assert st["reward_eval_source"] == "curr_state"
+        else:
+            assert st["reward_eval_source"] == "s_moved"
+
+    assert zero_count == expected_zero
+
+
+def test_reward_learning_eval_state_uses_curr_state_for_zero_reward(reward_learning_learner):
+    learner = reward_learning_learner
+    curr_state = _build_interior_state()
+    s_moved = _clone_state(curr_state)
+    s_moved["agent_positions"][0] = np.array([1, 1], dtype=int)
+    s_moved["agents"] = np.zeros_like(curr_state["agents"])
+    for r, c in s_moved["agent_positions"]:
+        s_moved["agents"][r, c] += 1
+
+    eval_state = learner._make_reward_eval_state(
+        curr_state,
+        s_moved,
+        actor_id=0,
+        pick_rewards=np.zeros(NUM_AGENTS, dtype=np.float32),
+    )
+
+    assert eval_state["reward_eval_source"] == "curr_state"
+    assert np.array_equal(eval_state["agents"], curr_state["agents"])
+    assert np.array_equal(eval_state["agent_positions"], curr_state["agent_positions"])
+
+
+def test_reward_learning_eval_state_uses_s_moved_for_nonzero_reward(reward_learning_learner):
+    learner = reward_learning_learner
+    curr_state = _build_interior_state()
+    s_moved = _clone_state(curr_state)
+    s_moved["agent_positions"][0] = np.array([1, 1], dtype=int)
+    s_moved["agents"] = np.zeros_like(curr_state["agents"])
+    for r, c in s_moved["agent_positions"]:
+        s_moved["agents"][r, c] += 1
+
+    rewards = np.zeros(NUM_AGENTS, dtype=np.float32)
+    rewards[0] = 1.0
+
+    eval_state = learner._make_reward_eval_state(
+        curr_state,
+        s_moved,
+        actor_id=0,
+        pick_rewards=rewards,
+    )
+
+    assert eval_state["reward_eval_source"] == "s_moved"
+    assert np.array_equal(eval_state["agents"], s_moved["agents"])
+    assert np.array_equal(eval_state["agent_positions"], s_moved["agent_positions"])
 
 
 def test_reward_learning_eval_logs_mean_accuracy_to_csv(reward_learning_learner):
@@ -668,7 +2478,7 @@ def test_reward_learning_eval_logs_mean_accuracy_to_csv(reward_learning_learner)
     assert float(row["reward_mae_mean"]) == pytest.approx(0.0, abs=1e-9)
 
 
-def test_reward_learning_training_path_uses_random_policy(reward_learning_learner):
+def test_reward_learning_training_path_uses_nearest_policy(reward_learning_learner):
     learner = reward_learning_learner
     learner.trajectory_length = 3
     learner.evaluation_states = []
@@ -711,15 +2521,116 @@ def test_reward_learning_training_path_uses_random_policy(reward_learning_learne
 
     call_counter = {"n": 0}
 
-    def fake_random_policy(agent_pos):
+    def fake_nearest_policy(agent_pos, apples_matrix):
         call_counter["n"] += 1
         return np.array(agent_pos, copy=True)
 
-    original_random_policy = learning_mod.random_policy
-    learning_mod.random_policy = fake_random_policy
+    original_nearest_policy = learning_loop_mod.nearest_apple_policy
+    learning_loop_mod.nearest_apple_policy = fake_nearest_policy
     try:
         learner.step_and_collect_observation()
     finally:
-        learning_mod.random_policy = original_random_policy
+        learning_loop_mod.nearest_apple_policy = original_nearest_policy
 
     assert call_counter["n"] > 0
+
+
+def test_supervised_build_experiment_enforces_teacher_student_count_match(tmp_path, monkeypatch):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+
+    def fake_load(_path, map_location=None):
+        return {"critics": [{"blob": {}}]}  # 1 teacher only; students are per-agent (2)
+
+    monkeypatch.setattr(learning_setup_mod.torch, "load", fake_load)
+    with pytest.raises(ValueError, match="mismatch"):
+        learner.build_experiment()
+    _close_learning_loggers(learner)
+
+
+def test_supervised_state_generation_uses_configured_count(tmp_path):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+    learner._generate_evaluation_states_supervised()
+
+    assert isinstance(learner.supervised_evaluation_states, list)
+    assert len(learner.supervised_evaluation_states) == 25
+    for st in learner.supervised_evaluation_states[:5]:
+        assert "apples" in st and "agents" in st and "agent_positions" in st and "actor_id" in st
+    _close_learning_loggers(learner)
+
+
+def test_supervised_eval_performance_logs_both_policy_and_fit_metrics(tmp_path):
+    weights_path = tmp_path / "teacher.pt"
+    weights_path.write_bytes(b"placeholder")
+    config_path = tmp_path / "supervised_test.yaml"
+    output_dir = tmp_path / "runs"
+    _write_supervised_learning_yaml(config_path, output_dir, weights_path)
+
+    cfg = load_config(config_path)
+    learner = Learning(cfg)
+
+    class DummyController:
+        epsilon = 0.05
+
+    class DummyCritic:
+        @staticmethod
+        def get_lr():
+            return 0.01
+
+    class DummyEnv:
+        d_apple = 0.1
+        p_apple = 0.1
+        max_apples = 9
+
+    learner.agent_controller = DummyController()
+    learner.critic_networks = [DummyCritic(), DummyCritic()]
+    learner.env = DummyEnv()
+
+    called = {"n": 0}
+
+    def fake_supervised_eval():
+        called["n"] += 1
+        return {"supervised_mae_mean": 0.25, "supervised_rmse_mean": 0.5}
+
+    learner.evaluate_networks_supervised = fake_supervised_eval
+    original_eval_performance = learning_mod.eval_performance
+
+    def fake_eval_performance(**kwargs):
+        return {
+            "greedy_pps": 10,
+            "total_apples": 20,
+            "greedy_ratio": 0.5,
+            "nearest_pps": 9,
+            "nearest_ratio": 0.45,
+            "nearest_total_apples": 20,
+            "greedy_agent_positions": np.zeros((2, NUM_AGENTS, 2), dtype=np.int16),
+        }
+
+    learning_mod.eval_performance = fake_eval_performance
+    try:
+        learner.eval_performance(step=11)
+    finally:
+        learning_mod.eval_performance = original_eval_performance
+
+    rows = _read_rows(learner.data_dir / "metrics.csv")
+    assert rows, "Expected metrics row for supervised eval."
+    row = rows[-1]
+    assert row["step"] == "11"
+    assert float(row["greedy_pps"]) == pytest.approx(10.0)
+    assert float(row["supervised_mae_mean"]) == pytest.approx(0.25)
+    assert float(row["supervised_rmse_mean"]) == pytest.approx(0.5)
+    assert called["n"] == 1
+    _close_learning_loggers(learner)

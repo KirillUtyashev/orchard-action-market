@@ -1,7 +1,7 @@
 import random
 
 from matplotlib import pyplot as plt
-from debug.code.core.enums import NUM_AGENTS, W, L
+from debug.code.core.config import load_config
 from debug.code.env.environment import Orchard
 from debug.code.env.reward import Reward
 from debug.code.training.helpers import env_step, nearest_apple_policy, random_policy, \
@@ -9,6 +9,10 @@ from debug.code.training.helpers import env_step, nearest_apple_policy, random_p
 import numpy as np
 from pathlib import Path
 data_dir = Path(__file__).parent.parent / "data"
+_DEFAULT_CFG = load_config(Path(__file__).parent.parent / "code" / "configs" / "base.yaml")
+NUM_AGENTS = int(_DEFAULT_CFG.env.num_agents)
+W = int(_DEFAULT_CFG.env.width)
+L = int(_DEFAULT_CFG.env.length)
 
 REWARD = -1
 
@@ -215,7 +219,7 @@ class TestEnvironment:
         total_picked = 0
         total_spawned = int(self.env.apples.sum())  # count initial apples as "spawned"
 
-        seconds = 20_000
+        seconds = 10_000
         tracker.observe_grid(self.env.apples)
         num_apples = np.zeros(seconds + 1, dtype=int)
         num_apples[0] = self.env.get_sum_apples()
@@ -229,10 +233,11 @@ class TestEnvironment:
 
         for t in range(seconds):  # or timesteps, whichever your "simple" loop uses
             # pick action for the current actor based on the *current* state
-            new_pos = nearest_apple_policy(
-                curr_state["agent_positions"][actor_idx],
-                curr_state["apples"],
-            )
+            # new_pos = nearest_apple_policy(
+            #     curr_state["agent_positions"][actor_idx],
+            #     curr_state["apples"],
+            # )
+            new_pos = random_policy(curr_state["agent_positions"][actor_idx])
 
             s_moved, s_next, pick_rewards, on_apple, next_actor_idx = env_step(
                 self.env, actor_idx, new_pos, NUM_AGENTS
