@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import torch
+
 from orchard.datatypes import EncoderOutput, EnvConfig, State
 
 
@@ -15,44 +17,62 @@ class BaseEncoder(ABC):
 
     @abstractmethod
     def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        """Encode a single state for a specific agent (used by CPU Trainer).
+        
+        Returns:
+            EncoderOutput containing:
+            - grid: shape (C, H, W)
+            - scalar: shape (S)
+        """
         ...
 
     @abstractmethod
     def scalar_dim(self) -> int:
-        """Scalar feature dimension.
-
-        MLP encoders: full input vector length.
-        Grid encoders: extra scalars concatenated after conv flatten.
-        """
         ...
 
     def grid_channels(self) -> int:
-        """Grid channel count. 0 means no grid output (MLP encoder)."""
         return 0
-    
+
     def grid_height(self) -> int:
-        """Spatial height of the grid tensor. Default: env height."""
         return self.env_cfg.height
 
     def grid_width(self) -> int:
-        """Spatial width of the grid tensor. Default: env width."""
         return self.env_cfg.width
-    
+
     def encode_batch_for_actions(self, state: State, agent_idx: int, after_states: list[State]) -> EncoderOutput:
-        """Batch-encode multiple after-states. Default: just calls encode() in a loop."""
+        """Batch encode multiple possible actions for ONE agent (used by CPU Trainer). Used for action selection in value policy learning.
+        
+        Args:
+            state: The current state before the action.
+            agent_idx: The agent making the decision.
+            after_states: A list of B possible states resulting from B different actions.
+            
+        Returns:
+            EncoderOutput containing:
+            - grid: shape (B, C, H, W)
+            - scalar: shape (B, S)
+        """
         raise NotImplementedError(f"{type(self).__name__} does not support encode_batch_for_actions")
 
-    def encode_all_agents(self, state: State) -> tuple:
-        """Encode state for all N agents, returning (grids, scalars) tensors.
-
-        Only supported by encoders that implement GPU-batched training.
+    def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode the current state for ALL N networks simultaneously (used by GPU Trainer).
+        
+        Returns:
+            grids: shape (N, C, H, W)
+            scalars: shape (N, S)
         """
         raise NotImplementedError(f"{type(self).__name__} does not support encode_all_agents")
 
-    def encode_all_agents_for_actions(self, state: State, after_states: list) -> tuple:
-        """Encode all N agents × B after-states, returning (grids, scalars) tensors.
-
-        Only supported by encoders that implement GPU-batched action selection.
+    def encode_all_agents_for_actions(self, state: State, after_states: list[State]) -> tuple[torch.Tensor, torch.Tensor]:
+        """Batch encode multiple actions for ALL N networks simultaneously (used by GPU Trainer).
+        
+        Args:
+            state: The current state before the action.
+            after_states: A list of B possible states resulting from B different actions.
+            
+        Returns:
+            grids: shape (N, B, C, H, W)
+            scalars: shape (N, B, S)
         """
         raise NotImplementedError(f"{type(self).__name__} does not support encode_all_agents_for_actions")
 

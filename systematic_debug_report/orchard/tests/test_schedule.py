@@ -1,4 +1,4 @@
-"""Tests for schedule utility."""
+"""Tests for scheduling utilities (LR and epsilon decay)."""
 
 import pytest
 from orchard.enums import Schedule
@@ -33,7 +33,7 @@ class TestScheduleLinear:
 
     def test_requires_total_steps(self):
         cfg = ScheduleConfig(start=1.0, end=0.0, schedule=Schedule.LINEAR)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="total_steps required"):
             compute_schedule_value(cfg, 50)
 
 
@@ -65,5 +65,5 @@ class TestScheduleStep:
             start=1.0, end=0.3, schedule=Schedule.STEP,
             step_size=100, step_factor=0.5,
         )
-        # After 2 decays: 1.0 * 0.25 = 0.25 < 0.3, so floor at 0.3
+        # After 2 decays: 1.0 * 0.25 = 0.25. Since 0.25 < 0.3, floor at 0.3.
         assert compute_schedule_value(cfg, 200) == 0.3

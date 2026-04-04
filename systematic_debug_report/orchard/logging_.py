@@ -1,11 +1,9 @@
 """Logging: CSVLogger, run directory setup, metadata writing."""
 
 from __future__ import annotations
-import os
-import sys
-sys.path.append("../")
 
 import csv
+import os
 import socket
 import subprocess
 import time
@@ -17,7 +15,6 @@ from typing import Any
 import yaml
 
 from orchard.datatypes import ExperimentConfig
-from orchard.enums import TrainMode
 
 
 class CSVLogger:
@@ -32,7 +29,6 @@ class CSVLogger:
         self._file.flush()
 
     def log(self, row: dict[str, float | int | str]) -> None:
-        """Write one row and flush."""
         self._writer.writerow(row)
         self._file.flush()
 
@@ -41,7 +37,6 @@ class CSVLogger:
 
 
 def _get_git_hash() -> str | None:
-    """Try to get current git hash, return None if unavailable."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -55,10 +50,6 @@ def _get_git_hash() -> str | None:
 
 
 def _config_to_dict(cfg: ExperimentConfig) -> dict[str, Any]:
-    """Serialize ExperimentConfig to a dict suitable for YAML.
-
-    Converts enums to their names.
-    """
     d = asdict(cfg)
 
     def _convert(obj: Any) -> Any:
@@ -66,7 +57,7 @@ def _config_to_dict(cfg: ExperimentConfig) -> dict[str, Any]:
             return {k: _convert(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple)):
             return [_convert(v) for v in obj]
-        if hasattr(obj, "name"):  # Enum
+        if hasattr(obj, "name"):
             return obj.name.lower()
         return obj
 
@@ -80,7 +71,6 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "checkpoints").mkdir(exist_ok=True)
 
-    # Write initial metadata
     metadata: dict[str, Any] = {
         "config": _config_to_dict(cfg),
         "run": {
@@ -101,72 +91,34 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
 
 
 def finalize_logging(run_dir: Path, start_time: float) -> None:
-    """Update metadata with end time and total wall seconds."""
     meta_path = run_dir / "metadata.yaml"
     with open(meta_path) as f:
         metadata = yaml.safe_load(f)
-
     metadata["run"]["end_time"] = datetime.now().isoformat()
     metadata["run"]["total_wall_seconds"] = round(time.time() - start_time, 2)
-
     with open(meta_path, "w") as f:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(
-    n_agents: int, mode: TrainMode,
-    n_networks: int | None = None, centralized: bool = False,
-    n_task_types: int = 1, heuristic_name: str = "nearest_task",
-) -> list[str]:
-    """Build column names for metrics.csv."""
-    from orchard.enums import TrainMode
-    if n_networks is None:
-        n_networks = n_agents
-    fields = ["step", "wall_time"]
-    if mode == TrainMode.VALUE_LEARNING:
-        for metric in ("mae", "pct_error", "mape", "bias"):
-            for i in range(n_networks):
-                fields.append(f"{metric}_agent_{i}")
-            fields.append(f"{metric}_avg")
-    elif mode == TrainMode.POLICY_LEARNING:
-        fields.extend([
-            "greedy_rps", "greedy_team_rps",
-            "greedy_correct_pps", "greedy_wrong_pps",
-            f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
-            f"{heuristic_name}_correct_pps",
-            f"{heuristic_name}_wrong_pps",
-        ])
-    elif mode == TrainMode.REWARD_LEARNING:
-        for metric in ("mae",):
-            for i in range(n_networks):
-                fields.append(f"{metric}_agent_{i}")
-            fields.append(f"{metric}_avg")
-        # Per-category MAE
-        if n_task_types > 1:
-            categories = ["no_pick", "pick"] if centralized else ["no_pick", "my_task", "other_task"]
-        else:
-            categories = ["zero", "pick"] if centralized else ["zero", "picker", "other"]
-        for cat in categories:
-            for i in range(n_networks):
-                fields.append(f"mae_{cat}_agent_{i}")
-            fields.append(f"mae_{cat}_avg")
-    fields.append("td_loss_avg")
-    return fields
+def build_main_csv_fieldnames(heuristic_name: str) -> list[str]:
+    return [
+        "step", "wall_time",
+        "greedy_rps", "greedy_team_rps",
+        "greedy_correct_pps", "greedy_wrong_pps",
+        f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
+        f"{heuristic_name}_correct_pps", f"{heuristic_name}_wrong_pps",
+        "td_loss_avg",
+    ]
 
 
-def build_detail_csv_fieldnames(n_agents: int, networks: list[Any], n_networks: int | None = None) -> list[str]:
-    """Build column names for details.csv."""
+def build_detail_csv_fieldnames(networks: list[Any]) -> list[str]:
+    n_networks = len(networks)
     fields = ["step", "wall_time", "ram_mb", "current_lr", "current_epsilon"]
-    if n_networks is None:
-        n_networks = n_agents
-        
-    # Weight and grad norm columns per agent per layer
     for agent_idx in range(n_networks):
         for name, _ in networks[agent_idx].named_parameters():
             if "weight" in name:
                 fields.append(f"weight_norm_agent_{agent_idx}_{name}")
                 fields.append(f"grad_norm_agent_{agent_idx}_{name}")
-
     fields.extend(["td_loss_step", "value_pred_mean", "value_pred_std"])
     fields.extend(["vram_allocated_mb", "vram_peak_mb", "vram_total_mb"])
     return fields

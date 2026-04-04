@@ -1,4 +1,4 @@
-"""Tests for the new Action class and related helpers (chunk 1)."""
+"""Tests for the custom Action class and related helpers."""
 
 import pytest
 from orchard.enums import (
@@ -7,7 +7,6 @@ from orchard.enums import (
     make_pick_action,
     num_actions,
     NUM_MOVE_ACTIONS,
-    NUM_ACTIONS,
     ACTION_PRIORITY,
 )
 
@@ -49,7 +48,7 @@ class TestActionBasic:
 
     def test_hash(self):
         s = {Action.UP, Action(0), Action.DOWN}
-        assert len(s) == 2  # UP and Action(0) are the same
+        assert len(s) == 2  # UP and Action(0) map to the same hash
 
     def test_not_equal_to_int(self):
         assert (Action.UP == 0) is NotImplemented or Action.UP != 0
@@ -81,7 +80,7 @@ class TestMakePickAction:
         assert a.value == 5
         assert a.is_pick() is True
         assert a.pick_type() == 0
-        assert a.name == 'PICK'  # value 5 is in _ACTION_NAMES
+        assert a.name == 'PICK'  # value 5 maps exactly to 'PICK'
 
     def test_pick_3(self):
         a = make_pick_action(3)
@@ -97,9 +96,11 @@ class TestMakePickAction:
 
 class TestNumActions:
     def test_forced(self):
+        # Forced mode ignores n_task_types, always 5 move actions
         assert num_actions(PickMode.FORCED, 4) == 5
 
     def test_choice(self):
+        # Choice mode adds n_task_types pick actions
         assert num_actions(PickMode.CHOICE, 4) == 9
         assert num_actions(PickMode.CHOICE, 1) == 6
         assert num_actions(PickMode.CHOICE, 10) == 15
@@ -109,10 +110,7 @@ class TestConstants:
     def test_num_move_actions(self):
         assert NUM_MOVE_ACTIONS == 5
 
-    def test_backward_compat_alias(self):
-        assert NUM_ACTIONS == NUM_MOVE_ACTIONS
-
     def test_action_priority_length(self):
         assert len(ACTION_PRIORITY) == 5
-        # All movement actions
+        # All actions in the priority queue should be move actions
         assert all(a.is_move() for a in ACTION_PRIORITY)

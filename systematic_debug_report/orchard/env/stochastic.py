@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orchard.enums import DespawnMode, PickMode
+from orchard.enums import DespawnMode, PickMode, TaskSpawnMode
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
@@ -57,6 +57,7 @@ class StochasticEnv(BaseEnv):
     def _spawn_and_despawn_multi(self, state: State) -> State:
         """Spawn/despawn for n_task_types > 1."""
         positions = list(state.task_positions)
+        assert state.task_types is not None, "task_types must be set"
         types = list(state.task_types)
 
         # --- Despawn phase ---
@@ -71,7 +72,6 @@ class StochasticEnv(BaseEnv):
         # --- Spawn phase (per type) ---
         # Resolve effective spawn mode:
         #   explicit task_spawn_mode overrides; None → auto based on pick_mode
-        from orchard.enums import TaskSpawnMode
         tsm = self.stoch.task_spawn_mode
         if tsm is None:
             tsm = (

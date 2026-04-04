@@ -1,22 +1,13 @@
 """All enums used throughout the orchard RL project."""
 
+from __future__ import annotations
+
 from enum import Enum, auto
-
-
-class TDTarget(Enum):
-    PRE_ACTION = auto()
-    AFTER_STATE = auto()
-
-
-class EnvType(Enum):
-    DETERMINISTIC = auto()
-    STOCHASTIC = auto()
 
 
 class DespawnMode(Enum):
     NONE = auto()
     PROBABILITY = auto()
-    # LIFETIME removed — was unused and complicated State with apple_ages
 
 
 class TaskSpawnMode(Enum):
@@ -30,58 +21,15 @@ class PickMode(Enum):
 
 
 class Heuristic(Enum):
-    NEAREST_TASK = auto()                    # move toward any nearest task (legacy)
+    NEAREST_TASK = auto()                    # move toward any nearest task
     NEAREST_CORRECT_TASK = auto()            # move toward nearest task with τ ∈ G_actor; phase 2: always pick
     NEAREST_CORRECT_TASK_STAY_WRONG = auto() # same phase 1; phase 2: pick if correct type, STAY if wrong
 
 
 class EncoderType(Enum):
-    RELATIVE = auto()
-    RELATIVE_K = auto()
-    GRID_MLP = auto()
-    CNN_GRID = auto()
-    CENTRALIZED_CNN_GRID = auto()
-    EGOCENTRIC_CNN_GRID = auto()
-    NO_REDUNDANT_AGENT_GRID = auto()
-    # New task-specialization encoders
-    TASK_CNN_GRID = auto()              # dec: T+3 channels, 1 scalar
-    CENTRALIZED_TASK_CNN_GRID = auto()  # cen: T+N+1 channels, N scalars
     BLIND_TASK_CNN_GRID = auto()             # dec O(1): 4 grid channels, 3 scalars
     FILTERED_TASK_CNN_GRID = auto()          # dec O(1): 6 grid channels, 3 scalars
-
-
-class ModelType(Enum):
-    MLP = auto()
-    CNN = auto()
-
-
-class TrainMode(Enum):
-    VALUE_LEARNING = auto()
-    REWARD_LEARNING = auto()
-    POLICY_LEARNING = auto()
-
-
-class Schedule(Enum):
-    NONE = auto()
-    LINEAR = auto()
-    STEP = auto()
-
-
-class TrainMethod(Enum):
-    NSTEP = auto()
-    BACKWARD_VIEW = auto()
-
-
-class LearningType(Enum):
-    DECENTRALIZED = auto()
-    CENTRALIZED = auto()
-
-
-class StoppingCondition(Enum):
-    NONE = auto()
-    RUNNING_MAX_PPS = auto()
-    RUNNING_MIN_MAE = auto()
-    RUNNING_MAX_RPS = auto()  # for task specialization experiments
+    CENTRALIZED_TASK_CNN_GRID = auto()       # cen: T+N+1 channels, N scalars
 
 
 class Activation(Enum):
@@ -93,6 +41,22 @@ class Activation(Enum):
 class WeightInit(Enum):
     DEFAULT = auto()
     ZERO_BIAS = auto()
+
+
+class LearningType(Enum):
+    DECENTRALIZED = auto()
+    CENTRALIZED = auto()
+
+
+class StoppingCondition(Enum):
+    NONE = auto()
+    RUNNING_MAX_RPS = auto()
+
+
+class Schedule(Enum):
+    NONE = auto()
+    LINEAR = auto()
+    STEP = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +85,15 @@ class Action:
     """Action with integer value. Movement actions 0-4, pick actions 5+."""
     __slots__ = ('_value',)
 
-    def __init__(self, value: int):
+    # Class-level singletons — declared for Pylance
+    UP: Action
+    DOWN: Action
+    LEFT: Action
+    RIGHT: Action
+    STAY: Action
+    PICK: Action
+
+    def __init__(self, value: int) -> None:
         self._value = value
 
     @property
@@ -147,19 +119,19 @@ class Action:
         """For pick actions, returns the task type index. None for movement."""
         return self._value - 5 if self._value >= 5 else None
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if isinstance(other, Action):
             return self._value == other._value
         return NotImplemented
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash(self._value)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f'Action.{self.name}'
 
 
-# Class-level singletons for movement actions
+# Class-level singletons
 Action.UP = Action(0)
 Action.DOWN = Action(1)
 Action.LEFT = Action(2)
@@ -187,6 +159,3 @@ def num_actions(pick_mode: PickMode, n_task_types: int) -> int:
 ACTION_PRIORITY: list[Action] = [
     Action.LEFT, Action.DOWN, Action.RIGHT, Action.UP, Action.STAY,
 ]
-
-# Backward compat alias
-NUM_ACTIONS: int = NUM_MOVE_ACTIONS

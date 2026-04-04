@@ -4,7 +4,7 @@ Stacks all N networks' parameters and eligibility traces into (N, *shape)
 tensors on GPU. Uses torch.func.vmap + grad_and_value + functional_call to
 execute all N forward+backward passes in one parallel kernel launch.
 
-The algorithm is IDENTICAL to ValueNetwork.td_lambda_step — same TD(λ)
+The algorithm is IDENTICAL to ValueNetwork.td_step — same TD(λ)
 backward view, same eligibility traces, same manual SGD. Only the execution
 strategy changes: N sequential CPU calls → 1 batched GPU call.
 """
@@ -16,18 +16,15 @@ import torch.nn as nn
 
 from torch.func import functional_call, grad_and_value, stack_module_state, vmap
 
-from orchard.datatypes import EncoderOutput, ScheduleConfig
+from orchard.datatypes import EncoderOutput
 from orchard.model import ValueNetwork
-from orchard.schedule import compute_schedule_value
 
 
 class _VmapForwardWrapper(nn.Module):
     """Pure-function wrapper for functional_call compatibility.
 
-    Takes (grid, scalar) as raw tensors. Under vmap each lane sees:
-        grid:   (C, H, W)
-        scalar: (S,)
-    Returns a scalar value.
+    Takes (grid, scalar) as raw tensors. Delegates to ValueNetwork.forward_raw
+    so the forward logic is defined in exactly one place.
     """
 
     def __init__(self, base_net: ValueNetwork) -> None:
@@ -37,19 +34,7 @@ class _VmapForwardWrapper(nn.Module):
         self.net = base_net.net
 
     def forward(self, grid: torch.Tensor, scalar: torch.Tensor) -> torch.Tensor:
-        x = grid
-        if x.dim() == 3:
-            x = x.unsqueeze(0)                         # vmap: (C,H,W) → (1,C,H,W)
-        # Now x is (B, C, H, W) — B=1 for vmap, B>1 for batched inference
-        x = self.flatten(self.conv(x))                  # (B, flat)
-        s = scalar
-        if s.dim() == 1:
-            s = s.unsqueeze(0)                          # vmap: (S,) → (1,S)
-        x = torch.cat([x, s], dim=-1)                   # (B, flat+S)
-        out = self.net(x).squeeze(-1)                    # (B,) or scalar
-        if out.dim() == 1 and out.size(0) == 1:
-            return out.squeeze(0)                        # scalar for vmap
-        return out                                       # (B,) for batched
+        return ValueNetwork.forward_raw(self, grid, scalar)
 
 
 class BatchedTrainer:
@@ -67,15 +52,11 @@ class BatchedTrainer:
         self,
         networks: list[ValueNetwork],
         td_lambda: float,
-        lr_schedule: ScheduleConfig,
-        total_steps: int,
         device: str = "cuda",
     ) -> None:
         self.n = len(networks)
         self.networks = networks
         self._td_lambda = td_lambda
-        self._lr_schedule = lr_schedule
-        self._total_steps = total_steps
         self.device = torch.device(device)
 
         # Create wrapper modules with identical structure
@@ -116,12 +97,13 @@ class BatchedTrainer:
         discount: float,              # scalar, shared across agents
         grids_next: torch.Tensor,     # (N, C, H, W) — s_{t+1} encodings
         scalars_next: torch.Tensor,   # (N, S)
-        env_step: int,
+        alpha: float,
     ) -> float:
         """One batched TD(λ) backward-view step for all N networks.
 
-        Identical to ValueNetwork.td_lambda_step executed N times,
-        but in one parallel GPU call.
+        z ← γ_prev · λ · z + ∇V(s)
+        δ = r + γ · V(s') − V(s)
+        θ ← θ + α · δ · z
 
         Returns sum of squared TD errors (for loss logging).
         """
@@ -132,33 +114,26 @@ class BatchedTrainer:
         grids_next = grids_next.to(self.device)
         scalars_next = scalars_next.to(self.device)
 
-        # 1 + 2. Batched forward + backward: all N grads and values
+        # Forward + backward: all N grads and values
         grads, v_s = self._vmap_grad_and_value(
             self._params, self._buffers, grids_t, scalars_t
         )
-        # grads: {name: (N, *param_shape)}, v_s: (N,)
 
-        # 3. Update eligibility traces: z = γ_prev * λ * z + grad
+        # z ← γ_prev · λ · z + ∇V(s)
         for name in self._params:
-            # Broadcast gamma_prev (N,) to match param shape
             gp = self._gamma_prev
             for _ in range(self._traces[name].dim() - 1):
                 gp = gp.unsqueeze(-1)
             self._traces[name] = gp * self._td_lambda * self._traces[name] + grads[name]
 
-        # 4. Batched no-grad forward on s_{t+1}
+        # δ = r + γ · V(s') − V(s)
         with torch.no_grad():
             v_next = self._vmap_forward(
                 self._params, self._buffers, grids_next, scalars_next
-            )  # (N,)
+            )
+        deltas = rewards + discount * v_next - v_s.detach()
 
-        # 5. TD error: δ = r + γ * V(s') - V(s)
-        deltas = rewards + discount * v_next - v_s.detach()  # (N,)
-
-        # 6. Learning rate from schedule
-        alpha = compute_schedule_value(self._lr_schedule, env_step, self._total_steps)
-
-        # 7. Manual SGD: θ += α * δ * z
+        # θ ← θ + α · δ · z
         with torch.no_grad():
             for name in self._params:
                 d = deltas
@@ -166,9 +141,7 @@ class BatchedTrainer:
                     d = d.unsqueeze(-1)
                 self._params[name] = self._params[name] + alpha * d * self._traces[name]
 
-        # 8. Store discount as γ_prev for next step
         self._gamma_prev.fill_(discount)
-
         return (deltas ** 2).sum().item()
 
     # ------------------------------------------------------------------
