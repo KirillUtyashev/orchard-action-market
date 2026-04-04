@@ -1,0 +1,133 @@
+# ============================================================================
+# Orchard Config Reference
+# ============================================================================
+# Every field explained. Copy this and modify for your experiments.
+
+env:
+  height: 9                        # grid rows
+  width: 9                         # grid columns
+  n_agents: 4                      # total agents in the environment
+  n_task_types: 2                  # T: number of distinct task types
+  n_tasks: 10                      # initial tasks spawned per type at env.init_state()
+  max_tasks_per_type: 10           # cap: spawning stops when this many of type τ exist
+  gamma: 0.99                      # discount factor for move turns (pick turns use γ=1)
+
+  # Reward structure:
+  #   Agent picks correct type (τ ∈ G_actor):
+  #     picker gets r_picker, groupmates share (1 - r_picker)
+  #     centralized sum = r_picker + (1 - r_picker) = 1, always
+  #   Agent picks wrong type (τ ∉ G_actor):
+  #     picker gets r_low, everyone else gets 0
+  #   With r_picker=-1: picker is penalized, groupmates get +2/(n_group-1) each
+  r_picker: -1.0                   # reward to the picking agent on correct pick
+  r_low: -1.0                     # reward to picker on wrong-type pick
+
+  # Pick mode:
+  #   choice: agent must explicitly choose pick(τ) or STAY when on a task cell
+  #   forced: agent auto-picks when stepping on a task cell (no STAY option)
+  pick_mode: choice
+
+  # Task assignments: G_i for each agent — which task types they're assigned to.
+  # Agent i gets reward for picking types in G_i (correct pick).
+  # Length must equal n_agents. Each sub-list contains type indices [0, T-1].
+  # Alternative: use "rho: 0.5" instead, which auto-generates cyclic assignments.
+  task_assignments: [[0],[0],[1],[1]]
+
+  # Stochastic spawning/despawning (required):
+  stochastic:
+    spawn_prob: 0.01               # probability per empty cell per type per turn
+    despawn_prob: 0.0125           # probability each existing task despawns per turn
+    # despawn_mode: probability    # "probability" or "none" (default: probability)
+    # task_spawn_mode: null        # null=auto (forced→global_unique, choice→per_type_unique)
+                                   # "global_unique": at most 1 task of ANY type per cell
+                                   # "per_type_unique": at most 1 per type; types may coexist
+
+model:
+  # Encoder: how the grid state is converted to neural network input
+  #   blind_task_cnn_grid:        dec O(1), 4 grid channels, 3 scalars
+  #                               agent sees only its own tasks, self, teammates, actor
+  #   filtered_task_cnn_grid:     dec O(1), 6 grid channels, 3 scalars
+  #                               like blind but also sees stranger tasks separately
+  #   centralized_task_cnn_grid:  cen, T+N+1 channels, N scalars
+  #                               single network sees everything
+  encoder: blind_task_cnn_grid
+
+  # CNN architecture: list of [output_channels, kernel_size] per conv layer
+  # Padding is always kernel_size // 2 (same-padding), so spatial dims don't shrink
+  conv_specs: [[16, 3]]
+
+  # MLP hidden dims after conv flatten + scalar concat
+  # [] means no hidden layers (conv output → linear → 1)
+  # [16] means one hidden layer with 16 units
+  # [64, 64] means two hidden layers
+  mlp_dims: [16]
+
+  # Activation function: leaky_relu or relu or none
+  activation: leaky_relu
+
+  # Weight initialization: zero_bias zeros all bias terms; default leaves pytorch defaults
+  weight_init: zero_bias
+
+train:
+  # Learning type determines number of networks:
+  #   decentralized: N networks, one per agent (agent i's network only sees agent i's encoding)
+  #   centralized: 1 network shared by all agents (sees full state)
+  learning_type: decentralized
+
+  # Device: true=GPU (BatchedTrainer + vmap), false=CPU (sequential forwards)
+  # GPU works for both cen and dec. CPU works for both too (slower for dec).
+  use_gpu: true
+
+  # TD(λ) eligibility trace decay. 0=TD(0), 1=Monte Carlo-ish.
+  # 0.3 is our standard value — good balance of bias/variance.
+  td_lambda: 0.3
+
+  # Communication weight for decentralized V_weighted learning.
+  # 0 = each agent only sees its own reward (will NOT learn to pick with r_picker<0)
+  # 1 = full team reward sharing (standard for cooperative tasks)
+  # Between 0 and 1 = partial sharing
+  # For centralized: irrelevant (single network already sees sum of rewards)
+  comm_weight: 1.0
+
+  total_steps: 10000000            # maximum training steps (may stop early)
+  seed: 1234                       # RNG seed for reproducibility
+
+  # Heuristic baseline policy used for:
+  #   1. Eval comparison (heuristic RPS vs greedy RPS in metrics.csv)
+  #   Options: nearest_task, nearest_correct_task, nearest_correct_task_stay_wrong
+  #   nearest_correct_task_stay_wrong: moves toward correct-type tasks,
+  #     picks if correct type at cell, STAYs if wrong type
+  heuristic: nearest_correct_task_stay_wrong
+
+  # Learning rate schedule for SGD
+  lr:
+    start: 9e-3                    # initial (and constant if schedule=none)
+    end: 9e-3                      # final value (only used if schedule=linear)
+    schedule: none                 # none=constant, linear=decay from start to end
+    # step_size: 0                 # for schedule=step: decay every N steps
+    # step_factor: 1.0             # for schedule=step: multiply by this factor
+    # step_start: 0                # for schedule=step: start stepping after this step
+
+  # Epsilon-greedy exploration rate
+  epsilon:
+    start: 0.05                    # initial exploration rate
+    end: 0.05                      # final (only used if schedule=linear)
+    schedule: none                 # none=constant, linear=decay
+
+  # Early stopping: stop training if metric doesn't improve
+  stopping:
+    condition: running_max_rps     # "running_max_rps" or "none"
+    patience_steps: 1000000        # stop after this many steps without improvement
+    improvement_threshold: 1e-7    # minimum improvement to count as "better"
+    min_steps_before_stop: 3000000 # never stop before this many steps
+
+eval:
+  eval_steps: 1000                 # steps per eval rollout (greedy + heuristic)
+  rollout_len: 2000                # max rollout length for trajectory generation
+  n_test_states: 50                # number of states for value diagnostics
+  checkpoint_freq: 100000          # save model every N steps (0=final only)
+
+logging:
+  output_dir: runs/                # base directory; timestamped subfolder created
+  main_csv_freq: 10000             # write metrics.csv every N steps
+  detail_csv_freq: 50000           # write details.csv (weight norms, etc.) every N steps
