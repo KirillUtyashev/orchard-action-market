@@ -212,6 +212,7 @@ class TrainConfig:
     lr: ScheduleConfig
     nstep: int = 1
     td_lambda: float = 0.0
+    comm_weight: float = 0.0  # w: communication weight for decentralized value learning
     train_method: TrainMethod = TrainMethod.NSTEP
     learning_type: LearningType = LearningType.DECENTRALIZED
     value_learning: ValueLearningConfig | None = None

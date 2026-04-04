@@ -423,16 +423,17 @@ def evaluate_policy_learning(
     batch_actions: bool = False,
     heuristic: Heuristic = Heuristic.NEAREST_TASK,
     batched_trainer: object | None = None,
+    comm_weight: float = 1.0,
 ) -> dict[str, float]:
     """Evaluate greedy vs heuristic policy."""
     eval_start = env.init_state()
 
     def greedy_policy(s: State, phase2: bool = False) -> Action:
         if batched_trainer is not None:
-            return argmax_a_Q_team_gpu(s, batched_trainer, env, phase2=phase2)
+            return argmax_a_Q_team_gpu(s, batched_trainer, env, phase2=phase2, comm_weight=comm_weight)
         if batch_actions:
-            return argmax_a_Q_team_batched(s, networks, env, phase2=phase2)
-        return argmax_a_Q_team(s, networks, env, phase2=phase2)
+            return argmax_a_Q_team_batched(s, networks, env, phase2=phase2, comm_weight=comm_weight)
+        return argmax_a_Q_team(s, networks, env, phase2=phase2, comm_weight=comm_weight)
 
     def baseline_policy(s: State, phase2: bool = False) -> Action:
         return heuristic_action(s, env.cfg, heuristic, phase2=phase2)

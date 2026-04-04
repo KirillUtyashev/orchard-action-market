@@ -202,16 +202,20 @@ def _after_state_for_action(
 
 def _after_state_and_team_reward(
     state: State, action: Action, env: BaseEnv, phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> tuple[State, float]:
-    """Compute after-state AND immediate team reward for an action.
+    """Compute after-state AND immediate weighted reward for an action.
 
-    For pick actions: reward from resolve_pick.
+    For pick actions: reward from resolve_pick, weighted by comm_weight.
     For move/stay: reward is 0.
     Sets phase2_pending on returned state (same logic as _after_state_for_action).
     """
     if action.is_pick():
         s_after, rewards = env.resolve_pick(state, pick_type=action.pick_type())
-        return s_after, sum(rewards)
+        actor = state.actor
+        team_r = sum(rewards)
+        weighted_r = rewards[actor] + comm_weight * (team_r - rewards[actor])
+        return s_after, weighted_r
     s = env.apply_action(state, action)
     if not phase2 and s.is_agent_on_task(s.actor):
         return replace(s, phase2_pending=True), 0.0
@@ -224,20 +228,26 @@ def Q_team(
     networks: list[ValueNetwork],
     env: BaseEnv,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> float:
-    """Team Q-value: immediate reward + sum of all agents' after-state values.
+    """Weighted Q-value: immediate reward + weighted sum of agents' after-state values.
 
-    phase2=True adds immediate reward from pick actions (critical for CHOICE mode).
+    comm_weight=1.0 gives the full team Q (original behavior).
+    comm_weight=0.0 gives only the acting agent's Q.
     """
     if phase2:
-        s_after, immediate_r = _after_state_and_team_reward(state, action, env, phase2=True)
+        s_after, immediate_r = _after_state_and_team_reward(
+            state, action, env, phase2=True, comm_weight=comm_weight)
     else:
         s_after = _after_state_for_action(state, action, env, phase2=False)
         immediate_r = 0.0
+    actor = state.actor
     total: float = immediate_r
     with torch.no_grad():
         for i, network in enumerate(networks):
-            total += network(encoding.encode(s_after, i)).item()
+            v = network(encoding.encode(s_after, i)).item()
+            weight = 1.0 if (len(networks) == 1 or i == actor) else comm_weight
+            total += weight * v
     return total
 
 
@@ -246,6 +256,7 @@ def argmax_a_Q_team(
     networks: list[ValueNetwork],
     env: BaseEnv,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """Greedy action for phase 1 (move) or phase 2 (pick/stay). Tie-break via action order."""
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
@@ -253,7 +264,7 @@ def argmax_a_Q_team(
     best_action: Action = all_actions[0]
 
     for action in all_actions:
-        q = Q_team(state, action, networks, env, phase2=phase2)
+        q = Q_team(state, action, networks, env, phase2=phase2, comm_weight=comm_weight)
         if best_value is None or q > best_value:
             best_value = q
             best_action = action
@@ -266,15 +277,18 @@ def argmax_a_Q_team_batched(
     networks: list[ValueNetwork],
     env: BaseEnv,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """Greedy action with batched encoding + forward passes."""
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    actor = state.actor
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
     for a in all_actions:
         if phase2:
-            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True)
+            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True,
+                                                       comm_weight=comm_weight)
             after_states.append(s_after)
             immediate_rewards.append(r)
         else:
@@ -286,8 +300,9 @@ def argmax_a_Q_team_batched(
         for i, net in enumerate(networks):
             batch_enc = encoding.encode_batch_for_actions(state, i, after_states)
             vals = net(batch_enc)
+            weight = 1.0 if (len(networks) == 1 or i == actor) else comm_weight
             for k in range(len(all_actions)):
-                team_values[k] += vals[k].item()
+                team_values[k] += weight * vals[k].item()
 
     best_idx = 0
     for k in range(1, len(all_actions)):
@@ -389,18 +404,21 @@ def argmax_a_Q_team_vmap(
     networks: list[ValueNetwork],
     env: BaseEnv,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """Greedy action using vmap-batched forward passes across all N networks."""
     assert _vmap_helper is not None, "Call init_vmap() first"
 
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     n_nets = len(networks)
+    actor = state.actor
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
     for a in all_actions:
         if phase2:
-            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True)
+            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True,
+                                                       comm_weight=comm_weight)
             after_states.append(s_after)
             immediate_rewards.append(r)
         else:
@@ -420,7 +438,12 @@ def argmax_a_Q_team_vmap(
 
     with torch.no_grad():
         values = _vmap_helper.forward_batched(grids_stacked, scalars_stacked)
-        team_values = values.sum(dim=0)
+        if n_nets > 1 and comm_weight < 1.0:
+            weights = torch.full((n_nets, 1), comm_weight)
+            weights[actor] = 1.0
+            team_values = (values * weights).sum(dim=0)
+        else:
+            team_values = values.sum(dim=0)
 
     for k in range(len(all_actions)):
         team_values[k] += immediate_rewards[k]
@@ -438,12 +461,13 @@ def epsilon_greedy(
     env: BaseEnv,
     epsilon: float,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """With probability epsilon choose random, else greedy. Works for phase 1 and 2."""
     actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     if rng.random() < epsilon:
         return actions[rng.randint(0, len(actions) - 1)]
-    return argmax_a_Q_team(state, networks, env, phase2=phase2)
+    return argmax_a_Q_team(state, networks, env, phase2=phase2, comm_weight=comm_weight)
 
 
 def epsilon_greedy_batched(
@@ -453,14 +477,15 @@ def epsilon_greedy_batched(
     epsilon: float,
     use_vmap: bool = False,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """Batched epsilon-greedy. Works for phase 1 and 2."""
     actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     if rng.random() < epsilon:
         return actions[rng.randint(0, len(actions) - 1)]
     if use_vmap and _vmap_helper is not None:
-        return argmax_a_Q_team_vmap(state, networks, env, phase2=phase2)
-    return argmax_a_Q_team_batched(state, networks, env, phase2=phase2)
+        return argmax_a_Q_team_vmap(state, networks, env, phase2=phase2, comm_weight=comm_weight)
+    return argmax_a_Q_team_batched(state, networks, env, phase2=phase2, comm_weight=comm_weight)
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +496,7 @@ def argmax_a_Q_team_gpu(
     batched_trainer: object,
     env: BaseEnv,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """Greedy action using BatchedTrainer's GPU params directly.
 
@@ -478,12 +504,14 @@ def argmax_a_Q_team_gpu(
     No sync_to_networks or refresh_vmap needed.
     """
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    actor = state.actor
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
     for a in all_actions:
         if phase2:
-            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True)
+            s_after, r = _after_state_and_team_reward(state, a, env, phase2=True,
+                                                       comm_weight=comm_weight)
             after_states.append(s_after)
             immediate_rewards.append(r)
         else:
@@ -495,7 +523,13 @@ def argmax_a_Q_team_gpu(
     # grids: (N, B, C, H, W), scalars: (N, B, S)
 
     values = batched_trainer.forward_batched(grids, scalars)  # (N, B)
-    team_values = values.sum(dim=0)  # (B,)
+    n_nets = values.size(0)
+    if n_nets > 1 and comm_weight < 1.0:
+        weights = torch.full((n_nets, 1), comm_weight, device=values.device)
+        weights[actor] = 1.0
+        team_values = (values * weights).sum(dim=0)  # (B,)
+    else:
+        team_values = values.sum(dim=0)  # (B,)
 
     for k in range(len(all_actions)):
         team_values[k] += immediate_rewards[k]
@@ -510,9 +544,10 @@ def epsilon_greedy_gpu(
     env: BaseEnv,
     epsilon: float,
     phase2: bool = False,
+    comm_weight: float = 1.0,
 ) -> Action:
     """GPU-batched epsilon-greedy. No sync needed."""
     actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     if rng.random() < epsilon:
         return actions[rng.randint(0, len(actions) - 1)]
-    return argmax_a_Q_team_gpu(state, batched_trainer, env, phase2=phase2)
+    return argmax_a_Q_team_gpu(state, batched_trainer, env, phase2=phase2, comm_weight=comm_weight)

@@ -64,8 +64,27 @@ def _train_all_agents(
     discount: float,
     s_next_encs: list[EncoderOutput],
     env_step: int,
+    comm_weight: float = 0.0,
 ) -> tuple[float, int]:
-    """Train all agent networks on one transition. Returns (total_loss, count)."""
+    """Train all agent networks on one transition. Returns (total_loss, count).
+
+    When comm_weight > 0, folds V_weighted into an adjusted reward so each
+    network's existing train_step computes the correct weighted TD error:
+        δ = weighted_r + γ·V_weighted(s') − V_weighted(s)
+    """
+    if comm_weight > 0.0 and len(networks) > 1:
+        with torch.no_grad():
+            v_s = [net(s_encs[i]).item() for i, net in enumerate(networks)]
+            v_next = [net(s_next_encs[i]).item() for i, net in enumerate(networks)]
+        total_v_s = sum(v_s)
+        total_v_next = sum(v_next)
+        total_r = sum(rewards)
+        rewards = tuple(
+            rewards[i] + comm_weight * (total_r - rewards[i])
+            + discount * comm_weight * (total_v_next - v_next[i])
+            - comm_weight * (total_v_s - v_s[i])
+            for i in range(len(networks))
+        )
     total_loss = 0.0
     for i in range(len(networks)):
         total_loss += networks[i].train_step(
@@ -85,8 +104,22 @@ def _train_all_agents_gpu(
     grids_next: "torch.Tensor",
     scalars_next: "torch.Tensor",
     env_step: int,
+    comm_weight: float = 0.0,
 ) -> tuple[float, int]:
     """GPU-batched training. Same semantics as _train_all_agents."""
+    if comm_weight > 0.0 and batched_trainer.n > 1:
+        with torch.no_grad():
+            v_s = batched_trainer.forward_single_batched(grids_t, scalars_t)  # (N,)
+            v_next = batched_trainer.forward_single_batched(grids_next, scalars_next)  # (N,)
+        total_v_s = v_s.sum().item()
+        total_v_next = v_next.sum().item()
+        total_r = sum(rewards)
+        rewards = tuple(
+            rewards[i] + comm_weight * (total_r - rewards[i])
+            + discount * comm_weight * (total_v_next - v_next[i].item())
+            - comm_weight * (total_v_s - v_s[i].item())
+            for i in range(len(rewards))
+        )
     rewards_t = torch.tensor(rewards, dtype=torch.float32)
     total_loss = batched_trainer.td_lambda_step_batched(
         grids_t, scalars_t, rewards_t, discount,
@@ -147,6 +180,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     heuristic = cfg.train.heuristic
     n_task_types = cfg.env.n_task_types
     pick_mode = cfg.env.pick_mode
+    _cw = cfg.train.comm_weight  # communication weight for V_weighted
 
     _cached_zero_rewards = tuple(0.0 for _ in range(n_networks))
     networks = create_networks(
@@ -336,12 +370,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             )
             if use_gpu_batched:
                 move_action = epsilon_greedy_gpu(s_t, batched_trainer, env, epsilon,
-                                                 phase2=False)
+                                                 phase2=False, comm_weight=_cw)
             elif cfg.train.batch_actions:
                 move_action = epsilon_greedy_batched(s_t, networks, env, epsilon,
-                                                     use_vmap=use_vmap, phase2=False)
+                                                     use_vmap=use_vmap, phase2=False, comm_weight=_cw)
             else:
-                move_action = epsilon_greedy(s_t, networks, env, epsilon, phase2=False)
+                move_action = epsilon_greedy(s_t, networks, env, epsilon, phase2=False, comm_weight=_cw)
         elif cfg.train.mode == TrainMode.REWARD_LEARNING:
             move_actions = get_all_actions(cfg.env)
             move_action = move_actions[rng.randint(0, len(move_actions) - 1)]
@@ -366,12 +400,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             elif cfg.train.mode == TrainMode.POLICY_LEARNING:
                 if use_gpu_batched:
                     pick_action = epsilon_greedy_gpu(s_moved, batched_trainer, env, epsilon,
-                                                     phase2=True)
+                                                     phase2=True, comm_weight=_cw)
                 elif cfg.train.batch_actions:
                     pick_action = epsilon_greedy_batched(s_moved, networks, env, epsilon,
-                                                         use_vmap=use_vmap, phase2=True)
+                                                         use_vmap=use_vmap, phase2=True, comm_weight=_cw)
                 else:
-                    pick_action = epsilon_greedy(s_moved, networks, env, epsilon, phase2=True)
+                    pick_action = epsilon_greedy(s_moved, networks, env, epsilon, phase2=True, comm_weight=_cw)
             else:  # REWARD_LEARNING
                 p2_acts = get_phase2_actions(s_moved, cfg.env)
                 pick_action = p2_acts[rng.randint(0, len(p2_acts) - 1)]
@@ -413,7 +447,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents_gpu(batched_trainer, pre_g, pre_s,
                                                          _cached_zero_rewards, cfg.env.gamma,
-                                                         move_g, move_s, t)
+                                                         move_g, move_s, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
 
@@ -424,7 +458,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents_gpu(batched_trainer, move_g, move_s,
                                                          _team_rewards(pick_rewards, centralized),
-                                                         1.0, next_g, next_s, t)
+                                                         1.0, next_g, next_s, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
                 else:
@@ -435,7 +469,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents_gpu(batched_trainer, pre_g, pre_s,
                                                          _cached_zero_rewards, cfg.env.gamma,
-                                                         next_g, next_s, t)
+                                                         next_g, next_s, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
             else:
@@ -449,7 +483,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
-                                                    cfg.env.gamma, move_enc, t)
+                                                    cfg.env.gamma, move_enc, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
 
@@ -460,7 +494,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents(networks, move_enc,
                                                     _team_rewards(pick_rewards, centralized),
-                                                    1.0, next_enc, t)
+                                                    1.0, next_enc, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
                 else:
@@ -470,7 +504,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
 
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents(networks, pre_enc, _zero_rewards(n_networks),
-                                                    cfg.env.gamma, next_enc, t)
+                                                    cfg.env.gamma, next_enc, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
 
@@ -486,7 +520,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     assert prev_reward is not None and prev_discount is not None
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents_gpu(batched_trainer, prev_after_grids, prev_after_scalars,
-                                                         prev_reward, prev_discount, move_g, move_s, t)
+                                                         prev_reward, prev_discount, move_g, move_s, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
 
@@ -498,7 +532,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents_gpu(batched_trainer, move_g, move_s,
                                                          _team_rewards(pick_rewards, centralized),
-                                                         pick_discount, pick_g, pick_s, t)
+                                                         pick_discount, pick_g, pick_s, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
                     prev_after_grids, prev_after_scalars = pick_g, pick_s
@@ -513,7 +547,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     assert prev_reward is not None and prev_discount is not None
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents(networks, prev_after_enc, prev_reward,
-                                                    prev_discount, move_after_enc, t)
+                                                    prev_discount, move_after_enc, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
 
@@ -525,7 +559,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     if time_debug: _ta = _tick()
                     loss, count = _train_all_agents(networks, move_after_enc,
                                                     _team_rewards(pick_rewards, centralized),
-                                                    pick_discount, pick_after_enc, t)
+                                                    pick_discount, pick_after_enc, t, comm_weight=_cw)
                     if time_debug: _tb = _tick(); _tt_accum += _tb - _ta
                     td_loss_accum += loss; td_loss_count += count
                     prev_after_enc = pick_after_enc
@@ -586,6 +620,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                     batch_actions=cfg.train.batch_actions,
                     heuristic=heuristic,
                     batched_trainer=batched_trainer if use_gpu_batched else None,
+                    comm_weight=_cw,
                 )
                 row.update(pol_metrics)
 

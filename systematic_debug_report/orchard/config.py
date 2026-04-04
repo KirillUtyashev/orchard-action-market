@@ -340,6 +340,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         nstep=int(d.get("nstep", 1)),
         lr=lr_cfg,
         td_lambda=float(d.get("td_lambda", 0.0)),
+        comm_weight=float(d.get("comm_weight", 0.0)),
         value_learning=vl_cfg,
         policy_learning=pl_cfg,
         train_method=_enum_lookup(d.get("train_method", "nstep"), _TRAIN_METHOD_MAP, "train.train_method"),
