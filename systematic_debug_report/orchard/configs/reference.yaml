@@ -50,6 +50,7 @@ model:
   #                               like blind but also sees stranger tasks separately
   #   centralized_task_cnn_grid:  cen, T+N+1 channels, N scalars
   #                               single network sees everything
+  #   position_aware_task_cnn_grid: dec O(1), 5 grid channels, 3 scalars
   encoder: blind_task_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer

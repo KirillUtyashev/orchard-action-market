@@ -40,6 +40,7 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
         "blind_task_cnn_grid": EncoderType.BLIND_TASK_CNN_GRID,
         "filtered_task_cnn_grid": EncoderType.FILTERED_TASK_CNN_GRID,
+        "position_aware_task_cnn_grid": EncoderType.POSITION_AWARE_TASK_CNN_GRID,
         "centralized_task_cnn_grid": EncoderType.CENTRALIZED_TASK_CNN_GRID,
     },
     "learning_type": {

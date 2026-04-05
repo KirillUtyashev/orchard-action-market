@@ -9,6 +9,7 @@ from orchard.encoding.grid import (
     BlindTaskGridEncoder,
     CentralizedTaskGridEncoder,
     FilteredTaskGridEncoder,
+    PositionAwareTaskGridEncoder,
 )
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, EnvConfig, State
@@ -20,6 +21,7 @@ _encoder: BaseEncoder | None = None
 
 _ENCODER_MAP = {
     EncoderType.BLIND_TASK_CNN_GRID: BlindTaskGridEncoder,
+    EncoderType.POSITION_AWARE_TASK_CNN_GRID: PositionAwareTaskGridEncoder,
     EncoderType.FILTERED_TASK_CNN_GRID: FilteredTaskGridEncoder,
     EncoderType.CENTRALIZED_TASK_CNN_GRID: CentralizedTaskGridEncoder,
 }
