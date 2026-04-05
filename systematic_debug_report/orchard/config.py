@@ -9,6 +9,7 @@ import yaml
 
 from orchard.enums import (
     Activation,
+    AlgorithmName,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -20,9 +21,12 @@ from orchard.enums import (
     WeightInit,
 )
 from orchard.datatypes import (
+    AlgorithmConfig,
     EnvConfig,
     EvalConfig,
     ExperimentConfig,
+    FollowingRatesConfig,
+    InfluencerConfig,
     LoggingConfig,
     ModelConfig,
     ScheduleConfig,
@@ -31,6 +35,7 @@ from orchard.datatypes import (
     TrainConfig,
     compute_task_assignments,
 )
+from orchard.following_rates import get_supported_rate_solver_names, is_scipy_rate_solver_available
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +51,10 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "learning_type": {
         "decentralized": LearningType.DECENTRALIZED,
         "centralized": LearningType.CENTRALIZED,
+    },
+    "algorithm_name": {
+        "value": AlgorithmName.VALUE,
+        "actor_critic": AlgorithmName.ACTOR_CRITIC,
     },
     "pick_mode": {
         "forced": PickMode.FORCED,
@@ -211,11 +220,65 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         min_steps_before_stop=int(stop_d.get("min_steps_before_stop", 0)),
     )
 
+    algorithm_d = d.get("algorithm", {})
+    algorithm_name = _enum(algorithm_d.get("name", "value"), "algorithm_name")
+    actor_lr_d = d.get("actor_lr", algorithm_d.get("actor_lr"))
+    actor_lr_cfg = _parse_schedule(actor_lr_d, "train.actor_lr") if actor_lr_d else None
+    freeze_critic = bool(d.get("freeze_critic", False))
+
+    following_d = d.get("following_rates", {})
+    following_cfg = FollowingRatesConfig(
+        enabled=bool(following_d.get("enabled", False)),
+        budget=float(following_d.get("budget", 0.0)),
+        rho=float(following_d.get("rho", 0.0)),
+        reallocation_freq=int(following_d.get("reallocation_freq", 1)),
+        solver=str(following_d.get("solver", "closed_form")),
+        fixed=bool(following_d.get("fixed", False)),
+    )
+
+    influencer_d = d.get("influencer", {})
+    influencer_cfg = InfluencerConfig(
+        enabled=bool(influencer_d.get("enabled", False)),
+        budget=float(influencer_d.get("budget", 0.0)),
+    )
+
+    if algorithm_name == AlgorithmName.ACTOR_CRITIC:
+        if d.get("learning_type", "decentralized").strip().lower() != "decentralized":
+            raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
+        if float(d.get("comm_weight", 0.0)) != 0.0:
+            raise ValueError("train.comm_weight is only supported for train.algorithm.name=value.")
+    elif freeze_critic:
+        raise ValueError("train.freeze_critic is only supported for train.algorithm.name=actor_critic.")
+    if following_cfg.enabled:
+        if algorithm_name != AlgorithmName.ACTOR_CRITIC:
+            raise ValueError("train.following_rates.enabled=true requires train.algorithm.name=actor_critic.")
+        if following_cfg.budget < 0.0:
+            raise ValueError("train.following_rates.budget must be >= 0.")
+        if not (0.0 < following_cfg.rho <= 1.0):
+            raise ValueError("train.following_rates.rho must be in (0, 1].")
+        if following_cfg.reallocation_freq <= 0:
+            raise ValueError("train.following_rates.reallocation_freq must be >= 1.")
+        if following_cfg.solver not in get_supported_rate_solver_names():
+            raise ValueError(
+                f"train.following_rates.solver must be one of {get_supported_rate_solver_names()}."
+            )
+        if following_cfg.solver == "scipy" and not is_scipy_rate_solver_available():
+            raise ValueError(
+                "train.following_rates.solver=scipy requires scipy to be installed in the active environment."
+            )
+    if influencer_cfg.enabled and not following_cfg.enabled:
+        raise ValueError("train.influencer.enabled=true requires train.following_rates.enabled=true.")
+
     return TrainConfig(
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
         lr=lr_cfg,
+        actor_lr=actor_lr_cfg,
+        freeze_critic=freeze_critic,
         epsilon=eps_cfg,
+        algorithm=AlgorithmConfig(name=algorithm_name),
+        following_rates=following_cfg,
+        influencer=influencer_cfg,
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
         use_gpu=bool(d.get("use_gpu", d.get("use_gpu_batched", True))),
         td_lambda=float(d.get("td_lambda", 0.0)),
@@ -308,10 +371,19 @@ def load_config(path: str | Path, overrides: list[str] | None = None) -> Experim
             raise ValueError(f"Missing required config section: '{section}'")
 
     env_cfg = _parse_env(raw["env"])
+    model_cfg = _parse_model(raw["model"])
+    actor_model_raw = raw.get("actor_model")
+    actor_model_cfg = _parse_model(actor_model_raw) if actor_model_raw is not None else None
+    if actor_model_cfg is not None and actor_model_cfg.encoder != model_cfg.encoder:
+        raise ValueError("actor_model.encoder must match model.encoder because orchard uses a single encoder.")
+    train_cfg = _parse_train(raw["train"], n_task_types=env_cfg.n_task_types)
+    if train_cfg.following_rates.enabled and env_cfg.n_agents < 2:
+        raise ValueError("train.following_rates.enabled=true requires env.n_agents >= 2.")
     return ExperimentConfig(
         env=env_cfg,
-        model=_parse_model(raw["model"]),
-        train=_parse_train(raw["train"], n_task_types=env_cfg.n_task_types),
+        model=model_cfg,
+        actor_model=actor_model_cfg,
+        train=train_cfg,
         eval=_parse_eval(raw.get("eval", {})),
         logging=_parse_logging(raw.get("logging", {})),
     )

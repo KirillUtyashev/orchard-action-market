@@ -2,6 +2,7 @@
 
 import random as _stdlib_random
 
+import numpy as np
 import torch
 
 # Module-level RNG — seeded by set_all_seeds(), used by all stochastic code.
@@ -13,4 +14,5 @@ def set_all_seeds(seed: int) -> None:
     global rng
     rng = _stdlib_random.Random(seed)
     torch.manual_seed(seed)
+    np.random.seed(seed)
     _stdlib_random.seed(seed)

@@ -49,6 +49,11 @@ class LearningType(Enum):
     CENTRALIZED = auto()
 
 
+class AlgorithmName(Enum):
+    VALUE = auto()
+    ACTOR_CRITIC = auto()
+
+
 class StoppingCondition(Enum):
     NONE = auto()
     RUNNING_MAX_RPS = auto()

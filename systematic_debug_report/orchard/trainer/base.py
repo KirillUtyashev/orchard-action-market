@@ -3,52 +3,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from orchard.datatypes import EnvConfig, EvalConfig, State
-from orchard.enums import Action
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
+from orchard.actor_critic import PolicyNetwork
 
 
 class TrainerBase(ABC):
-    """Abstract base for all trainers.
-
-    Two concrete implementations:
-      - CpuTrainer: sequential forward passes on CPU (any n_networks)
-      - GpuTrainer: vmap-batched forward passes on GPU (any n_networks)
-
-    The main loop calls:
-      1. select_move(state, t) → move action
-      2. select_pick(s_moved, t) → pick/stay action (only if on task)
-      3. train_move(s_moved, on_task, t) → TD update: prev_after → move_after
-      4. train_pick(s_picked, rewards, t) → TD update: move_after → pick_after
-    """
+    """Abstract base for all orchard trainers."""
 
     @abstractmethod
-    def select_move(self, state: State, t: int) -> Action:
-        """Epsilon-greedy move action selection (phase 1)."""
-        ...
-
-    @abstractmethod
-    def select_pick(self, state: State, t: int) -> Action:
-        """Epsilon-greedy pick/stay action selection (phase 2)."""
-        ...
-
-    @abstractmethod
-    def train_move(self, s_moved: State, on_task: bool, t: int) -> None:
-        """Encode move_after. TD update: prev_after → move_after (r=0, γ=γ).
-
-        If not on_task, stores move_after as prev for next step.
-        On first step (no prev), just stores the encoding.
-        """
-        ...
-
-    @abstractmethod
-    def train_pick(self, s_picked: State, rewards: tuple[float, ...], t: int) -> None:
-        """Encode pick_after. TD update: move_after → pick_after (r=rewards, γ=1).
-
-        Stores pick_after as prev for next step.
-        """
+    def step(self, state: State, t: int) -> State:
+        """Advance training by one actor turn and return the next state."""
         ...
 
     @abstractmethod
@@ -66,8 +34,38 @@ class TrainerBase(ABC):
         """Return average TD loss since last call, then reset accumulator."""
         ...
 
+    def get_main_metrics(self) -> dict[str, float | int | str]:
+        return {}
+
+    def get_detail_metrics(self) -> dict[str, float | int | str]:
+        return {}
+
+    def setup_aux_loggers(self, run_dir: Path) -> None:
+        del run_dir
+
+    def log_auxiliary(self, step: int, wall_time: float) -> None:
+        del step, wall_time
+
+    def close(self) -> None:
+        """Release trainer-owned resources such as auxiliary loggers."""
+
+    @abstractmethod
+    def save_checkpoint(self, path: Path, step: int) -> None:
+        """Persist trainer state to disk."""
+        ...
+
+    @abstractmethod
+    def load_checkpoint(self, path: str | Path) -> int | None:
+        """Load trainer state from disk and return the saved step if present."""
+        ...
+
     @property
     @abstractmethod
-    def networks(self) -> list[ValueNetwork]:
-        """The underlying ValueNetwork list (for checkpointing and detail logging)."""
+    def critic_networks(self) -> list[ValueNetwork]:
+        """Underlying critic networks."""
         ...
+
+    @property
+    def actor_networks(self) -> list[PolicyNetwork]:
+        """Underlying actor networks, if any."""
+        return []

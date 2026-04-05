@@ -69,6 +69,16 @@ model:
   # Weight initialization: zero_bias zeros all bias terms; default leaves pytorch defaults
   weight_init: zero_bias
 
+# Optional actor-specific model config for actor-critic runs.
+# If omitted, actor networks reuse the critic model config above.
+# The encoder must match model.encoder because orchard initializes one encoder singleton.
+actor_model:
+  encoder: blind_task_cnn_grid
+  conv_specs: [[8, 3]]            # actor can use a different conv stack than the critic
+  mlp_dims: [32]                  # actor can use different hidden dims than the critic
+  activation: relu
+  weight_init: default
+
 train:
   # Learning type determines number of networks:
   #   decentralized: N networks, one per agent (agent i's network only sees agent i's encoding)
@@ -77,7 +87,7 @@ train:
 
   # Device: true=GPU (BatchedTrainer + vmap), false=CPU (sequential forwards)
   # GPU works for both cen and dec. CPU works for both too (slower for dec).
-  use_gpu: true
+  use_gpu: false
 
   # TD(λ) eligibility trace decay. 0=TD(0), 1=Monte Carlo-ish.
   # 0.3 is our standard value — good balance of bias/variance.
@@ -88,7 +98,8 @@ train:
   # 1 = full team reward sharing (standard for cooperative tasks)
   # Between 0 and 1 = partial sharing
   # For centralized: irrelevant (single network already sees sum of rewards)
-  comm_weight: 1.0
+  # For actor_critic: must be 0.0 (actor-critic uses its own social weighting logic)
+  comm_weight: 0.0
 
   total_steps: 10000000            # maximum training steps (may stop early)
   seed: 1234                       # RNG seed for reproducibility
@@ -110,10 +121,42 @@ train:
     # step_start: 0                # for schedule=step: start stepping after this step
 
   # Epsilon-greedy exploration rate
+  # Used by algorithm.name=value only. Actor-critic samples directly from the actor policy.
   epsilon:
     start: 0.05                    # initial exploration rate
     end: 0.05                      # final (only used if schedule=linear)
     schedule: none                 # none=constant, linear=decay
+
+  # Training algorithm:
+  #   value: current after-state value learning
+  #   actor_critic: decentralized masked-policy actor-critic
+  algorithm:
+    name: actor_critic                    # switch to actor_critic to use actor_model + policy training
+
+  # Optional actor LR schedule for actor-critic.
+  # If omitted, actor networks reuse train.lr.
+  actor_lr:
+    start: 3e-3
+    end: 3e-3
+    schedule: none
+
+  # Optional actor-critic mode: keep critics fixed and train only the actor.
+  # Useful when bootstrapping from a pretrained value checkpoint via --resume.
+  freeze_critic: false
+
+  # Optional following-rate extension for actor-critic only.
+  following_rates:
+    enabled: false                 # requires algorithm.name=actor_critic
+    budget: 1.0                    # communication-rate budget per follower
+    rho: 0.5                       # EMA factor for alpha updates
+    reallocation_freq: 1           # reallocate every N actor decisions
+    solver: closed_form            # closed_form or scipy
+    fixed: false                   # true = keep initial rates fixed
+
+  # Optional external influencer extension layered on following-rates.
+  influencer:
+    enabled: false                 # requires following_rates.enabled=true
+    budget: 0.5                    # influencer communication-rate budget
 
   # Early stopping: stop training if metric doesn't improve
   stopping:

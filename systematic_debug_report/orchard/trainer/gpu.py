@@ -110,3 +110,8 @@ class GpuTrainer(ValueTrainerBase):
     # ------------------------------------------------------------------
     def sync_to_cpu(self) -> None:
         self._bt.sync_to_networks()
+
+    def load_checkpoint(self, path: str | Any) -> int | None:
+        step = super().load_checkpoint(path)
+        self._bt.sync_from_networks()
+        return step

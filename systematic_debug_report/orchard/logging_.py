@@ -66,7 +66,7 @@ def _config_to_dict(cfg: ExperimentConfig) -> dict[str, Any]:
 
 def setup_logging(cfg: ExperimentConfig) -> Path:
     """Create run directory and write initial metadata. Returns run_dir."""
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
     run_dir = Path(cfg.logging.output_dir) / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "checkpoints").mkdir(exist_ok=True)
@@ -100,8 +100,14 @@ def finalize_logging(run_dir: Path, start_time: float) -> None:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
 
-def build_main_csv_fieldnames(heuristic_name: str) -> list[str]:
-    return [
+def build_main_csv_fieldnames(
+    heuristic_name: str,
+    *,
+    actor_critic: bool = False,
+    following_rates: bool = False,
+    influencer: bool = False,
+) -> list[str]:
+    fields = [
         "step", "wall_time",
         "greedy_rps", "greedy_team_rps",
         "greedy_correct_pps", "greedy_wrong_pps",
@@ -109,16 +115,121 @@ def build_main_csv_fieldnames(heuristic_name: str) -> list[str]:
         f"{heuristic_name}_correct_pps", f"{heuristic_name}_wrong_pps",
         "td_loss_avg",
     ]
+    if actor_critic:
+        fields.extend([
+            "actor_lr",
+            "actor_loss_mean",
+            "advantage_mean",
+            "policy_entropy_mean",
+        ])
+    if following_rates:
+        fields.extend([
+            "alpha_mean",
+            "alpha_positive_frac",
+            "following_weight_mean",
+            "active_follow_edges_mean",
+            "follower_to_influencer_weight_mean",
+            "effective_follow_weight_mean",
+        ])
+    if influencer:
+        fields.extend([
+            "beta_mean",
+            "influencer_weight_mean",
+        ])
+    return fields
 
 
-def build_detail_csv_fieldnames(networks: list[Any]) -> list[str]:
-    n_networks = len(networks)
+def build_action_prob_csv_fieldnames() -> list[str]:
+    return ["step", "wall_time", "left", "right", "up", "down", "stay"]
+
+
+def _build_full_policy_prob_fieldnames(n_task_types: int) -> list[str]:
+    fields = [
+        "prob_up",
+        "prob_down",
+        "prob_left",
+        "prob_right",
+        "prob_stay",
+    ]
+    for tau in range(int(n_task_types)):
+        fields.append(f"prob_pick_{tau}")
+    return fields
+
+
+def build_phase1_policy_prob_csv_fieldnames(n_task_types: int) -> list[str]:
+    fields = [
+        "step",
+        "wall_time",
+        "state_id",
+        "actor_id",
+        "state_json",
+    ]
+    fields.extend(_build_full_policy_prob_fieldnames(n_task_types))
+    return fields
+
+
+def build_phase2_policy_prob_csv_fieldnames(n_task_types: int) -> list[str]:
+    fields = [
+        "step",
+        "wall_time",
+        "state_id",
+        "state_label",
+        "actor_id",
+        "state_json",
+    ]
+    for tau in range(int(n_task_types)):
+        fields.append(f"present_type_{tau}")
+    for tau in range(int(n_task_types)):
+        fields.append(f"assigned_type_{tau}")
+    fields.extend(_build_full_policy_prob_fieldnames(n_task_types))
+    return fields
+
+
+def build_following_rate_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"alpha_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_{target_id}")
+    fields.extend([
+        "lambda_to_influencer",
+        "weight_to_influencer",
+        "influencer_value",
+    ])
+    return fields
+
+
+def build_influencer_csv_fieldnames(num_agents: int) -> list[str]:
+    fields = ["step", "wall_time"]
+    for target_id in range(int(num_agents)):
+        fields.append(f"beta_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"lambda_to_actor_{target_id}")
+    for target_id in range(int(num_agents)):
+        fields.append(f"weight_to_actor_{target_id}")
+    return fields
+
+
+def build_detail_csv_fieldnames(
+    critic_networks: list[Any],
+    actor_networks: list[Any] | None = None,
+) -> list[str]:
+    n_networks = len(critic_networks)
     fields = ["step", "wall_time", "ram_mb", "current_lr", "current_epsilon"]
     for agent_idx in range(n_networks):
-        for name, _ in networks[agent_idx].named_parameters():
+        for name, _ in critic_networks[agent_idx].named_parameters():
             if "weight" in name:
-                fields.append(f"weight_norm_agent_{agent_idx}_{name}")
-                fields.append(f"grad_norm_agent_{agent_idx}_{name}")
+                fields.append(f"critic_weight_norm_agent_{agent_idx}_{name}")
+                fields.append(f"critic_grad_norm_agent_{agent_idx}_{name}")
+    if actor_networks:
+        fields.append("current_actor_lr")
+        for agent_idx in range(len(actor_networks)):
+            for name, _ in actor_networks[agent_idx].named_parameters():
+                if "weight" in name:
+                    fields.append(f"actor_weight_norm_agent_{agent_idx}_{name}")
+                    fields.append(f"actor_grad_norm_agent_{agent_idx}_{name}")
     fields.extend(["td_loss_step", "value_pred_mean", "value_pred_std"])
     fields.extend(["vram_allocated_mb", "vram_peak_mb", "vram_total_mb"])
     return fields

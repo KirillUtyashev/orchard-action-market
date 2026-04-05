@@ -5,7 +5,7 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import EncoderType, PickMode, Heuristic, LearningType
+from orchard.enums import AlgorithmName, EncoderType, PickMode, Heuristic, LearningType
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -71,6 +71,54 @@ class TestConfigParsing:
         assert cfg.env.task_assignments[3] == (3,)
         os.unlink(path)
 
+    def test_actor_critic_nested_blocks_parse(self):
+        yaml_str = """
+env:
+  height: 5
+  width: 5
+  n_agents: 2
+  n_task_types: 2
+  gamma: 0.99
+  task_assignments: [[0], [1]]
+  stochastic:
+    spawn_prob: 0.1
+    despawn_mode: none
+model:
+  encoder: blind_task_cnn_grid
+  mlp_dims: [64]
+actor_model:
+  encoder: blind_task_cnn_grid
+  mlp_dims: [32]
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  actor_lr:
+    start: 0.002
+  freeze_critic: true
+  following_rates:
+    enabled: true
+    budget: 1.0
+    rho: 0.5
+    reallocation_freq: 2
+    solver: closed_form
+  influencer:
+    enabled: true
+    budget: 0.25
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC
+        assert cfg.train.actor_lr is not None
+        assert cfg.train.freeze_critic is True
+        assert cfg.train.following_rates.enabled is True
+        assert cfg.train.influencer.enabled is True
+        assert cfg.actor_model is not None
+        assert cfg.actor_model.mlp_dims == (32,)
+        os.unlink(path)
+
 class TestBackwardCompatibility:
     def test_n_apples_maps_to_n_tasks(self):
         yaml_str = VALID_YAML.replace("env:\n", "env:\n  n_apples: 7\n")
@@ -110,4 +158,86 @@ class TestOverrides:
         cfg = load_config(path, overrides=["train.total_steps=999", "env.pick_mode=choice"])
         assert cfg.train.total_steps == 999
         assert cfg.env.pick_mode == PickMode.CHOICE
+        os.unlink(path)
+
+
+class TestActorCriticValidation:
+    def test_actor_critic_rejects_centralized(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  learning_type: centralized
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="requires train.learning_type=decentralized"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_actor_critic_rejects_comm_weight(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  comm_weight: 0.5
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="train.comm_weight is only supported"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_influencer_requires_following_rates(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  influencer:
+    enabled: true
+    budget: 0.5
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="requires train.following_rates.enabled=true"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_following_rates_reject_bad_reallocation_frequency(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    budget: 1.0
+    rho: 0.5
+    reallocation_freq: 0
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="reallocation_freq must be >= 1"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_freeze_critic_rejects_value_algorithm(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  freeze_critic: true
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="train.freeze_critic is only supported"):
+            load_config(path)
         os.unlink(path)

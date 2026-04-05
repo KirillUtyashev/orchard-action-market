@@ -10,7 +10,10 @@ CpuValueTrainer and GpuValueTrainer override only:
 from __future__ import annotations
 
 from abc import abstractmethod
+from pathlib import Path
 from typing import Any
+
+import torch
 
 from orchard.datatypes import EvalConfig, ScheduleConfig, State
 from orchard.enums import Action, Heuristic
@@ -86,6 +89,27 @@ class ValueTrainerBase(TrainerBase):
     ) -> list[float]:
         """Compute comm-weighted team value for each candidate after-state."""
         ...
+
+    # ------------------------------------------------------------------
+    # Turn stepping
+    # ------------------------------------------------------------------
+    def step(self, state: State, t: int) -> State:
+        move_action = self.select_move(state, t)
+        s_moved = self._env.apply_action(state, move_action)
+        on_task = s_moved.is_agent_on_task(s_moved.actor)
+        self.train_move(s_moved, on_task, t)
+
+        if on_task:
+            pick_action = self.select_pick(s_moved, t)
+            s_picked, pick_rewards = self._env.resolve_pick(
+                s_moved,
+                pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
+            )
+            self.train_pick(s_picked, pick_rewards, t)
+        else:
+            s_picked = s_moved
+
+        return self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
 
     # ------------------------------------------------------------------
     # Action selection
@@ -225,5 +249,35 @@ class ValueTrainerBase(TrainerBase):
         return avg
 
     @property
-    def networks(self) -> list[ValueNetwork]:
+    def critic_networks(self) -> list[ValueNetwork]:
         return self._networks_list
+
+    @property
+    def networks(self) -> list[ValueNetwork]:
+        return self.critic_networks
+
+    def save_checkpoint(self, path: Path, step: int) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {
+                "algorithm": "value",
+                "step": int(step),
+                "critics": [net.state_dict() for net in self._networks_list],
+            },
+            path,
+        )
+
+    def load_checkpoint(self, path: str | Path) -> int | None:
+        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        if "networks" in ckpt:
+            for net, sd in zip(self._networks_list, ckpt["networks"]):
+                net.load_state_dict(sd, strict=True)
+            return ckpt.get("step")
+
+        if ckpt.get("algorithm") != "value":
+            raise ValueError(
+                f"Checkpoint algorithm mismatch: expected value, got {ckpt.get('algorithm')!r}."
+            )
+        for net, sd in zip(self._networks_list, ckpt["critics"]):
+            net.load_state_dict(sd, strict=True)
+        return ckpt.get("step")

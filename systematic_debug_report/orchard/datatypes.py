@@ -10,6 +10,7 @@ import torch
 from orchard.enums import (
     Action,
     Activation,
+    AlgorithmName,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -163,11 +164,37 @@ class StoppingConfig:
 
 
 @dataclass(frozen=True)
+class AlgorithmConfig:
+    name: AlgorithmName = AlgorithmName.VALUE
+
+
+@dataclass(frozen=True)
+class FollowingRatesConfig:
+    enabled: bool = False
+    budget: float = 0.0
+    rho: float = 0.0
+    reallocation_freq: int = 1
+    solver: str = "closed_form"
+    fixed: bool = False
+
+
+@dataclass(frozen=True)
+class InfluencerConfig:
+    enabled: bool = False
+    budget: float = 0.0
+
+
+@dataclass(frozen=True)
 class TrainConfig:
     total_steps: int
     seed: int
     lr: ScheduleConfig
     epsilon: ScheduleConfig
+    actor_lr: ScheduleConfig | None = None
+    freeze_critic: bool = False
+    algorithm: AlgorithmConfig = AlgorithmConfig()
+    following_rates: FollowingRatesConfig = FollowingRatesConfig()
+    influencer: InfluencerConfig = InfluencerConfig()
     learning_type: LearningType = LearningType.DECENTRALIZED
     use_gpu: bool = True
     td_lambda: float = 0.0
@@ -204,6 +231,7 @@ class LoggingConfig:
 class ExperimentConfig:
     env: EnvConfig
     model: ModelConfig
+    actor_model: ModelConfig | None
     train: TrainConfig
     eval: EvalConfig
     logging: LoggingConfig

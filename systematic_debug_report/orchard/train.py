@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import time
-from pathlib import Path
 
 import torch
 
@@ -20,22 +19,9 @@ from orchard.logging_ import (
     finalize_logging,
     setup_logging,
 )
-from orchard.model import create_networks
 from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
 from orchard.trainer import create_trainer
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint
-# ---------------------------------------------------------------------------
-def _save_checkpoint(networks: list, step: int, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ckpt = {
-        "step": step,
-        "networks": [net.state_dict() for net in networks],
-    }
-    torch.save(ckpt, path)
 
 
 # ---------------------------------------------------------------------------
@@ -80,70 +66,57 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
     encoding.init_encoder(cfg.model.encoder, cfg.env)
-    networks = create_networks(cfg.model, cfg.env, cfg.train)
-    n_networks = len(networks)
+    trainer = create_trainer(cfg, env)
 
-    # --- Resume from checkpoint ---
     if resume_checkpoint is not None:
-        ckpt = torch.load(resume_checkpoint, map_location="cpu", weights_only=True)
-        for net, sd in zip(networks, ckpt["networks"]):
-            net.load_state_dict(sd, strict=True)
-        print(f"Loaded weights from: {resume_checkpoint} (step {ckpt.get('step', '?')})")
-
-    trainer = create_trainer(cfg, networks, env)
+        loaded_step = trainer.load_checkpoint(resume_checkpoint)
+        print(f"Loaded weights from: {resume_checkpoint} (step {loaded_step if loaded_step is not None else '?'})")
 
     # --- Logging ---
     run_dir = setup_logging(cfg)
-    _save_checkpoint(networks, 0, run_dir / "checkpoints" / "step_0.pt")
+    trainer.setup_aux_loggers(run_dir)
+    trainer.save_checkpoint(run_dir / "checkpoints" / "step_0.pt", 0)
 
     heuristic_name = cfg.train.heuristic.name.lower()
     main_logger = CSVLogger(
         run_dir / "metrics.csv",
-        build_main_csv_fieldnames(heuristic_name),
+        build_main_csv_fieldnames(
+            heuristic_name,
+            actor_critic=bool(trainer.actor_networks),
+            following_rates=cfg.train.following_rates.enabled,
+            influencer=cfg.train.influencer.enabled,
+        ),
     )
     detail_logger = CSVLogger(
         run_dir / "details.csv",
-        build_detail_csv_fieldnames(networks),
+        build_detail_csv_fieldnames(trainer.critic_networks, trainer.actor_networks),
     )
     stopper = EarlyStopper(cfg.train.stopping, cfg.logging.main_csv_freq)
 
     state = env.init_state()
+    last_completed_step = 0
 
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
-        # ── Phase 1: Move ──
-        move_action = trainer.select_move(state, t)
-        s_moved = env.apply_action(state, move_action)
-        on_task = s_moved.is_agent_on_task(s_moved.actor)
-        trainer.train_move(s_moved, on_task, t) # note I used to do this after select_pick (but before train_pick), so select_pick is on more updated weights than the code of march 3
-        # However, this is more mathematically correct as this is not true online.
-        
-        # ── Phase 2: Pick (only if on task) ──
-        if on_task:
-            pick_action = trainer.select_pick(s_moved, t)
-            s_picked, pick_rewards = env.resolve_pick(
-                s_moved,
-                pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
-            )
-            trainer.train_pick(s_picked, pick_rewards, t)
-        else:
-            s_picked = s_moved        
-
-        # ── Advance to next turn ──
-        state = env.advance_actor(env.spawn_and_despawn(s_picked))
+        state = trainer.step(state, t)
+        last_completed_step = t + 1
+        td_loss_value: float | None = None
 
         # ── Main CSV logging + eval ──
         if (t + 1) % cfg.logging.main_csv_freq == 0:
             trainer.sync_to_cpu()
             wall_time = time.time() - start_time
             metrics = trainer.evaluate(env, cfg.eval)
+            td_loss_value = round(trainer.get_td_loss(), 8)
             row: dict[str, float | int | str] = {
                 "step": t + 1,
                 "wall_time": round(wall_time, 3),
-                "td_loss_avg": round(trainer.get_td_loss(), 8),
+                "td_loss_avg": td_loss_value,
             }
             row.update(metrics)
+            row.update(trainer.get_main_metrics())
             main_logger.log(row)
+            trainer.log_auxiliary(t + 1, round(wall_time, 3))
 
             # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
@@ -189,25 +162,29 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
                 cfg.train.epsilon, t + 1, cfg.train.total_steps,
             )
 
-            for idx in range(n_networks):
-                for name, val in networks[idx].get_weight_norms().items():
-                    detail_row[f"weight_norm_agent_{idx}_{name}"] = round(val, 6)
-                for name, val in networks[idx].get_grad_norms().items():
-                    detail_row[f"grad_norm_agent_{idx}_{name}"] = round(val, 6)
+            for idx, net in enumerate(trainer.critic_networks):
+                for name, val in net.get_weight_norms().items():
+                    detail_row[f"critic_weight_norm_agent_{idx}_{name}"] = round(val, 6)
+                for name, val in net.get_grad_norms().items():
+                    detail_row[f"critic_grad_norm_agent_{idx}_{name}"] = round(val, 6)
 
-            detail_row["td_loss_step"] = round(trainer.get_td_loss(), 8)
+            if td_loss_value is None:
+                td_loss_value = round(trainer.get_td_loss(), 8)
+            detail_row["td_loss_step"] = td_loss_value
+            detail_row.update(trainer.get_detail_metrics())
             detail_logger.log(detail_row)
 
         # ── Periodic checkpoint ──
         if cfg.eval.checkpoint_freq > 0 and (t + 1) % cfg.eval.checkpoint_freq == 0:
             trainer.sync_to_cpu()
-            _save_checkpoint(networks, t + 1, run_dir / "checkpoints" / f"step_{t + 1}.pt")
+            trainer.save_checkpoint(run_dir / "checkpoints" / f"step_{t + 1}.pt", t + 1)
 
     # --- Finalize ---
     trainer.sync_to_cpu()
-    _save_checkpoint(networks, cfg.train.total_steps, run_dir / "checkpoints" / "final.pt")
+    trainer.save_checkpoint(run_dir / "checkpoints" / "final.pt", last_completed_step)
     main_logger.close()
     detail_logger.close()
+    trainer.close()
     finalize_logging(run_dir, start_time)
     print(f"\nRun saved to: {run_dir}")
 

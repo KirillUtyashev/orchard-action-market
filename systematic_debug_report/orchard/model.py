@@ -6,8 +6,10 @@ import torch
 import torch.nn as nn
 
 import orchard.encoding as encoding
+from orchard.actor_critic import PolicyNetwork
 from orchard.enums import Activation, LearningType, WeightInit
 from orchard.datatypes import EncoderOutput, EnvConfig, ModelConfig, TrainConfig
+from orchard.schedule import compute_schedule_value
 
 
 class ValueNetwork(nn.Module):
@@ -184,5 +186,19 @@ def create_networks(
     n_networks = 1 if train_cfg.learning_type == LearningType.CENTRALIZED else env_cfg.n_agents
     return [
         ValueNetwork(model_cfg, env_cfg, td_lambda=train_cfg.td_lambda)
+        for _ in range(n_networks)
+    ]
+
+
+def create_actor_networks(
+    model_cfg: ModelConfig,
+    env_cfg: EnvConfig,
+    train_cfg: TrainConfig,
+) -> list[PolicyNetwork]:
+    n_networks = 1 if train_cfg.learning_type == LearningType.CENTRALIZED else env_cfg.n_agents
+    actor_lr_cfg = train_cfg.actor_lr or train_cfg.lr
+    init_lr = compute_schedule_value(actor_lr_cfg, 0, train_cfg.total_steps)
+    return [
+        PolicyNetwork(model_cfg, env_cfg, lr=init_lr)
         for _ in range(n_networks)
     ]
