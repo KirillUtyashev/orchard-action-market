@@ -14,8 +14,7 @@ from orchard.config import load_config
 from orchard.env import create_env
 from orchard.model import ValueNetwork, create_networks
 from orchard.policy import (
-    argmax_a_Q_team, argmax_a_Q_team_batched,
-    heuristic_action, get_all_actions,
+    heuristic_action, get_all_actions, get_phase2_actions,
 )
 from orchard.seed import set_all_seeds, rng
 from orchard.datatypes import State
@@ -35,6 +34,8 @@ _HEURISTIC_MAP = {
     "nearest": Heuristic.NEAREST_TASK,  # backward compat alias
 }
 
+_ALL_POLICIES = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -43,14 +44,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("config", type=str, help="Path to YAML config file")
     p.add_argument("--checkpoint", type=str, default=None, help="Path to model checkpoint (.pt)")
-    p.add_argument("--policy", choices=["nearest_task", "nearest_correct_task", "nearest_correct_task_stay_wrong", "nearest", "random"],
+    p.add_argument("--policy", choices=_ALL_POLICIES,
                    default=None,
                    help="Policy to visualize (default: learned if --checkpoint, else auto-detect heuristic from config)")
     p.add_argument("--compare", nargs="?", const="auto", default=None,
                    metavar="POLICY",
                    help="Compare against another policy. Optionally specify which: "
-                        "nearest_task, nearest_correct_task, random, learned. "
-                        "Default: auto-select heuristic based on task types.")
+                        + ", ".join(_ALL_POLICIES) + ". "
+                        "Default: auto-select heuristic based on config.")
     p.add_argument("--show-after-states", action="store_true", help="Show s_t and s_{t+1} per transition")
     p.add_argument("--steps", type=int, default=200, help="Number of agent decisions (default: 200)")
     p.add_argument("--seed", type=int, default=None, help="Override config seed")
@@ -82,23 +83,78 @@ def load_checkpoint(
     return ckpt.get("step", 0)
 
 
+def _greedy_action_batched(
+    state: State,
+    networks: list[ValueNetwork],
+    env,
+    phase2: bool = False,
+    comm_weight: float = 0.0,
+) -> Action:
+    """Standalone greedy argmax over Q_team for viz (no trainer needed)."""
+    all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    actor = state.actor
+    centralized = (len(networks) == 1)
+
+    after_states: list[State] = []
+    immediate_rewards: list[float] = []
+    for a in all_actions:
+        if phase2 and a.is_pick():
+            s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
+            team_r = sum(rewards)
+            weighted_r = rewards[actor] + comm_weight * (team_r - rewards[actor])
+            after_states.append(s_after)
+            immediate_rewards.append(weighted_r)
+        elif phase2:
+            after_states.append(state)
+            immediate_rewards.append(0.0)
+        else:
+            s = env.apply_action(state, a)
+            if s.is_agent_on_task(s.actor):
+                after_states.append(s.with_pick_phase())
+            else:
+                after_states.append(s)
+            immediate_rewards.append(0.0)
+
+    n_actions = len(after_states)
+    team_values = [0.0] * n_actions
+    with torch.no_grad():
+        for i, net in enumerate(networks):
+            agent_idx = 0 if centralized else i
+            batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
+            vals = net(batch_enc)
+            weight = 1.0 if (centralized or i == actor) else comm_weight
+            for k in range(n_actions):
+                team_values[k] += weight * vals[k].item()
+
+    best_idx = 0
+    best_val = team_values[0] + immediate_rewards[0]
+    for k in range(1, n_actions):
+        val = team_values[k] + immediate_rewards[k]
+        if val > best_val:
+            best_val = val
+            best_idx = k
+    return all_actions[best_idx]
+
+
 def make_policy_fn(
     policy_name: str,
     networks: list[ValueNetwork] | None,
     env,
+    comm_weight: float = 0.0,
 ):
     """Return a policy function: (State, bool) -> Action.
 
     The second argument is *phase2*: True when the actor has landed on a
-    task and is deciding whether / what to pick (only relevant for CHOICE
-    pick mode).  For FORCED mode the caller never invokes the policy in
-    phase 2 so the flag is ignored.
+    task and is deciding whether / what to pick (CHOICE mode).
+    In FORCED mode, rollout_trajectory handles the pick automatically
+    and never calls the policy with phase2=True.
     """
     if policy_name == "learned":
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
         def policy(s: State, phase2: bool = False) -> Action:
-            return argmax_a_Q_team_batched(s, networks, env, phase2=phase2)
+            return _greedy_action_batched(s, networks, env, phase2=phase2,
+                                         comm_weight=comm_weight)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
@@ -198,10 +254,11 @@ def main() -> None:
 
     n_task_types = cfg.env.n_task_types
     task_assignments = cfg.env.task_assignments
+    pick_mode = cfg.env.pick_mode
 
     # --- Create env and encoder ---
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.input_type, cfg.env, cfg.model.k_nearest)
+    encoding.init_encoder(cfg.model.encoder, cfg.env)
 
     # --- Load checkpoint if provided ---
     from orchard.enums import LearningType
@@ -213,11 +270,7 @@ def main() -> None:
         print(f"Loading checkpoint: {args.checkpoint}")
         if centralized:
             print(f"  Centralized mode: creating 1 shared network for {cfg.env.n_agents} agents")
-        networks = create_networks(
-            cfg.model, cfg.env, cfg.train.lr, cfg.train.total_steps,
-            nstep=cfg.train.nstep, td_lambda=cfg.train.td_lambda,
-            train_method=cfg.train.train_method, n_networks=n_networks,
-        )
+        networks = create_networks(cfg.model, cfg.env, cfg.train)
         ckpt_step = load_checkpoint(args.checkpoint, networks)
         print(f"  Loaded checkpoint at training step {ckpt_step}")
 
@@ -243,10 +296,11 @@ def main() -> None:
         # Only error if the *primary* policy needs a checkpoint; compare=learned also needs it
         pass  # Validated later when we resolve the compare policy name
 
-    # Print task specialization info
-    if n_task_types > 1:
-        print(f"Task specialization: {n_task_types} types, assignments={task_assignments}")
-        print(f"Pick mode: {cfg.env.pick_mode.name}, r_picker={cfg.env.r_picker}, R_low={cfg.env.r_low}")
+    # Print config info (always)
+    print(f"  T={n_task_types}, N={cfg.env.n_agents}, grid={cfg.env.height}x{cfg.env.width}")
+    print(f"  Pick mode: {pick_mode.name}, r_picker={cfg.env.r_picker}, r_low={cfg.env.r_low}")
+    if task_assignments is not None:
+        print(f"  Assignments: {task_assignments}")
 
     # --- Generate initial state ---
     init_state = env.init_state()
@@ -255,7 +309,8 @@ def main() -> None:
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
     t0 = time.time()
 
-    policy_fn = make_policy_fn(policy_name, networks, env)
+    policy_fn = make_policy_fn(policy_name, networks, env,
+                               comm_weight=cfg.train.comm_weight)
     frames = generate_frames(
         start_state=init_state,
         policy_fn=policy_fn,
@@ -278,10 +333,9 @@ def main() -> None:
             compare_name = args.compare
 
         # Validate compare policy
-        valid_compare = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]
-        if compare_name not in valid_compare:
+        if compare_name not in _ALL_POLICIES:
             print(f"ERROR: unknown compare policy '{compare_name}'. "
-                  f"Choose from: {', '.join(valid_compare)}", file=sys.stderr)
+                  f"Choose from: {', '.join(_ALL_POLICIES)}", file=sys.stderr)
             sys.exit(1)
 
         compare_networks = networks if compare_name == "learned" else None
@@ -291,7 +345,8 @@ def main() -> None:
 
         print(f"Rolling out {args.steps} decisions with policy: {compare_name} (compare)")
         env_compare = create_env(cfg.env)
-        compare_fn = make_policy_fn(compare_name, compare_networks, env_compare)
+        compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
+                                    comm_weight=cfg.train.comm_weight)
         compare_frames = generate_frames(
             start_state=init_state,
             policy_fn=compare_fn,
@@ -305,38 +360,26 @@ def main() -> None:
         print(f"  Generated {len(compare_frames)} compare transitions")
 
     # --- Stats summary (always printed) ---
-    def _pps(frms: list[Frame]) -> float:
-        return frms[-1].total_picks / frms[-1].total_decisions if frms[-1].total_decisions > 0 else 0.0
-
-    def _rps(frms: list[Frame]) -> float:
-        return frms[-1].total_reward / frms[-1].total_decisions if frms[-1].total_decisions > 0 else 0.0
+    def _team_rps(frms: list[Frame]) -> float:
+        return frms[-1].total_team_reward / frms[-1].total_decisions if frms[-1].total_decisions > 0 else 0.0
 
     print()
-    if n_task_types > 1:
-        rps_primary = _rps(frames)
-        td = frames[-1].total_decisions
-        print(f"  {policy_name} RPS: {rps_primary:.4f}  (total reward {frames[-1].total_reward:.1f} / {td} decisions)")
-        if td > 0:
-            print(f"    Correct: {frames[-1].total_correct_picks} ({frames[-1].total_correct_picks/td:.4f}/step)  "
-                  f"Wrong: {frames[-1].total_wrong_picks} ({frames[-1].total_wrong_picks/td:.4f}/step)")
-    else:
-        pps_primary = _pps(frames)
-        print(f"  {policy_name} PPS: {pps_primary:.4f}  ({frames[-1].total_picks} picks / {frames[-1].total_decisions} decisions)")
+    rps_primary = _team_rps(frames)
+    td = frames[-1].total_decisions
+    print(f"  {policy_name} Team RPS: {rps_primary:.4f}  (total team reward {frames[-1].total_team_reward:.1f} / {td} decisions)")
+    if td > 0:
+        print(f"    Correct: {frames[-1].total_correct_picks} ({frames[-1].total_correct_picks/td:.4f}/step)  "
+              f"Wrong: {frames[-1].total_wrong_picks} ({frames[-1].total_wrong_picks/td:.4f}/step)")
 
     if compare_frames is not None:
         cname = compare_frames[0].policy_name
-        if n_task_types > 1:
-            rps_compare = _rps(compare_frames)
-            td = compare_frames[-1].total_decisions
-            print(f"  {cname} RPS: {rps_compare:.4f}  (total reward {compare_frames[-1].total_reward:.1f} / {td} decisions)")
-            if td > 0:
-                print(f"    Correct: {compare_frames[-1].total_correct_picks} ({compare_frames[-1].total_correct_picks/td:.4f}/step)  "
-                      f"Wrong: {compare_frames[-1].total_wrong_picks} ({compare_frames[-1].total_wrong_picks/td:.4f}/step)")
-            print(f"  Δ RPS (learned − {cname}): {_rps(frames) - rps_compare:+.4f}")
-        else:
-            pps_compare = _pps(compare_frames)
-            print(f"  {cname} PPS: {pps_compare:.4f}  ({compare_frames[-1].total_picks} picks / {compare_frames[-1].total_decisions} decisions)")
-            print(f"  Δ PPS (learned − {cname}): {_pps(frames) - pps_compare:+.4f}")
+        rps_compare = _team_rps(compare_frames)
+        td = compare_frames[-1].total_decisions
+        print(f"  {cname} Team RPS: {rps_compare:.4f}  (total team reward {compare_frames[-1].total_team_reward:.1f} / {td} decisions)")
+        if td > 0:
+            print(f"    Correct: {compare_frames[-1].total_correct_picks} ({compare_frames[-1].total_correct_picks/td:.4f}/step)  "
+                  f"Wrong: {compare_frames[-1].total_wrong_picks} ({compare_frames[-1].total_wrong_picks/td:.4f}/step)")
+        print(f"  Δ Team RPS (learned − {cname}): {_team_rps(frames) - rps_compare:+.4f}")
     print()
 
     # --- Write CSV and summary ---
@@ -399,6 +442,7 @@ def main() -> None:
         compare_pngs=compare_pngs,
         n_task_types=n_task_types,
         task_assignments=task_assignments,
+        pick_mode=pick_mode,
     )
     print(f"Wrote {html_path} ({html_path.stat().st_size / 1024 / 1024:.1f} MB) in {time.time() - t0:.1f}s")
     print(f"\nDone! Open {html_path} in a browser to view.")

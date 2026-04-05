@@ -6,7 +6,7 @@ import base64
 import json
 from pathlib import Path
 
-from orchard.enums import Action
+from orchard.enums import Action, PickMode
 from orchard.viz.frame import Frame
 
 _ACTION_ARROWS: dict[int, str] = {
@@ -36,13 +36,17 @@ def _agent_css_color(idx: int) -> str:
     return palette[idx % len(palette)]
 
 
-def _build_frame_info_html(frame: Frame, n_task_types: int = 1,
-                           task_assignments: tuple[tuple[int, ...], ...] | None = None) -> str:
+def _build_frame_info_html(
+    frame: Frame,
+    n_task_types: int = 1,
+    task_assignments: tuple[tuple[int, ...], ...] | None = None,
+    pick_mode: PickMode = PickMode.CHOICE,
+) -> str:
     """Build the HTML info panel for one frame with math notation."""
     parts: list[str] = []
     t = frame.state_index
     t1 = t + 1
-    is_pick = (frame.action == Action.PICK or frame.action.is_pick())
+    is_pick = frame.action.is_pick()
 
     # Transition header
     parts.append(
@@ -59,7 +63,7 @@ def _build_frame_info_html(frame: Frame, n_task_types: int = 1,
     )
 
     # Task assignments for actor
-    if n_task_types > 1 and task_assignments is not None:
+    if task_assignments is not None:
         g = task_assignments[frame.actor]
         parts.append(
             f'<span style="color:#888">G<sub>{frame.actor}</sub> = {set(g)}</span>'
@@ -95,11 +99,18 @@ def _build_frame_info_html(frame: Frame, n_task_types: int = 1,
     # What happens next
     agent_on_task_after = frame.state_after.is_agent_on_task(frame.actor)
     if not is_pick and agent_on_task_after:
-        parts.append(
-            '<span style="color:#e377c2">'
-            '\u2192 Next: forced PICK (no env response, \u03b3=1)'
-            '</span>'
-        )
+        if pick_mode == PickMode.FORCED:
+            parts.append(
+                '<span style="color:#e377c2">'
+                '\u2192 Next: forced pick (\u03b3=1)'
+                '</span>'
+            )
+        else:
+            parts.append(
+                '<span style="color:#e377c2">'
+                '\u2192 Next: pick decision (\u03b3=1)'
+                '</span>'
+            )
     else:
         parts.append(
             '<span style="color:#888">'
@@ -107,26 +118,17 @@ def _build_frame_info_html(frame: Frame, n_task_types: int = 1,
             '</span>'
         )
 
-    # Stats
+    # Stats — always show Team RPS and correct/wrong
     stats_parts = [
         f'Tasks: <span style="color:#d62728">{frame.tasks_on_grid}</span>',
+        f'Team RPS: <span style="color:#2ca02c">{frame.team_reward_per_step:.4f}</span>',
+        f'Correct: <span style="color:#2ca02c">{frame.total_correct_picks}</span>'
+        f' Wrong: <span style="color:#d62728">{frame.total_wrong_picks}</span>',
     ]
-    if n_task_types > 1:
-        stats_parts.append(
-            f'RPS: <span style="color:#2ca02c">{frame.reward_per_step:.4f}</span>'
-        )
-        stats_parts.append(
-            f'Correct: <span style="color:#2ca02c">{frame.total_correct_picks}</span>'
-            f' Wrong: <span style="color:#d62728">{frame.total_wrong_picks}</span>'
-        )
-    else:
-        stats_parts.append(
-            f'Picks/step: <span style="color:#2ca02c">{frame.picks_per_step:.4f}</span>'
-        )
     parts.append(" | ".join(stats_parts))
 
     # Per-type task counts
-    if n_task_types > 1 and frame.state.task_types is not None:
+    if frame.state.task_types is not None:
         type_counts: dict[int, int] = {}
         for tt in frame.state.task_types:
             type_counts[tt] = type_counts.get(tt, 0) + 1
@@ -201,6 +203,7 @@ def build_html(
     compare_pngs: list[bytes] | None = None,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
+    pick_mode: PickMode = PickMode.CHOICE,
 ) -> None:
     """Write a self-contained HTML file with embedded frames and slider."""
     n = len(frames)
@@ -211,10 +214,10 @@ def build_html(
     if is_compare:
         b64_compare = [base64.b64encode(png).decode("ascii") for png in compare_pngs]
 
-    info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments) for f in frames]
+    info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments, pick_mode) for f in frames]
     compare_info_htmls = []
     if is_compare:
-        compare_info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments) for f in compare_frames]
+        compare_info_htmls = [_build_frame_info_html(f, n_task_types, task_assignments, pick_mode) for f in compare_frames]
 
     task_counts = [f.tasks_on_grid for f in frames]
     compare_task_counts = [f.tasks_on_grid for f in compare_frames] if is_compare else []

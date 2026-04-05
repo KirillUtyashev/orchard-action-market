@@ -34,6 +34,7 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
         "cum_picks",
         "cum_correct_picks",
         "cum_wrong_picks",
+        "team_rps",
         "picks_per_step",
         *agent_pick_cols,
     ]
@@ -58,6 +59,7 @@ def write_trajectory_csv(frames: list[Frame], path: Path) -> None:
                 "cum_picks": frame.total_picks,
                 "cum_correct_picks": frame.total_correct_picks,
                 "cum_wrong_picks": frame.total_wrong_picks,
+                "team_rps": f"{frame.team_reward_per_step:.6f}",
                 "picks_per_step": f"{frame.picks_per_step:.6f}",
             }
             for i, rcol in enumerate(reward_cols):
@@ -85,6 +87,7 @@ def write_summary_json(
     total_correct = frames[-1].total_correct_picks
     total_wrong = frames[-1].total_wrong_picks
     total_reward = frames[-1].total_reward
+    total_team_reward = frames[-1].total_team_reward
 
     # Per-agent pick counts
     agent_picks = [0] * n_agents
@@ -113,6 +116,8 @@ def write_summary_json(
         "picks_per_step": total_picks / total_decisions if total_decisions > 0 else 0.0,
         "total_reward": total_reward,
         "reward_per_step": total_reward / total_decisions if total_decisions > 0 else 0.0,
+        "total_team_reward": total_team_reward,
+        "team_reward_per_step": total_team_reward / total_decisions if total_decisions > 0 else 0.0,
         "correct_picks_per_step": total_correct / total_decisions if total_decisions > 0 else 0.0,
         "wrong_picks_per_step": total_wrong / total_decisions if total_decisions > 0 else 0.0,
         "avg_tasks_all": avg_tasks_all,

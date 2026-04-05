@@ -36,6 +36,7 @@ def generate_frames(
     total_correct_picks = 0
     total_wrong_picks = 0
     total_reward = 0.0
+    total_team_reward = 0.0
     decision_count = 0
     state_index = 0
     transition_index = 0
@@ -44,40 +45,37 @@ def generate_frames(
     is_decentralized = networks is not None and len(networks) > 1
     # Phase-1 actions for Q-value display; phase-2 handled per-transition
     all_actions = get_all_actions(env.cfg)
-    has_task_types = env.cfg.n_task_types > 1
 
     for transition in rollout_trajectory(start_state, policy_fn, env, n_steps):
-        is_pick = (transition.action == Action.PICK or
-                   (transition.action.is_pick() and transition.action != Action.PICK))
         picked = any(r != 0.0 for r in transition.rewards)
 
-        # Determine pick type and correctness
+        # Determine pick type and correctness (always, regardless of n_task_types)
         picked_task_type: int | None = None
         picked_correct: bool | None = None
 
-        if picked:
+        if picked and env.cfg.task_assignments is not None:
             total_picks += 1
             agent_pick_counts[transition.s_t.actor] += 1
 
-            if has_task_types and env.cfg.task_assignments is not None:
-                # Figure out what type was picked by comparing before/after tasks
-                before_tasks = set(zip(transition.s_t.task_positions,
-                                       transition.s_t.task_types or ()))
-                after_tasks = set(zip(transition.s_t_after.task_positions,
-                                      transition.s_t_after.task_types or ()))
-                removed = before_tasks - after_tasks
-                if removed:
-                    _, tau = next(iter(removed))
-                    picked_task_type = tau
-                    g_actor = set(env.cfg.task_assignments[transition.s_t.actor])
-                    picked_correct = (tau in g_actor)
-                    if picked_correct:
-                        total_correct_picks += 1
-                    else:
-                        total_wrong_picks += 1
+            # Figure out what type was picked by comparing before/after tasks
+            before_tasks = set(zip(transition.s_t.task_positions,
+                                   transition.s_t.task_types or ()))
+            after_tasks = set(zip(transition.s_t_after.task_positions,
+                                  transition.s_t_after.task_types or ()))
+            removed = before_tasks - after_tasks
+            if removed:
+                _, tau = next(iter(removed))
+                picked_task_type = tau
+                g_actor = set(env.cfg.task_assignments[transition.s_t.actor])
+                picked_correct = (tau in g_actor)
+                if picked_correct:
+                    total_correct_picks += 1
+                else:
+                    total_wrong_picks += 1
 
-        # Accumulate reward (actor's reward from this transition)
+        # Accumulate reward
         total_reward += transition.rewards[transition.s_t.actor]
+        total_team_reward += sum(transition.rewards)
 
         # Increment decision count on non-PICK transitions (actual agent choices)
         if transition.action.is_move():
@@ -135,6 +133,7 @@ def generate_frames(
             total_correct_picks=total_correct_picks,
             total_wrong_picks=total_wrong_picks,
             total_reward=total_reward,
+            total_team_reward=total_team_reward,
             decisions=decisions,
             agent_values=agent_values,
             agent_picks=dict(agent_pick_counts),

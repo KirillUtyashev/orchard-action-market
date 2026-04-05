@@ -41,7 +41,7 @@ class Frame:
 
     # Transition info: s_t --(action, r_{t+1}, γ_{t+1})--> s_{t+1}
     actor: int
-    action: Action                      # includes PICK for forced picks
+    action: Action                      # PICK (forced) or PICK_τ (choice mode)
     rewards: tuple[float, ...]          # r_{t+1}
     discount: float                     # γ_{t+1}
     picked: bool                        # True only on PICK transitions
@@ -55,12 +55,13 @@ class Frame:
     tasks_on_grid: int                  # len(state.task_positions) at s_t
     tasks_after: int                    # len(state_after.task_positions) at s_{t+1}
 
-    # Task specialization info
+    # Pick tracking (always active, regardless of n_task_types)
     picked_task_type: int | None = None     # type of task picked (None if no pick)
     picked_correct: bool | None = None      # True if τ ∈ G_actor, False if not, None if no pick
     total_correct_picks: int = 0
     total_wrong_picks: int = 0
     total_reward: float = 0.0               # cumulative actor reward across all transitions
+    total_team_reward: float = 0.0          # cumulative team reward (sum over agents)
 
     # Optional: decision introspection (--decisions)
     decisions: list[Decision] | None = None
@@ -87,6 +88,10 @@ class Frame:
     @property
     def reward_per_step(self) -> float:
         return self.total_reward / self.total_decisions if self.total_decisions > 0 else 0.0
+
+    @property
+    def team_reward_per_step(self) -> float:
+        return self.total_team_reward / self.total_decisions if self.total_decisions > 0 else 0.0
 
     def agent_picks_per_step(self, agent: int) -> float:
         """Per-agent picks / total decisions."""
