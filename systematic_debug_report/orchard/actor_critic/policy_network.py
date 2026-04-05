@@ -197,13 +197,14 @@ class PolicyNetwork(nn.Module):
             return None
 
         states = _stack_encoder_outputs(self.batch_states)
-        actions = torch.as_tensor(self.batch_actions, dtype=torch.long)
-        advantages = torch.as_tensor(self.batch_advantages, dtype=torch.float32)
         legal_masks = np.stack(self.batch_legal_masks, axis=0)
 
         logits = self.forward(states)
         if logits.dim() == 1:
             logits = logits.unsqueeze(0)
+        device = logits.device
+        actions = torch.as_tensor(self.batch_actions, dtype=torch.long, device=device)
+        advantages = torch.as_tensor(self.batch_advantages, dtype=torch.float32, device=device)
         masked_logits = self._masked_logits(logits, legal_masks)
         log_probs = F.log_softmax(masked_logits, dim=1)
         probs = log_probs.exp()
