@@ -302,6 +302,7 @@ def _parse_logging(d: dict[str, Any]) -> LoggingConfig:
         output_dir=str(d.get("output_dir", "runs/")),
         main_csv_freq=int(d.get("main_csv_freq", 10000)),
         detail_csv_freq=int(d.get("detail_csv_freq", 50000)),
+        timing_csv_freq=int(d.get("timing_csv_freq", 0)),
     )
 
 

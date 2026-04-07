@@ -94,22 +94,33 @@ class ValueTrainerBase(TrainerBase):
     # Turn stepping
     # ------------------------------------------------------------------
     def step(self, state: State, t: int) -> State:
+        self._timer.step_begin()
+
         move_action = self.select_move(state, t)
+
+        self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
         on_task = s_moved.is_agent_on_task(s_moved.actor)
+        self._timer.stop()
+
         self.train_move(s_moved, on_task, t)
 
         if on_task:
             pick_action = self.select_pick(s_moved, t)
+            self._timer.start(TimerSection.ENV)
             s_picked, pick_rewards = self._env.resolve_pick(
                 s_moved,
                 pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
             )
+            self._timer.stop()
             self.train_pick(s_picked, pick_rewards, t)
         else:
             s_picked = s_moved
 
-        return self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        self._timer.start(TimerSection.ENV)
+        result = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        self._timer.stop()
+        return result
 
     # ------------------------------------------------------------------
     # Action selection

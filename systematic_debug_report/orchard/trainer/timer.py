@@ -13,6 +13,7 @@ class TimerSection(Enum):
     TRAIN = auto()
     ACTION = auto()
     EVAL = auto()
+    ENV = auto()
 
 
 class Timer:

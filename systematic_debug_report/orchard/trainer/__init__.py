@@ -23,7 +23,7 @@ def create_trainer(
     use_gpu=False → CpuTrainer (sequential forwards, works for any n_networks)
     """
     gpu_sync = cfg.train.use_gpu and torch.cuda.is_available()
-    timer = Timer(enabled=False, gpu_sync=gpu_sync)  # enable via code if needed
+    timer = Timer(enabled=cfg.logging.timing_csv_freq > 0, gpu_sync=gpu_sync)
 
     if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC:
         critics = create_networks(cfg.model, cfg.env, cfg.train)

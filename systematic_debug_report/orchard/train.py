@@ -7,6 +7,8 @@ import time
 
 import torch
 
+from orchard.trainer.timer import TimerSection
+
 import orchard.encoding as encoding
 from orchard.config import load_config
 from orchard.datatypes import ExperimentConfig, StoppingConfig
@@ -92,6 +94,13 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
         build_detail_csv_fieldnames(trainer.critic_networks, trainer.actor_networks),
     )
     stopper = EarlyStopper(cfg.train.stopping, cfg.logging.main_csv_freq)
+
+    timing_logger = None
+    if cfg.logging.timing_csv_freq > 0:
+        timing_logger = CSVLogger(
+            run_dir / "timing.csv",
+            ["step", "wall_time", "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms"],
+        )
 
     state = env.init_state()
     last_completed_step = 0
@@ -179,11 +188,26 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             trainer.sync_to_cpu()
             trainer.save_checkpoint(run_dir / "checkpoints" / f"step_{t + 1}.pt", t + 1)
 
+        # ── Timing CSV ──
+        if timing_logger is not None and (t + 1) % cfg.logging.timing_csv_freq == 0:
+            report = trainer._timer.report_and_reset()
+            timing_logger.log({
+                "step": t + 1,
+                "wall_time": round(time.time() - start_time, 3),
+                "encode_ms": round(report[TimerSection.ENCODE] * 1000, 4),
+                "train_ms": round(report[TimerSection.TRAIN] * 1000, 4),
+                "action_ms": round(report[TimerSection.ACTION] * 1000, 4),
+                "env_ms": round(report[TimerSection.ENV] * 1000, 4),
+                "eval_ms": round(report[TimerSection.EVAL] * 1000, 4),
+            })
+
     # --- Finalize ---
     trainer.sync_to_cpu()
     trainer.save_checkpoint(run_dir / "checkpoints" / "final.pt", last_completed_step)
     main_logger.close()
     detail_logger.close()
+    if timing_logger is not None:
+        timing_logger.close()
     trainer.close()
     finalize_logging(run_dir, start_time)
     print(f"\nRun saved to: {run_dir}")

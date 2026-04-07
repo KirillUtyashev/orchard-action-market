@@ -175,3 +175,4 @@ logging:
   output_dir: runs/                # base directory; timestamped subfolder created
   main_csv_freq: 10000             # write metrics.csv every N steps
   detail_csv_freq: 50000           # write details.csv (weight norms, etc.) every N steps
+  timing_csv_freq: 10000           # write timing.csv every N steps (0=disable). This outputs the amount of time for each section.

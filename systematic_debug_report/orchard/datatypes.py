@@ -225,6 +225,7 @@ class LoggingConfig:
     output_dir: str = "runs/"
     main_csv_freq: int = 10000
     detail_csv_freq: int = 50000
+    timing_csv_freq: int = 0
 
 
 @dataclass(frozen=True)
