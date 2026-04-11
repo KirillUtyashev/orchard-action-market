@@ -202,6 +202,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
             })
 
     # --- Finalize ---
+    trainer.flush_pending_updates()
     trainer.sync_to_cpu()
     trainer.save_checkpoint(run_dir / "checkpoints" / "final.pt", last_completed_step)
     main_logger.close()

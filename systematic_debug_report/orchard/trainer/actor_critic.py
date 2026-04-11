@@ -20,6 +20,7 @@ from orchard.actor_critic import (
     policy_index_to_action,
     sample_phase1_policy_eval_states,
 )
+from orchard.batched_actor_training import BatchedActorTrainer
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import (
     EncoderOutput,
@@ -68,6 +69,13 @@ def _sanitize_metric(value: float | int | None) -> float | int | str:
     if value is None:
         return ""
     return value
+
+
+def _serialize_encoder_output(enc: EncoderOutput) -> dict[str, torch.Tensor | None]:
+    return {
+        "scalar": enc.scalar.detach().cpu() if enc.scalar is not None else None,
+        "grid": enc.grid.detach().cpu() if enc.grid is not None else None,
+    }
 
 
 class ActorCriticTrainerBase(TrainerBase):
@@ -197,6 +205,85 @@ class ActorCriticTrainerBase(TrainerBase):
                 values_by_action.append(self._critic_values(encoded_after_state))
         return values_by_action
 
+    def _accumulate_actor_metrics(self, actor_metrics: dict[str, float] | None) -> None:
+        if actor_metrics is None:
+            return
+        sample_count = float(actor_metrics.get("sample_count", 1.0))
+        self._actor_loss_accum += float(actor_metrics["loss"]) * sample_count
+        self._actor_loss_count += sample_count
+        self._advantage_accum += float(actor_metrics["advantage_mean"]) * sample_count
+        self._advantage_count += sample_count
+        self._entropy_accum += float(actor_metrics["entropy_mean"]) * sample_count
+        self._entropy_count += sample_count
+
+    def _handle_actor_experience(
+        self,
+        actor_net: PolicyNetwork,
+        actor_state: EncoderOutput,
+        legal_mask: np.ndarray,
+        action: Action,
+        advantage: float,
+        t: int,
+    ) -> None:
+        self._timer.start(TimerSection.TRAIN)
+        actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
+        actor_net.set_lr(actor_lr)
+        actor_net.add_experience(actor_state, legal_mask, action, advantage)
+        actor_metrics = actor_net.train_batch()
+        self._timer.stop()
+        self._accumulate_actor_metrics(actor_metrics)
+
+    def _after_step(self, next_state: State, t: int) -> None:
+        del next_state, t
+
+    def _serialize_pending_actor_batches(self) -> list[dict[str, object]]:
+        serialized: list[dict[str, object]] = []
+        for actor_id, actor_net in enumerate(self._actor_networks_list):
+            serialized.append(
+                {
+                    "actor_id": actor_id,
+                    "states": [_serialize_encoder_output(enc) for enc in actor_net.batch_states],
+                    "actions": [int(action_idx) for action_idx in actor_net.batch_actions],
+                    "advantages": [float(adv) for adv in actor_net.batch_advantages],
+                    "legal_masks": [
+                        np.asarray(mask, dtype=bool).tolist()
+                        for mask in actor_net.batch_legal_masks
+                    ],
+                }
+            )
+        return serialized
+
+    def _restore_pending_actor_batches(self, payloads: list[dict[str, object]] | None) -> None:
+        for actor_net in self._actor_networks_list:
+            actor_net.batch_states = []
+            actor_net.batch_actions = []
+            actor_net.batch_advantages = []
+            actor_net.batch_legal_masks = []
+
+        if not payloads:
+            return
+
+        for payload in payloads:
+            actor_id = int(payload.get("actor_id", 0))
+            actor_net = self._actor_networks_list[actor_id]
+            device = self._actor_device(actor_id)
+            states_payload = payload.get("states", [])
+            actor_net.batch_states = [
+                EncoderOutput(
+                    scalar=state_payload["scalar"].to(device)
+                    if state_payload["scalar"] is not None else None,
+                    grid=state_payload["grid"].to(device)
+                    if state_payload["grid"] is not None else None,
+                )
+                for state_payload in states_payload
+            ]
+            actor_net.batch_actions = [int(action_idx) for action_idx in payload.get("actions", [])]
+            actor_net.batch_advantages = [float(adv) for adv in payload.get("advantages", [])]
+            actor_net.batch_legal_masks = [
+                np.asarray(mask, dtype=bool)
+                for mask in payload.get("legal_masks", [])
+            ]
+
     # ------------------------------------------------------------------
     # Turn stepping
     # ------------------------------------------------------------------
@@ -228,6 +315,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 t=t,
             )
             next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+            self._after_step(next_state, t)
             return next_state
 
         if s_moved.is_agent_on_task(actor):
@@ -250,6 +338,7 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             s_picked = s_moved
         next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        self._after_step(next_state, t)
         return next_state
 
     # ------------------------------------------------------------------
@@ -523,20 +612,14 @@ class ActorCriticTrainerBase(TrainerBase):
             t,
         )
 
-        self._timer.start(TimerSection.TRAIN)
-        actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
-        actor_net.set_lr(actor_lr)
-        actor_net.add_experience(actor_state, legal_mask, action, advantage)
-        actor_metrics = actor_net.train_batch()
-        self._timer.stop()
-
-        if actor_metrics is not None:
-            self._actor_loss_accum += float(actor_metrics["loss"])
-            self._actor_loss_count += 1
-            self._advantage_accum += float(actor_metrics["advantage_mean"])
-            self._advantage_count += 1
-            self._entropy_accum += float(actor_metrics["entropy_mean"])
-            self._entropy_count += 1
+        self._handle_actor_experience(
+            actor_net,
+            actor_state,
+            legal_mask,
+            action,
+            advantage,
+            t,
+        )
 
     # ------------------------------------------------------------------
     # Evaluation and logging
@@ -692,6 +775,7 @@ class ActorCriticTrainerBase(TrainerBase):
             "step": int(step),
             "critics": [net.state_dict() for net in self._critic_networks_list],
             "actors": [net.state_dict() for net in self._actor_networks_list],
+            "pending_actor_batches": self._serialize_pending_actor_batches(),
             "following_rates": [
                 {
                     "agent_id": state.agent_id,
@@ -719,6 +803,7 @@ class ActorCriticTrainerBase(TrainerBase):
     def load_checkpoint(self, path: str | Path) -> int | None:
         ckpt = torch.load(path, map_location="cpu", weights_only=True)
         self._critic_prev_after = None
+        self._restore_pending_actor_batches(None)
 
         # Allow actor-critic runs to initialize critics from value checkpoints.
         if "networks" in ckpt:
@@ -739,6 +824,7 @@ class ActorCriticTrainerBase(TrainerBase):
             net.load_state_dict(sd, strict=True)
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
+        self._restore_pending_actor_batches(ckpt.get("pending_actor_batches"))
 
         if self._following_states and ckpt.get("following_rates"):
             for state, payload in zip(self._following_states, ckpt["following_rates"]):
@@ -813,6 +899,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         critic_networks: list[ValueNetwork],
         actor_networks: list[PolicyNetwork],
         bt: BatchedTrainer,
+        abt: BatchedActorTrainer,
         env: BaseEnv,
         gamma: float,
         critic_lr_schedule: ScheduleConfig,
@@ -839,6 +926,8 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             timer=timer,
         )
         self._bt = bt
+        self._abt = abt
+        self._latest_actor_step: int | None = None
 
     def _encode_all_critics(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
         return encoding.encode_all_agents(state)
@@ -879,10 +968,49 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             alpha=compute_schedule_value(self._critic_lr_schedule, t, self._total_steps),
         )
 
+    def _handle_actor_experience(
+        self,
+        actor_net: PolicyNetwork,
+        actor_state: EncoderOutput,
+        legal_mask: np.ndarray,
+        action: Action,
+        advantage: float,
+        t: int,
+    ) -> None:
+        actor_net.add_experience(actor_state, legal_mask, action, advantage)
+        self._latest_actor_step = int(t)
+
+    def _flush_actor_updates(self, t: int) -> None:
+        if not any(actor_net.batch_states for actor_net in self._actor_networks_list):
+            return
+        actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
+        for actor_net in self._actor_networks_list:
+            actor_net.set_lr(actor_lr)
+        self._timer.start(TimerSection.TRAIN)
+        actor_metrics = self._abt.train_batch_batched(alpha=actor_lr)
+        self._timer.stop()
+        self._accumulate_actor_metrics(actor_metrics)
+
+    def _after_step(self, next_state: State, t: int) -> None:
+        if next_state.actor == 0:
+            self._flush_actor_updates(t)
+
+    def flush_pending_updates(self) -> None:
+        if self._latest_actor_step is None:
+            return
+        self._flush_actor_updates(self._latest_actor_step)
+
     def sync_to_cpu(self) -> None:
         self._bt.sync_to_networks()
+        self._abt.sync_to_networks()
 
     def load_checkpoint(self, path: str | Path) -> int | None:
         step = super().load_checkpoint(path)
         self._bt.sync_from_networks()
+        self._abt.sync_from_networks()
+        if any(actor_net.batch_states for actor_net in self._actor_networks_list):
+            step_value = int(step) if step is not None else 0
+            self._latest_actor_step = max(step_value - 1, 0)
+        else:
+            self._latest_actor_step = None
         return step

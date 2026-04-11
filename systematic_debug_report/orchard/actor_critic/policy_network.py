@@ -196,6 +196,7 @@ class PolicyNetwork(nn.Module):
         if not self.batch_states:
             return None
 
+        sample_count = len(self.batch_states)
         states = _stack_encoder_outputs(self.batch_states)
         legal_masks = np.stack(self.batch_legal_masks, axis=0)
 
@@ -220,6 +221,7 @@ class PolicyNetwork(nn.Module):
             "loss": float(loss.item()),
             "advantage_mean": float(advantages.mean().item()),
             "entropy_mean": float(entropy.mean().item()),
+            "sample_count": float(sample_count),
         }
 
         self.batch_states = []
