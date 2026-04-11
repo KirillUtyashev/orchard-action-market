@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import csv
 import os
 import tempfile
@@ -31,7 +32,9 @@ from orchard.datatypes import (
     EnvConfig,
     EvalConfig,
     ExperimentConfig,
+    FollowingRatesConfig,
     Grid,
+    InfluencerConfig,
     LoggingConfig,
     ModelConfig,
     ScheduleConfig,
@@ -40,8 +43,10 @@ from orchard.datatypes import (
     StoppingConfig,
     TrainConfig,
 )
-from orchard.model import create_networks
+from orchard.batched_training import BatchedTrainer
+from orchard.model import create_actor_networks, create_networks
 from orchard.trainer import create_trainer
+from orchard.trainer.actor_critic import ActorCriticCpuTrainer, ActorCriticGpuTrainer
 from orchard.train import train
 
 
@@ -185,6 +190,102 @@ def _make_actor_critic_trainer(pick_mode: PickMode):
     return env, trainer
 
 
+def _make_dual_actor_critic_trainers(pick_mode: PickMode):
+    torch.manual_seed(11)
+
+    env_cfg = EnvConfig(
+        height=3,
+        width=3,
+        n_agents=2,
+        n_tasks=2,
+        gamma=0.99,
+        r_picker=1.0,
+        n_task_types=2,
+        r_low=-0.25,
+        task_assignments=((0,), (1,)),
+        pick_mode=pick_mode,
+        max_tasks_per_type=2,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+    )
+    model_cfg = ModelConfig(
+        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        mlp_dims=(8,),
+        conv_specs=((4, 3),),
+    )
+    lr_cfg = ScheduleConfig(start=0.01, end=0.01)
+    actor_lr_cfg = ScheduleConfig(start=0.01, end=0.01)
+    train_cfg = TrainConfig(
+        total_steps=20,
+        seed=11,
+        lr=lr_cfg,
+        epsilon=ScheduleConfig(start=0.0, end=0.0),
+        actor_lr=actor_lr_cfg,
+        algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+        freeze_critic=False,
+        learning_type=LearningType.DECENTRALIZED,
+        use_gpu=True,
+        td_lambda=0.0,
+        heuristic=Heuristic.NEAREST_TASK,
+        stopping=StoppingConfig(),
+    )
+
+    encoding.init_encoder(model_cfg.encoder, env_cfg)
+    env = create_env(env_cfg)
+
+    cpu_critics = create_networks(model_cfg, env_cfg, train_cfg)
+    cpu_actors = create_actor_networks(model_cfg, env_cfg, train_cfg)
+    gpu_critics = [copy.deepcopy(net) for net in cpu_critics]
+    gpu_actors = [copy.deepcopy(net) for net in cpu_actors]
+
+    cpu_trainer = ActorCriticCpuTrainer(
+        critic_networks=cpu_critics,
+        actor_networks=cpu_actors,
+        env=env,
+        gamma=env_cfg.gamma,
+        critic_lr_schedule=lr_cfg,
+        actor_lr_schedule=actor_lr_cfg,
+        total_steps=train_cfg.total_steps,
+        heuristic=Heuristic.NEAREST_TASK,
+        freeze_critic=False,
+        following_rates_cfg=FollowingRatesConfig(),
+        influencer_cfg=InfluencerConfig(),
+    )
+    gpu_trainer = ActorCriticGpuTrainer(
+        critic_networks=gpu_critics,
+        actor_networks=gpu_actors,
+        bt=BatchedTrainer(gpu_critics, td_lambda=0.0, device="cpu"),
+        env=env,
+        gamma=env_cfg.gamma,
+        critic_lr_schedule=lr_cfg,
+        actor_lr_schedule=actor_lr_cfg,
+        total_steps=train_cfg.total_steps,
+        heuristic=Heuristic.NEAREST_TASK,
+        freeze_critic=False,
+        following_rates_cfg=FollowingRatesConfig(),
+        influencer_cfg=InfluencerConfig(),
+    )
+    return env, cpu_trainer, gpu_trainer
+
+
+def _make_multi_pick_phase_state() -> State:
+    return State(
+        agent_positions=(Grid(1, 1), Grid(2, 2)),
+        task_positions=(Grid(1, 1), Grid(1, 1)),
+        actor=0,
+        task_types=(0, 1),
+        pick_phase=True,
+    )
+
+
+def _make_phase1_decision_state() -> State:
+    return State(
+        agent_positions=(Grid(0, 0), Grid(2, 2)),
+        task_positions=(Grid(0, 2), Grid(1, 0)),
+        actor=0,
+        task_types=(0, 1),
+    )
+
+
 def _install_identity_critic_spy(trainer):
     calls: list[dict[str, object]] = []
 
@@ -225,6 +326,54 @@ def _install_scripted_actions(trainer, *, move_action: Action, pick_action: Acti
 
 
 class TestActorCriticTrainingLoop:
+    def test_gpu_enumerate_action_objectives_matches_cpu_for_pick_phase(self):
+        env, cpu_trainer, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        state = _make_multi_pick_phase_state()
+        legal_mask = build_phase2_legal_mask(state, env.cfg)
+
+        cpu_q_values, cpu_after_states, cpu_rewards, cpu_after_values = (
+            cpu_trainer._enumerate_action_objectives(state, legal_mask, discount=1.0)
+        )
+        gpu_q_values, gpu_after_states, gpu_rewards, gpu_after_values = (
+            gpu_trainer._enumerate_action_objectives(state, legal_mask, discount=1.0)
+        )
+
+        np.testing.assert_allclose(cpu_q_values, gpu_q_values, atol=1e-6)
+        assert cpu_rewards == gpu_rewards
+
+        legal_indices = [int(idx) for idx in np.flatnonzero(legal_mask)]
+        for action_idx in legal_indices:
+            assert cpu_after_states[action_idx] == gpu_after_states[action_idx]
+            np.testing.assert_allclose(
+                cpu_after_values[action_idx],
+                gpu_after_values[action_idx],
+                atol=1e-6,
+            )
+
+    def test_gpu_enumerate_action_objectives_batches_legal_actions_once(self):
+        env, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        state = _make_phase1_decision_state()
+        legal_mask = build_phase1_legal_mask(state, env.cfg)
+
+        calls: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
+        original_forward_batched = gpu_trainer._bt.forward_batched
+
+        def _spy_forward_batched(grids, scalars):
+            calls.append((tuple(grids.shape), tuple(scalars.shape)))
+            return original_forward_batched(grids, scalars)
+
+        gpu_trainer._bt.forward_batched = _spy_forward_batched  # type: ignore[method-assign]
+
+        _, after_states, _, _ = gpu_trainer._enumerate_action_objectives(
+            state,
+            legal_mask,
+            discount=env.cfg.gamma,
+        )
+
+        assert len(calls) == 1
+        assert calls[0][0][1] == int(legal_mask.sum())
+        assert len(after_states) == int(legal_mask.sum())
+
     def test_freeze_critic_skips_critic_updates(self):
         _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
         trainer._freeze_critic = True

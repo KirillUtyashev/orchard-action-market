@@ -181,6 +181,22 @@ class ActorCriticTrainerBase(TrainerBase):
     ) -> float:
         ...
 
+    def _critic_values_for_after_states(
+        self,
+        state: State,
+        after_states: list[State],
+    ) -> list[list[float]]:
+        """Return per-action critic values in legal-action order.
+
+        Output shape is B x N, where B is len(after_states) and N is n_agents.
+        """
+        values_by_action: list[list[float]] = []
+        for after_state in after_states:
+            encoded_after_state = self._encode_all_critics(after_state)
+            with torch.no_grad():
+                values_by_action.append(self._critic_values(encoded_after_state))
+        return values_by_action
+
     # ------------------------------------------------------------------
     # Turn stepping
     # ------------------------------------------------------------------
@@ -384,28 +400,47 @@ class ActorCriticTrainerBase(TrainerBase):
         state: State,
         legal_mask: np.ndarray,
         discount: float,
-    ) -> tuple[np.ndarray, dict[int, tuple[float, ...]], dict[int, list[float]]]:
+    ) -> tuple[
+        np.ndarray,
+        dict[int, State],
+        dict[int, tuple[float, ...]],
+        dict[int, list[float]],
+    ]:
         phase2 = bool(state.pick_phase)
         q_values = np.zeros(int(legal_mask.shape[0]), dtype=float)
+        after_states_by_action: dict[int, State] = {}
         rewards_by_action: dict[int, tuple[float, ...]] = {}
         after_values_by_action: dict[int, list[float]] = {}
 
-        for action_idx in np.flatnonzero(legal_mask):
-            action = policy_index_to_action(int(action_idx))
+        legal_indices = [int(action_idx) for action_idx in np.flatnonzero(legal_mask)]
+        after_states: list[State] = []
+        rewards_list: list[tuple[float, ...]] = []
+
+        for action_idx in legal_indices:
+            action = policy_index_to_action(action_idx)
             after_state, rewards = self._after_state_for_action(state, action, phase2=phase2)
-            encoded_after_state = self._encode_all_critics(after_state)
-            with torch.no_grad():
-                after_values = self._critic_values(encoded_after_state)
-            rewards_by_action[int(action_idx)] = rewards
-            after_values_by_action[int(action_idx)] = after_values
-            q_values[int(action_idx)] = self._action_objective(
+            after_states.append(after_state)
+            rewards_list.append(rewards)
+
+        after_values_list = self._critic_values_for_after_states(state, after_states)
+
+        for action_idx, after_state, rewards, after_values in zip(
+            legal_indices,
+            after_states,
+            rewards_list,
+            after_values_list,
+        ):
+            after_states_by_action[action_idx] = after_state
+            rewards_by_action[action_idx] = rewards
+            after_values_by_action[action_idx] = after_values
+            q_values[action_idx] = self._action_objective(
                 rewards,
                 after_values,
                 state.actor,
                 discount,
             )
 
-        return q_values, rewards_by_action, after_values_by_action
+        return q_values, after_states_by_action, rewards_by_action, after_values_by_action
 
     # ------------------------------------------------------------------
     # Decision training
@@ -451,7 +486,7 @@ class ActorCriticTrainerBase(TrainerBase):
         actor_state = self._encode_actor_state(state, actor_id)
         actor_net = self._actor_networks_list[actor_id]
         probs = actor_net.get_action_probabilities(actor_state, legal_mask)
-        q_values, rewards_by_action, after_values_by_action = self._enumerate_action_objectives(
+        q_values, after_states_by_action, rewards_by_action, after_values_by_action = self._enumerate_action_objectives(
             state,
             legal_mask,
             discount,
@@ -459,14 +494,14 @@ class ActorCriticTrainerBase(TrainerBase):
         selected_q_value = float(q_values[action_idx])
         baseline_value = float(np.dot(probs, q_values))
         advantage = selected_q_value - baseline_value
+        selected_rewards = rewards_by_action[action_idx]
+        selected_after_values = after_values_by_action[action_idx]
 
         if self._following_states:
             rho = float(self._following_rates_cfg.rho)
             for observer_id, observer_state in enumerate(self._following_states):
                 if observer_id == actor_id:
                     continue
-                selected_rewards = rewards_by_action[action_idx]
-                selected_after_values = after_values_by_action[action_idx]
                 observer_q = (
                     float(selected_rewards[observer_id]) +
                     float(discount) * float(selected_after_values[observer_id])
@@ -480,14 +515,10 @@ class ActorCriticTrainerBase(TrainerBase):
         else:
             self._decision_count += 1
 
-        selected_after_state, _ = self._after_state_for_action(
-            state,
-            action,
-            phase2=bool(state.pick_phase),
-        )
+        selected_after_state = after_states_by_action[action_idx]
         self._train_critic_after_transition(
             selected_after_state,
-            rewards_by_action[action_idx],
+            selected_rewards,
             discount,
             t,
         )
@@ -815,6 +846,17 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     def _critic_values(self, encoded_state: tuple[torch.Tensor, torch.Tensor]) -> list[float]:
         grids, scalars = encoded_state
         return self._bt.forward_single_batched(grids, scalars).detach().cpu().tolist()
+
+    def _critic_values_for_after_states(
+        self,
+        state: State,
+        after_states: list[State],
+    ) -> list[list[float]]:
+        if not after_states:
+            return []
+        grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
+        values = self._bt.forward_batched(grids, scalars)
+        return values.transpose(0, 1).detach().cpu().tolist()
 
     def _critic_td_step(
         self,
