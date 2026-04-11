@@ -164,14 +164,17 @@ class PolicyNetwork(nn.Module):
             raise ValueError("Each action mask must allow at least one action.")
         return logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
 
-    def get_action_probabilities(self, enc: EncoderOutput, legal_mask) -> np.ndarray:
+    def get_action_probabilities_tensor(self, enc: EncoderOutput, legal_mask) -> torch.Tensor:
         self.eval()
         with torch.no_grad():
             logits = self.forward(enc)
             masked_logits = self._masked_logits(logits, legal_mask)
             probs = F.softmax(masked_logits, dim=1)
         self.train()
-        return probs.squeeze(0).detach().cpu().numpy()
+        return probs.squeeze(0).detach()
+
+    def get_action_probabilities(self, enc: EncoderOutput, legal_mask) -> np.ndarray:
+        return self.get_action_probabilities_tensor(enc, legal_mask).cpu().numpy()
 
     def sample_action(self, enc: EncoderOutput, legal_mask) -> tuple[Action, np.ndarray]:
         probs = self.get_action_probabilities(enc, legal_mask)

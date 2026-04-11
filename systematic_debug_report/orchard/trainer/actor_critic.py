@@ -288,11 +288,19 @@ class ActorCriticTrainerBase(TrainerBase):
     # Turn stepping
     # ------------------------------------------------------------------
     def step(self, state: State, t: int) -> State:
+        self._timer.step_begin()
+
+        self._timer.start(TimerSection.ACTION)
         move_action, move_actor_state, move_probs, move_mask = self._sample_action(state, phase2=False)
+        self._timer.stop()
+
+        self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
         actor = state.actor
+        on_task = s_moved.is_agent_on_task(actor)
+        self._timer.stop()
 
-        if self._env.cfg.pick_mode == PickMode.CHOICE and s_moved.is_agent_on_task(actor):
+        if self._env.cfg.pick_mode == PickMode.CHOICE and on_task:
             pick_state = s_moved.with_pick_phase()
             self._train_decision(
                 state=state,
@@ -304,14 +312,19 @@ class ActorCriticTrainerBase(TrainerBase):
                 probs=move_probs,
             )
 
+            self._timer.start(TimerSection.ACTION)
             pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(
                 pick_state,
                 phase2=True,
             )
+            self._timer.stop()
+
+            self._timer.start(TimerSection.ENV)
             s_picked, pick_rewards = self._env.resolve_pick(
                 s_moved,
                 pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
             )
+            self._timer.stop()
             self._train_decision(
                 state=pick_state,
                 action=pick_action,
@@ -321,11 +334,13 @@ class ActorCriticTrainerBase(TrainerBase):
                 actor_state=pick_actor_state,
                 probs=pick_probs,
             )
+            self._timer.start(TimerSection.ENV)
             next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+            self._timer.stop()
             self._after_step(next_state, t)
             return next_state
 
-        if s_moved.is_agent_on_task(actor):
+        if on_task:
             self._train_decision(
                 state=state,
                 action=move_action,
@@ -335,7 +350,9 @@ class ActorCriticTrainerBase(TrainerBase):
                 actor_state=move_actor_state,
                 probs=move_probs,
             )
+            self._timer.start(TimerSection.ENV)
             s_picked, rewards = self._env.resolve_pick(s_moved)
+            self._timer.stop()
             self._train_critic_after_transition(s_picked, rewards, 1.0, t)
         else:
             self._train_decision(
@@ -348,7 +365,9 @@ class ActorCriticTrainerBase(TrainerBase):
                 probs=move_probs,
             )
             s_picked = s_moved
+        self._timer.start(TimerSection.ENV)
         next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        self._timer.stop()
         self._after_step(next_state, t)
         return next_state
 
@@ -373,7 +392,11 @@ class ActorCriticTrainerBase(TrainerBase):
         legal_mask = self._legal_mask(state, phase2)
         return self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
 
-    def _sample_action(self, state: State, phase2: bool) -> tuple[Action, EncoderOutput, np.ndarray, np.ndarray]:
+    def _sample_action(
+        self,
+        state: State,
+        phase2: bool,
+    ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state, phase2)
@@ -495,6 +518,24 @@ class ActorCriticTrainerBase(TrainerBase):
             return total
         return float(sum(rewards) + float(discount) * sum(after_values))
 
+    def _build_legal_action_outcomes(
+        self,
+        state: State,
+        legal_mask: np.ndarray,
+    ) -> tuple[list[int], list[State], list[tuple[float, ...]]]:
+        phase2 = bool(state.pick_phase)
+        legal_indices = [int(action_idx) for action_idx in np.flatnonzero(legal_mask)]
+        after_states: list[State] = []
+        rewards_list: list[tuple[float, ...]] = []
+
+        for action_idx in legal_indices:
+            action = policy_index_to_action(action_idx)
+            after_state, rewards = self._after_state_for_action(state, action, phase2=phase2)
+            after_states.append(after_state)
+            rewards_list.append(rewards)
+
+        return legal_indices, after_states, rewards_list
+
     def _enumerate_action_objectives(
         self,
         state: State,
@@ -506,22 +547,12 @@ class ActorCriticTrainerBase(TrainerBase):
         dict[int, tuple[float, ...]],
         dict[int, list[float]],
     ]:
-        phase2 = bool(state.pick_phase)
         q_values = np.zeros(int(legal_mask.shape[0]), dtype=float)
         after_states_by_action: dict[int, State] = {}
         rewards_by_action: dict[int, tuple[float, ...]] = {}
         after_values_by_action: dict[int, list[float]] = {}
 
-        legal_indices = [int(action_idx) for action_idx in np.flatnonzero(legal_mask)]
-        after_states: list[State] = []
-        rewards_list: list[tuple[float, ...]] = []
-
-        for action_idx in legal_indices:
-            action = policy_index_to_action(action_idx)
-            after_state, rewards = self._after_state_for_action(state, action, phase2=phase2)
-            after_states.append(after_state)
-            rewards_list.append(rewards)
-
+        legal_indices, after_states, rewards_list = self._build_legal_action_outcomes(state, legal_mask)
         after_values_list = self._critic_values_for_after_states(state, after_states)
 
         for action_idx, after_state, rewards, after_values in zip(
@@ -575,6 +606,25 @@ class ActorCriticTrainerBase(TrainerBase):
 
         self._critic_prev_after = current_after
 
+    def _postprocess_selected_returns(
+        self,
+        actor_id: int,
+        selected_returns: list[float],
+    ) -> None:
+        if self._following_states:
+            rho = float(self._following_rates_cfg.rho)
+            for observer_id, observer_state in enumerate(self._following_states):
+                if observer_id == actor_id:
+                    continue
+                observer_state.update_alpha(actor_id, float(selected_returns[observer_id]), rho)
+            self._refresh_influencer_beta()
+            self._refresh_follower_influencer_values()
+            self._decision_count += 1
+            if self._should_reallocate_following_rates():
+                self._reallocate_following_rates()
+        else:
+            self._decision_count += 1
+
     def _train_decision(
         self,
         state: State,
@@ -583,7 +633,7 @@ class ActorCriticTrainerBase(TrainerBase):
         discount: float,
         t: int,
         actor_state: EncoderOutput | None = None,
-        probs: np.ndarray | None = None,
+        probs: np.ndarray | torch.Tensor | None = None,
     ) -> None:
         actor_id = state.actor
         action_idx = int(action.value)
@@ -603,24 +653,11 @@ class ActorCriticTrainerBase(TrainerBase):
         advantage = selected_q_value - baseline_value
         selected_rewards = rewards_by_action[action_idx]
         selected_after_values = after_values_by_action[action_idx]
-
-        if self._following_states:
-            rho = float(self._following_rates_cfg.rho)
-            for observer_id, observer_state in enumerate(self._following_states):
-                if observer_id == actor_id:
-                    continue
-                observer_q = (
-                    float(selected_rewards[observer_id]) +
-                    float(discount) * float(selected_after_values[observer_id])
-                )
-                observer_state.update_alpha(actor_id, observer_q, rho)
-            self._refresh_influencer_beta()
-            self._refresh_follower_influencer_values()
-            self._decision_count += 1
-            if self._should_reallocate_following_rates():
-                self._reallocate_following_rates()
-        else:
-            self._decision_count += 1
+        selected_returns = [
+            float(selected_rewards[idx]) + float(discount) * float(selected_after_values[idx])
+            for idx in range(self._n_agents)
+        ]
+        self._postprocess_selected_returns(actor_id, selected_returns)
 
         selected_after_state = after_states_by_action[action_idx]
         self._train_critic_after_transition(
@@ -961,9 +998,123 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     ) -> list[list[float]]:
         if not after_states:
             return []
+        return self._critic_values_tensor_for_after_states(state, after_states).detach().cpu().tolist()
+
+    def _critic_values_tensor_for_after_states(
+        self,
+        state: State,
+        after_states: list[State],
+    ) -> torch.Tensor:
+        if not after_states:
+            return torch.empty((0, self._n_agents), dtype=torch.float32, device=self._bt.device)
         grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
         values = self._bt.forward_batched(grids, scalars)
-        return values.transpose(0, 1).detach().cpu().tolist()
+        return values.transpose(0, 1)
+
+    def _action_objectives_tensor(
+        self,
+        actor_id: int,
+        rewards_t: torch.Tensor,
+        after_values_t: torch.Tensor,
+        discount: float,
+    ) -> torch.Tensor:
+        returns_t = rewards_t + float(discount) * after_values_t
+        if not self._following_states:
+            return returns_t.sum(dim=1)
+
+        weights = torch.zeros(self._n_agents, dtype=returns_t.dtype, device=returns_t.device)
+        weights[actor_id] = 1.0
+        for observer_id in range(self._n_agents):
+            if observer_id == actor_id:
+                continue
+            weights[observer_id] = float(self._effective_observer_weight(observer_id, actor_id))
+        return returns_t @ weights
+
+    def _enumerate_action_objectives_tensor(
+        self,
+        state: State,
+        legal_mask: np.ndarray,
+        discount: float,
+    ) -> tuple[torch.Tensor, list[int], list[State], list[tuple[float, ...]], torch.Tensor]:
+        legal_indices, after_states, rewards_list = self._build_legal_action_outcomes(state, legal_mask)
+        after_values_t = self._critic_values_tensor_for_after_states(state, after_states)
+        rewards_t = torch.as_tensor(rewards_list, dtype=after_values_t.dtype, device=after_values_t.device)
+        q_legal = self._action_objectives_tensor(state.actor, rewards_t, after_values_t, discount)
+        return q_legal, legal_indices, after_states, rewards_list, after_values_t
+
+    def _sample_action(
+        self,
+        state: State,
+        phase2: bool,
+    ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
+        actor_id = state.actor
+        actor_state = self._encode_actor_state(state, actor_id)
+        legal_mask = self._legal_mask(state, phase2)
+        probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
+        probs_np = probs_t.detach().cpu().numpy()
+        action_idx = int(np.random.choice(len(probs_np), p=probs_np))
+        return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask
+
+    def _train_decision(
+        self,
+        state: State,
+        action: Action,
+        legal_mask: np.ndarray,
+        discount: float,
+        t: int,
+        actor_state: EncoderOutput | None = None,
+        probs: np.ndarray | torch.Tensor | None = None,
+    ) -> None:
+        actor_id = state.actor
+        action_idx = int(action.value)
+        actor_net = self._actor_networks_list[actor_id]
+
+        if actor_state is None:
+            actor_state = self._encode_actor_state(state, actor_id)
+        if probs is None:
+            probs = actor_net.get_action_probabilities_tensor(actor_state, legal_mask)
+
+        q_legal, legal_indices, after_states, rewards_list, after_values_t = self._enumerate_action_objectives_tensor(
+            state,
+            legal_mask,
+            discount,
+        )
+        device = q_legal.device
+        if isinstance(probs, torch.Tensor):
+            probs_t = probs.to(device=device, dtype=q_legal.dtype)
+        else:
+            probs_t = torch.as_tensor(probs, dtype=q_legal.dtype, device=device)
+        legal_indices_t = torch.as_tensor(legal_indices, dtype=torch.long, device=device)
+        probs_legal = probs_t.index_select(0, legal_indices_t)
+        action_pos = legal_indices.index(action_idx)
+        selected_q_value = float(q_legal[action_pos].item())
+        baseline_value = float(torch.dot(probs_legal, q_legal).item())
+        advantage = selected_q_value - baseline_value
+
+        selected_rewards = rewards_list[action_pos]
+        selected_after_values_t = after_values_t[action_pos]
+        selected_returns = (
+            torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device) +
+            float(discount) * selected_after_values_t
+        ).detach().cpu().tolist()
+        self._postprocess_selected_returns(actor_id, selected_returns)
+
+        selected_after_state = after_states[action_pos]
+        self._train_critic_after_transition(
+            selected_after_state,
+            selected_rewards,
+            discount,
+            t,
+        )
+
+        self._handle_actor_experience(
+            actor_net,
+            actor_state,
+            legal_mask,
+            action,
+            advantage,
+            t,
+        )
 
     def _critic_td_step(
         self,
