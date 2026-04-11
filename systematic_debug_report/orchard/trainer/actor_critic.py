@@ -288,7 +288,7 @@ class ActorCriticTrainerBase(TrainerBase):
     # Turn stepping
     # ------------------------------------------------------------------
     def step(self, state: State, t: int) -> State:
-        move_action, _, move_mask = self._sample_action(state, phase2=False)
+        move_action, move_actor_state, move_probs, move_mask = self._sample_action(state, phase2=False)
         s_moved = self._env.apply_action(state, move_action)
         actor = state.actor
 
@@ -300,9 +300,14 @@ class ActorCriticTrainerBase(TrainerBase):
                 legal_mask=move_mask,
                 discount=self._gamma,
                 t=t,
+                actor_state=move_actor_state,
+                probs=move_probs,
             )
 
-            pick_action, _, pick_mask = self._sample_action(pick_state, phase2=True)
+            pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(
+                pick_state,
+                phase2=True,
+            )
             s_picked, pick_rewards = self._env.resolve_pick(
                 s_moved,
                 pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
@@ -313,6 +318,8 @@ class ActorCriticTrainerBase(TrainerBase):
                 legal_mask=pick_mask,
                 discount=1.0,
                 t=t,
+                actor_state=pick_actor_state,
+                probs=pick_probs,
             )
             next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
             self._after_step(next_state, t)
@@ -325,6 +332,8 @@ class ActorCriticTrainerBase(TrainerBase):
                 legal_mask=move_mask,
                 discount=self._gamma,
                 t=t,
+                actor_state=move_actor_state,
+                probs=move_probs,
             )
             s_picked, rewards = self._env.resolve_pick(s_moved)
             self._train_critic_after_transition(s_picked, rewards, 1.0, t)
@@ -335,6 +344,8 @@ class ActorCriticTrainerBase(TrainerBase):
                 legal_mask=move_mask,
                 discount=self._gamma,
                 t=t,
+                actor_state=move_actor_state,
+                probs=move_probs,
             )
             s_picked = s_moved
         next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
@@ -362,12 +373,12 @@ class ActorCriticTrainerBase(TrainerBase):
         legal_mask = self._legal_mask(state, phase2)
         return self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
 
-    def _sample_action(self, state: State, phase2: bool) -> tuple[Action, np.ndarray, np.ndarray]:
+    def _sample_action(self, state: State, phase2: bool) -> tuple[Action, EncoderOutput, np.ndarray, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state, phase2)
         action, probs = self._actor_networks_list[actor_id].sample_action(actor_state, legal_mask)
-        return action, probs, legal_mask
+        return action, actor_state, probs, legal_mask
 
     def _greedy_action(self, state: State, phase2: bool) -> Action:
         probs = self._actor_probabilities(state, phase2)
@@ -541,23 +552,26 @@ class ActorCriticTrainerBase(TrainerBase):
         discount: float,
         t: int,
     ) -> None:
+        if self._freeze_critic:
+            self._critic_prev_after = None
+            return
+
         self._timer.start(TimerSection.ENCODE)
         current_after = self._encode_all_critics(after_state)
         self._timer.stop()
 
         if self._critic_prev_after is not None:
-            if not self._freeze_critic:
-                self._timer.start(TimerSection.TRAIN)
-                critic_loss = self._critic_td_step(
-                    self._critic_prev_after,
-                    rewards,
-                    discount,
-                    current_after,
-                    t,
-                )
-                self._td_loss_accum += critic_loss
-                self._td_loss_count += self._n_agents
-                self._timer.stop()
+            self._timer.start(TimerSection.TRAIN)
+            critic_loss = self._critic_td_step(
+                self._critic_prev_after,
+                rewards,
+                discount,
+                current_after,
+                t,
+            )
+            self._td_loss_accum += critic_loss
+            self._td_loss_count += self._n_agents
+            self._timer.stop()
 
         self._critic_prev_after = current_after
 
@@ -568,13 +582,17 @@ class ActorCriticTrainerBase(TrainerBase):
         legal_mask: np.ndarray,
         discount: float,
         t: int,
+        actor_state: EncoderOutput | None = None,
+        probs: np.ndarray | None = None,
     ) -> None:
         actor_id = state.actor
         action_idx = int(action.value)
 
-        actor_state = self._encode_actor_state(state, actor_id)
         actor_net = self._actor_networks_list[actor_id]
-        probs = actor_net.get_action_probabilities(actor_state, legal_mask)
+        if actor_state is None:
+            actor_state = self._encode_actor_state(state, actor_id)
+        if probs is None:
+            probs = actor_net.get_action_probabilities(actor_state, legal_mask)
         q_values, after_states_by_action, rewards_by_action, after_values_by_action = self._enumerate_action_objectives(
             state,
             legal_mask,

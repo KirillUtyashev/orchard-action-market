@@ -191,6 +191,54 @@ def _make_actor_critic_trainer(pick_mode: PickMode):
     return env, trainer
 
 
+def _make_probability_count_trainer():
+    env_cfg = EnvConfig(
+        height=3,
+        width=3,
+        n_agents=2,
+        n_tasks=5,
+        gamma=0.99,
+        r_picker=1.0,
+        n_task_types=1,
+        r_low=0.0,
+        task_assignments=((0,), (0,)),
+        pick_mode=PickMode.CHOICE,
+        max_tasks_per_type=5,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+    )
+    model_cfg = ModelConfig(
+        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        mlp_dims=(8,),
+        conv_specs=((4, 3),),
+    )
+    train_cfg = TrainConfig(
+        total_steps=1,
+        seed=9,
+        lr=ScheduleConfig(start=0.01, end=0.01),
+        epsilon=ScheduleConfig(start=0.0, end=0.0),
+        actor_lr=ScheduleConfig(start=0.01, end=0.01),
+        algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+        freeze_critic=False,
+        learning_type=LearningType.DECENTRALIZED,
+        use_gpu=False,
+        td_lambda=0.0,
+        heuristic=Heuristic.NEAREST_TASK,
+        stopping=StoppingConfig(),
+    )
+    cfg = ExperimentConfig(
+        env=env_cfg,
+        model=model_cfg,
+        actor_model=None,
+        train=train_cfg,
+        eval=EvalConfig(),
+        logging=LoggingConfig(output_dir="unused"),
+    )
+    encoding.init_encoder(model_cfg.encoder, env_cfg)
+    env = create_env(env_cfg)
+    trainer = create_trainer(cfg, env)
+    return env, trainer
+
+
 def _make_dual_actor_critic_trainers(pick_mode: PickMode):
     torch.manual_seed(11)
 
@@ -318,17 +366,37 @@ def _make_choice_cycle_start_state() -> State:
     )
 
 
+def _make_move_only_state() -> State:
+    return State(
+        agent_positions=(Grid(0, 0), Grid(2, 2)),
+        task_positions=(Grid(2, 2),),
+        actor=0,
+        task_types=(0,),
+    )
+
+
+def _make_always_pick_choice_state() -> State:
+    return State(
+        agent_positions=(Grid(1, 1), Grid(2, 2)),
+        task_positions=(Grid(1, 1), Grid(0, 1), Grid(2, 1), Grid(1, 0), Grid(1, 2)),
+        actor=0,
+        task_types=(0, 0, 0, 0, 0),
+    )
+
+
 def _install_identity_critic_spy(trainer):
-    calls: list[dict[str, object]] = []
+    encode_calls: list[State] = []
+    td_calls: list[dict[str, object]] = []
 
     def _encode_all_critics(self, state: State) -> State:
+        encode_calls.append(state)
         return state
 
     def _critic_values(self, encoded_state: State) -> list[float]:
         return [0.0 for _ in range(self._n_agents)]
 
     def _critic_td_step(self, prev: State, rewards, discount: float, current: State, t: int) -> float:
-        calls.append(
+        td_calls.append(
             {
                 "prev": prev,
                 "rewards": rewards,
@@ -342,17 +410,21 @@ def _install_identity_critic_spy(trainer):
     trainer._encode_all_critics = MethodType(_encode_all_critics, trainer)
     trainer._critic_values = MethodType(_critic_values, trainer)
     trainer._critic_td_step = MethodType(_critic_td_step, trainer)
-    return calls
+    return {
+        "encode_calls": encode_calls,
+        "td_calls": td_calls,
+    }
 
 
 def _install_scripted_actions(trainer, *, move_action: Action, pick_action: Action | None = None) -> None:
     def _sample_action(self, state: State, phase2: bool):
+        actor_state = self._encode_actor_state(state, state.actor)
         if phase2:
             assert pick_action is not None
             mask = build_phase2_legal_mask(state, self._env.cfg)
-            return pick_action, np.zeros(mask.shape[0], dtype=float), mask
+            return pick_action, actor_state, np.zeros(mask.shape[0], dtype=float), mask
         mask = build_phase1_legal_mask(state, self._env.cfg)
-        return move_action, np.zeros(mask.shape[0], dtype=float), mask
+        return move_action, actor_state, np.zeros(mask.shape[0], dtype=float), mask
 
     trainer._sample_action = MethodType(_sample_action, trainer)
 
@@ -365,12 +437,13 @@ def _install_two_actor_choice_cycle_actions(
     actor1_move: Action,
 ) -> None:
     def _sample_action(self, state: State, phase2: bool):
+        actor_state = self._encode_actor_state(state, state.actor)
         if phase2:
             mask = build_phase2_legal_mask(state, self._env.cfg)
-            return actor0_pick, np.zeros(mask.shape[0], dtype=float), mask
+            return actor0_pick, actor_state, np.zeros(mask.shape[0], dtype=float), mask
         mask = build_phase1_legal_mask(state, self._env.cfg)
         action = actor0_move if state.actor == 0 else actor1_move
-        return action, np.zeros(mask.shape[0], dtype=float), mask
+        return action, actor_state, np.zeros(mask.shape[0], dtype=float), mask
 
     trainer._sample_action = MethodType(_sample_action, trainer)
 
@@ -635,10 +708,47 @@ class TestActorCriticTrainingLoop:
             pending_batches = ckpt["pending_actor_batches"]
             assert all(len(payload["states"]) == 0 for payload in pending_batches)
 
+    def test_step_reuses_sampled_actor_probabilities(self):
+        _, move_only_trainer = _make_probability_count_trainer()
+        move_only_calls = 0
+        move_only_actor = move_only_trainer.actor_networks[0]
+        original_move_only_get_action_probabilities = move_only_actor.get_action_probabilities
+
+        def _spy_move_only_get_action_probabilities(self, enc, legal_mask):
+            nonlocal move_only_calls
+            move_only_calls += 1
+            return original_move_only_get_action_probabilities(enc, legal_mask)
+
+        move_only_actor.get_action_probabilities = MethodType(
+            _spy_move_only_get_action_probabilities,
+            move_only_actor,
+        )
+
+        move_only_trainer.step(_make_move_only_state(), 0)
+        assert move_only_calls == 1
+
+        _, choice_trainer = _make_probability_count_trainer()
+        choice_calls = 0
+        choice_actor = choice_trainer.actor_networks[0]
+        original_choice_get_action_probabilities = choice_actor.get_action_probabilities
+
+        def _spy_choice_get_action_probabilities(self, enc, legal_mask):
+            nonlocal choice_calls
+            choice_calls += 1
+            return original_choice_get_action_probabilities(enc, legal_mask)
+
+        choice_actor.get_action_probabilities = MethodType(
+            _spy_choice_get_action_probabilities,
+            choice_actor,
+        )
+
+        choice_trainer.step(_make_always_pick_choice_state(), 0)
+        assert choice_calls == 2
+
     def test_freeze_critic_skips_critic_updates(self):
         _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
         trainer._freeze_critic = True
-        calls = _install_identity_critic_spy(trainer)
+        spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
             trainer,
             move_action=Action.RIGHT,
@@ -662,12 +772,16 @@ class TestActorCriticTrainingLoop:
 
         trainer.step(state, 0)
 
-        assert calls == []
-        assert trainer._critic_prev_after.pick_phase is False
+        assert spy["td_calls"] == []
+        move_mask = build_phase1_legal_mask(state, trainer._env.cfg)
+        pick_state = trainer._env.apply_action(state, Action.RIGHT).with_pick_phase()
+        pick_mask = build_phase2_legal_mask(pick_state, trainer._env.cfg)
+        assert len(spy["encode_calls"]) == int(move_mask.sum() + pick_mask.sum())
+        assert trainer._critic_prev_after is None
 
     def test_choice_mode_critic_td_uses_previous_after_state_chain(self):
         env, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
-        calls = _install_identity_critic_spy(trainer)
+        spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
             trainer,
             move_action=Action.RIGHT,
@@ -691,6 +805,7 @@ class TestActorCriticTrainingLoop:
 
         trainer.step(state, 0)
 
+        calls = spy["td_calls"]
         assert len(calls) == 2
         assert calls[0]["prev"] == sentinel_after
         assert calls[0]["rewards"] == (0.0, 0.0)
@@ -704,7 +819,7 @@ class TestActorCriticTrainingLoop:
 
     def test_forced_pick_turn_inserts_critic_only_pick_followup(self):
         env, trainer = _make_actor_critic_trainer(PickMode.FORCED)
-        calls = _install_identity_critic_spy(trainer)
+        spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(trainer, move_action=Action.RIGHT)
 
         sentinel_after = State(
@@ -724,6 +839,7 @@ class TestActorCriticTrainingLoop:
 
         trainer.step(state, 0)
 
+        calls = spy["td_calls"]
         assert len(calls) == 2
         assert calls[0]["prev"] == sentinel_after
         assert calls[0]["rewards"] == (0.0, 0.0)
