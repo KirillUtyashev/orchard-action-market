@@ -1,47 +1,33 @@
-# Python bytecode and cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-*.pkl
+.pytest_cache/
+
+# Output folders (generated, not source)
+systematic_debug_report/compare_output/
+systematic_debug_report/compare_policies_output/
+systematic_debug_report/viz_output/
+systematic_debug_report/slurm_experiments/
+systematic_debug_report/output/
+systematic_debug_report/test_runs/
+systematic_debug_report/runs/
+systematic_debug_report/profile/
+systematic_debug_report/backups/
+systematic_debug_report/request_slurm.sh
+
+systematic_debug_report/TODO.txt
+
+# Data/model files
+*.npz
 *.pt
 *.pth
-# IDE and editor configuration folders
+*.pkl
+
+# IDE
 .vscode/
 .idea/
+pyrightconfig.json
 
-output_notebooks/
-bin/
-lib/
-lib64/
-pyvenv.cfg
-share/
-etc/
-slurm_logs/
-
-*.sbatch
-*.txt
-*.png
-*.csv
-# Virtual environment folders
-venv/
-.venv/
-.env/
-
-# Project-specific generated output - DO NOT TRACK
-logs/
-graphs/
-policyitchk/
-positions/
-out/
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Environment variables file
-.env
-
-# other
-data
-
-debug/code/supervised_copy.py
+# Logs
+*.log
