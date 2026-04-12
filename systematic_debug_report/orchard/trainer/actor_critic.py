@@ -1051,8 +1051,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state, phase2)
         probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
-        probs_np = probs_t.detach().cpu().numpy()
-        action_idx = int(np.random.choice(len(probs_np), p=probs_np))
+        action_idx = int(torch.multinomial(probs_t, 1).item())
         return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask
 
     def _train_decision(
