@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from orchard.batched_actor_training import BatchedActorTrainer
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
@@ -35,7 +34,6 @@ def create_trainer(
             for actor in actors:
                 actor.to(device)
             bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device)
-            abt = BatchedActorTrainer(actors, device=device)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
             if device == "cuda":
                 alloc = torch.cuda.memory_allocated() / 1024**2
@@ -46,7 +44,6 @@ def create_trainer(
                 critic_networks=critics,
                 actor_networks=actors,
                 bt=bt,
-                abt=abt,
                 env=env,
                 gamma=cfg.env.gamma,
                 critic_lr_schedule=cfg.train.lr,

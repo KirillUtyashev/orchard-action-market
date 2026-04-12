@@ -20,7 +20,6 @@ from orchard.actor_critic import (
     policy_index_to_action,
     sample_phase1_policy_eval_states,
 )
-from orchard.batched_actor_training import BatchedActorTrainer
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import (
     EncoderOutput,
@@ -879,7 +878,7 @@ class ActorCriticTrainerBase(TrainerBase):
             net.load_state_dict(sd, strict=True)
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
-        self._restore_pending_actor_batches(ckpt.get("pending_actor_batches"))
+        self._restore_pending_actor_batches(None)
 
         if self._following_states and ckpt.get("following_rates"):
             for state, payload in zip(self._following_states, ckpt["following_rates"]):
@@ -954,7 +953,6 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         critic_networks: list[ValueNetwork],
         actor_networks: list[PolicyNetwork],
         bt: BatchedTrainer,
-        abt: BatchedActorTrainer,
         env: BaseEnv,
         gamma: float,
         critic_lr_schedule: ScheduleConfig,
@@ -981,8 +979,6 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             timer=timer,
         )
         self._bt = bt
-        self._abt = abt
-        self._latest_actor_step: int | None = None
 
     def _encode_all_critics(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
         return encoding.encode_all_agents(state)
@@ -1136,49 +1132,10 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             alpha=compute_schedule_value(self._critic_lr_schedule, t, self._total_steps),
         )
 
-    def _handle_actor_experience(
-        self,
-        actor_net: PolicyNetwork,
-        actor_state: EncoderOutput,
-        legal_mask: np.ndarray,
-        action: Action,
-        advantage: float,
-        t: int,
-    ) -> None:
-        actor_net.add_experience(actor_state, legal_mask, action, advantage)
-        self._latest_actor_step = int(t)
-
-    def _flush_actor_updates(self, t: int) -> None:
-        if not any(actor_net.batch_states for actor_net in self._actor_networks_list):
-            return
-        actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
-        for actor_net in self._actor_networks_list:
-            actor_net.set_lr(actor_lr)
-        self._timer.start(TimerSection.TRAIN)
-        actor_metrics = self._abt.train_batch_batched(alpha=actor_lr)
-        self._timer.stop()
-        self._accumulate_actor_metrics(actor_metrics)
-
-    def _after_step(self, next_state: State, t: int) -> None:
-        if next_state.actor == 0:
-            self._flush_actor_updates(t)
-
-    def flush_pending_updates(self) -> None:
-        if self._latest_actor_step is None:
-            return
-        self._flush_actor_updates(self._latest_actor_step)
-
     def sync_to_cpu(self) -> None:
         self._bt.sync_to_networks()
-        self._abt.sync_to_networks()
 
     def load_checkpoint(self, path: str | Path) -> int | None:
         step = super().load_checkpoint(path)
         self._bt.sync_from_networks()
-        self._abt.sync_from_networks()
-        if any(actor_net.batch_states for actor_net in self._actor_networks_list):
-            step_value = int(step) if step is not None else 0
-            self._latest_actor_step = max(step_value - 1, 0)
-        else:
-            self._latest_actor_step = None
         return step

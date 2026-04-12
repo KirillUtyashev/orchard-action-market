@@ -312,7 +312,6 @@ def _make_dual_actor_critic_trainers(
         critic_networks=gpu_critics,
         actor_networks=gpu_actors,
         bt=BatchedTrainer(gpu_critics, td_lambda=0.0, device="cpu"),
-        abt=BatchedActorTrainer(gpu_actors, device="cpu"),
         env=env,
         gamma=env_cfg.gamma,
         critic_lr_schedule=lr_cfg,
@@ -625,7 +624,7 @@ class TestActorCriticTrainingLoop:
             atol=1e-6,
         )
 
-    def test_gpu_actor_flushes_once_per_cycle_without_per_actor_train_batch(self):
+    def test_gpu_actor_updates_sequentially_per_decision(self):
         _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
@@ -635,109 +634,22 @@ class TestActorCriticTrainingLoop:
             actor1_move=Action.STAY,
         )
 
-        for actor_net in gpu_trainer.actor_networks:
-            def _forbid_train_batch(self):
-                raise AssertionError("GPU path should not call PolicyNetwork.train_batch() directly.")
+        train_calls = [0, 0]
+        before_params = _clone_actor_params(gpu_trainer.actor_networks)
+        original_train_batches = [actor_net.train_batch for actor_net in gpu_trainer.actor_networks]
 
-            actor_net.train_batch = MethodType(_forbid_train_batch, actor_net)
+        for actor_id, actor_net in enumerate(gpu_trainer.actor_networks):
+            original_train_batch = original_train_batches[actor_id]
 
-        sample_masks: list[torch.Tensor] = []
-        original_train_batch_batched = gpu_trainer._abt.train_batch_batched
+            def _spy_train_batch(self, _orig=original_train_batch, _actor_id=actor_id):
+                train_calls[_actor_id] += 1
+                return _orig()
 
-        def _spy_train_batch_batched(alpha: float):
-            packed = gpu_trainer._abt._pack_batches_from_networks()
-            assert packed is not None
-            sample_masks.append(packed[-1].detach().cpu().clone())
-            return original_train_batch_batched(alpha)
-
-        gpu_trainer._abt.train_batch_batched = _spy_train_batch_batched  # type: ignore[method-assign]
+            actor_net.train_batch = MethodType(_spy_train_batch, actor_net)
 
         next_state = gpu_trainer.step(state, 0)
         assert next_state.actor == 1
-        assert sample_masks == []
-
-        next_state = gpu_trainer.step(next_state, 1)
-        assert next_state.actor == 0
-        assert len(sample_masks) == 1
-        assert tuple(sample_masks[0].shape) == (2, 2)
-        torch.testing.assert_close(
-            sample_masks[0],
-            torch.tensor([[1.0, 1.0], [1.0, 0.0]]),
-            atol=0.0,
-            rtol=0.0,
-        )
-        assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
-
-    def test_gpu_actor_checkpoint_preserves_pending_batches_mid_cycle(self):
-        _, _, trainer_a = _make_dual_actor_critic_trainers(PickMode.CHOICE)
-        _, _, trainer_b = _make_dual_actor_critic_trainers(PickMode.CHOICE)
-        state = _make_choice_cycle_start_state()
-        _install_two_actor_choice_cycle_actions(
-            trainer_a,
-            actor0_move=Action.RIGHT,
-            actor0_pick=make_pick_action(0),
-            actor1_move=Action.STAY,
-        )
-        _install_two_actor_choice_cycle_actions(
-            trainer_b,
-            actor0_move=Action.RIGHT,
-            actor0_pick=make_pick_action(0),
-            actor1_move=Action.STAY,
-        )
-
-        next_state = trainer_a.step(state, 0)
-        assert len(trainer_a.actor_networks[0].batch_states) == 2
-        assert len(trainer_a.actor_networks[1].batch_states) == 0
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ckpt_path = Path(tmpdir) / "mid_cycle.pt"
-            trainer_a.sync_to_cpu()
-            trainer_a.save_checkpoint(ckpt_path, step=1)
-            trainer_b.load_checkpoint(ckpt_path)
-
-            assert len(trainer_b.actor_networks[0].batch_states) == 2
-            assert len(trainer_b.actor_networks[1].batch_states) == 0
-
-            trainer_a.step(next_state, 1)
-            trainer_b.step(next_state, 1)
-            _assert_actor_params_close(trainer_a.actor_networks, trainer_b.actor_networks)
-
-    def test_gpu_actor_final_flush_applies_pending_updates_once(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
-        state = _make_choice_cycle_start_state()
-        _install_two_actor_choice_cycle_actions(
-            gpu_trainer,
-            actor0_move=Action.RIGHT,
-            actor0_pick=make_pick_action(0),
-            actor1_move=Action.STAY,
-        )
-
-        before_params = _clone_actor_params(gpu_trainer.actor_networks)
-        train_calls = 0
-        original_train_batch_batched = gpu_trainer._abt.train_batch_batched
-
-        def _spy_train_batch_batched(alpha: float):
-            nonlocal train_calls
-            train_calls += 1
-            return original_train_batch_batched(alpha)
-
-        gpu_trainer._abt.train_batch_batched = _spy_train_batch_batched  # type: ignore[method-assign]
-
-        gpu_trainer.step(state, 0)
-        assert train_calls == 0
-
-        params_changed = False
-        for actor_before, actor_after in zip(before_params, gpu_trainer.actor_networks):
-            for name, tensor in actor_after.state_dict().items():
-                if not torch.allclose(actor_before[name], tensor):
-                    params_changed = True
-                    break
-            if params_changed:
-                break
-        assert not params_changed
-
-        gpu_trainer.flush_pending_updates()
-        assert train_calls == 1
+        assert train_calls == [2, 0]
         assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
 
         params_changed = False
@@ -750,6 +662,24 @@ class TestActorCriticTrainingLoop:
                 break
         assert params_changed
 
+        next_state = gpu_trainer.step(next_state, 1)
+        assert next_state.actor == 0
+        assert train_calls == [2, 1]
+        assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
+
+    def test_gpu_actor_checkpoints_do_not_store_pending_batches(self):
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        state = _make_choice_cycle_start_state()
+        _install_two_actor_choice_cycle_actions(
+            gpu_trainer,
+            actor0_move=Action.RIGHT,
+            actor0_pick=make_pick_action(0),
+            actor1_move=Action.STAY,
+        )
+
+        gpu_trainer.step(state, 0)
+        assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             ckpt_path = Path(tmpdir) / "final.pt"
             gpu_trainer.sync_to_cpu()
@@ -757,6 +687,24 @@ class TestActorCriticTrainingLoop:
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             pending_batches = ckpt["pending_actor_batches"]
             assert all(len(payload["states"]) == 0 for payload in pending_batches)
+
+    def test_gpu_actor_flush_pending_updates_is_noop(self):
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        state = _make_choice_cycle_start_state()
+        _install_two_actor_choice_cycle_actions(
+            gpu_trainer,
+            actor0_move=Action.RIGHT,
+            actor0_pick=make_pick_action(0),
+            actor1_move=Action.STAY,
+        )
+
+        gpu_trainer.step(state, 0)
+        before_params = _clone_actor_params(gpu_trainer.actor_networks)
+        gpu_trainer.flush_pending_updates()
+
+        for actor_before, actor_after in zip(before_params, gpu_trainer.actor_networks):
+            for name, tensor in actor_after.state_dict().items():
+                torch.testing.assert_close(actor_before[name], tensor, atol=0.0, rtol=0.0)
 
     def test_step_reuses_sampled_actor_probabilities(self):
         _, move_only_trainer = _make_probability_count_trainer()
