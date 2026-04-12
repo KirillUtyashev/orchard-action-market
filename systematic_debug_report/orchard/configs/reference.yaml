@@ -51,7 +51,7 @@ model:
   #   centralized_task_cnn_grid:  cen, T+N+1 channels, N scalars
   #                               single network sees everything
   #   position_aware_task_cnn_grid: dec O(1), 5 grid channels, 3 scalars
-  encoder: blind_task_cnn_grid
+  encoder: filtered_task_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer
   # Padding is always kernel_size // 2 (same-padding), so spatial dims don't shrink
@@ -72,12 +72,105 @@ model:
 # Optional actor-specific model config for actor-critic runs.
 # If omitted, actor networks reuse the critic model config above.
 # The encoder must match model.encoder because orchard initializes one encoder singleton.
-actor_model:
-  encoder: blind_task_cnn_grid
-  conv_specs: [[8, 3]]            # actor can use a different conv stack than the critic
-  mlp_dims: [32]                  # actor can use different hidden dims than the critic
-  activation: relu
-  weight_init: default
+config:
+  env:
+    height: 12
+    width: 12
+    n_agents: 8
+    n_tasks: 18
+    gamma: 0.99
+    r_picker: -1.0
+    n_task_types: 2
+    r_low: -1.0
+    task_assignments:
+    - - 0
+    - - 0
+    - - 0
+    - - 0
+    - - 1
+    - - 1
+    - - 1
+    - - 1
+    pick_mode: choice
+    max_tasks_per_type: 18
+    stochastic:
+      spawn_prob: 0.01
+      despawn_mode: probability
+      despawn_prob: 0.0125
+      task_spawn_mode: null
+  model:
+    encoder: filtered_task_cnn_grid
+    mlp_dims:
+    - 8
+    conv_specs:
+    - - 8
+      - 3
+    - - 8
+      - 3
+    activation: leaky_relu
+    weight_init: zero_bias
+  actor_model: null
+  train:
+    total_steps: 7000000
+    seed: 1234
+    lr:
+      start: 0.005
+      end: 0.005
+      schedule: none
+      step_size: 0
+      step_factor: 1.0
+      step_start: 0
+    epsilon:
+      start: 0.05
+      end: 0.05
+      schedule: none
+      step_size: 0
+      step_factor: 1.0
+      step_start: 0
+    actor_lr: null
+    freeze_critic: false
+    algorithm:
+      name: value
+    following_rates:
+      enabled: false
+      budget: 0.0
+      rho: 0.0
+      reallocation_freq: 1
+      solver: closed_form
+      fixed: false
+    influencer:
+      enabled: false
+      budget: 0.0
+    learning_type: decentralized
+    use_gpu: true
+    td_lambda: 0.3
+    comm_weight: 1.0
+    heuristic: nearest_correct_task_stay_wrong
+    stopping:
+      condition: running_max_rps
+      patience_steps: 1500000
+      improvement_threshold: 1.0e-07
+      min_steps_before_stop: 2000000
+  eval:
+    rollout_len: 2000
+    eval_steps: 1000
+    n_test_states: 50
+    checkpoint_freq: 100000
+  logging:
+    output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/slurm_experiments/april4/model_sizes_and_vary_N/runs/N8_12x12/dec/x8
+    main_csv_freq: 10000
+    detail_csv_freq: 50000
+    timing_csv_freq: 0
+run:
+  start_time: '2026-04-07T22:27:42.832712'
+  end_time: '2026-04-09T13:27:16.405481'
+  total_wall_seconds: 140373.76
+  hostname: gpunode15
+  git_hash: 241c6ba
+  slurm_job_id: '142906'
+  slurm_array_task_id: null
+  slurm_array_job_id: null
+
 
 train:
   # Learning type determines number of networks:
@@ -167,7 +260,6 @@ train:
 
 eval:
   eval_steps: 1000                 # steps per eval rollout (greedy + heuristic)
-  rollout_len: 2000                # max rollout length for trajectory generation
   n_test_states: 50                # number of states for value diagnostics
   checkpoint_freq: 100000          # save model every N steps (0=final only)
 

@@ -725,6 +725,28 @@ class ActorCriticTrainerBase(TrainerBase):
         self._refresh_follower_influencer_values()
         return ckpt.get("step")
 
+    def load_critic_checkpoint(self, path: str | Path) -> int | None:
+        """Load critic weights only; actor networks remain randomly initialised."""
+        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        self._critic_prev_after = None
+        if "networks" in ckpt:  # legacy value checkpoint
+            for net, sd in zip(self._critic_networks_list, ckpt["networks"]):
+                net.load_state_dict(sd, strict=True)
+        elif "critics" in ckpt:  # value or actor_critic checkpoint
+            for net, sd in zip(self._critic_networks_list, ckpt["critics"]):
+                net.load_state_dict(sd, strict=True)
+        else:
+            raise ValueError(f"No critic weights found in checkpoint. Keys: {list(ckpt.keys())}")
+        return ckpt.get("step")
+
+    def load_actor_checkpoint(self, path: str | Path) -> int | None:
+        """Load actor weights only; critic networks remain as-is."""
+        ckpt = torch.load(path, map_location="cpu", weights_only=True)
+        if "actors" not in ckpt:
+            raise ValueError(f"No actor weights found in checkpoint. Keys: {list(ckpt.keys())}")
+        for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
+            net.load_state_dict(sd, strict=True)
+        return ckpt.get("step")
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -843,4 +865,14 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     def load_checkpoint(self, path: str | Path) -> int | None:
         step = super().load_checkpoint(path)
         self._bt.sync_from_networks()
+        return step
+
+    def load_critic_checkpoint(self, path: str | Path) -> int | None:
+            step = super().load_critic_checkpoint(path)
+            self._bt.sync_from_networks()
+            return step
+
+    def load_actor_checkpoint(self, path: str | Path) -> int | None:
+        step = super().load_actor_checkpoint(path)
+        # actors live on their own devices, no bt sync needed
         return step

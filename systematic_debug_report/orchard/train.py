@@ -61,7 +61,7 @@ class EarlyStopper:
 # ---------------------------------------------------------------------------
 # Main training loop
 # ---------------------------------------------------------------------------
-def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
+def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_critic_only: str | None = None, resume_actor_only: str | None = None) -> None:
     start_time = time.time()
 
     # --- Setup ---
@@ -73,6 +73,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None) -> None:
     if resume_checkpoint is not None:
         loaded_step = trainer.load_checkpoint(resume_checkpoint)
         print(f"Loaded weights from: {resume_checkpoint} (step {loaded_step if loaded_step is not None else '?'})")
+    if resume_critic_only is not None:
+        loaded_step = trainer.load_critic_checkpoint(resume_critic_only)
+        print(f"Loaded critic-only weights from: {resume_critic_only} (step {loaded_step if loaded_step is not None else '?'})")
+    if resume_actor_only is not None:
+        loaded_step = trainer.load_actor_checkpoint(resume_actor_only)
+        print(f"Loaded actor-only weights from: {resume_actor_only} (step {loaded_step if loaded_step is not None else '?'})")
 
     # --- Logging ---
     run_dir = setup_logging(cfg)
@@ -221,6 +227,10 @@ def main() -> None:
     parser.add_argument("--config", required=True, help="Path to YAML config")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint (.pt) to load pretrained weights.")
+    parser.add_argument("--resume-critic-only", type=str, default=None,
+                        help="Path to checkpoint (.pt) to load critic weights only; actors train from scratch.")
+    parser.add_argument("--resume-actor-only", type=str, default=None,
+                        help="Path to checkpoint (.pt) to load actor weights only; critics train from scratch.")
     parser.add_argument("--override", nargs="*", default=[],
                         help="Override config values: key=value (dot notation)")
     args = parser.parse_args()

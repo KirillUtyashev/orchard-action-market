@@ -1,0 +1,97 @@
+env:
+  height: 12
+  width: 12
+  n_agents: 8
+  n_tasks: 18
+  gamma: 0.99
+  r_picker: -1.0
+  n_task_types: 2
+  r_low: -1.0
+  task_assignments:
+  - - 0
+  - - 0
+  - - 0
+  - - 0
+  - - 1
+  - - 1
+  - - 1
+  - - 1
+  pick_mode: choice
+  max_tasks_per_type: 18
+  stochastic:
+    spawn_prob: 0.01
+    despawn_mode: probability
+    despawn_prob: 0.0125
+    task_spawn_mode: null
+model:
+  encoder: filtered_task_cnn_grid
+  mlp_dims:
+  - 8
+  conv_specs:
+  - - 8
+    - 3
+  - - 8
+    - 3
+  activation: leaky_relu
+  weight_init: zero_bias
+
+actor_model:
+  encoder: filtered_task_cnn_grid
+  conv_specs: [[8, 3]]            # actor can use a different conv stack than the critic
+  mlp_dims: [8]                  # actor can use different hidden dims than the critic
+  activation: relu
+  weight_init: default
+
+train:
+  total_steps: 7000000
+  seed: 1234
+  lr:
+    start: 0.005
+    end: 0.005
+    schedule: none
+    step_size: 0
+    step_factor: 1.0
+    step_start: 0
+  epsilon:
+    start: 0.05
+    end: 0.05
+    schedule: none
+    step_size: 0
+    step_factor: 1.0
+    step_start: 0
+  actor_lr:
+    start: 3e-3
+    end: 3e-3
+    schedule: none
+
+  freeze_critic: true
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    budget: 2
+    rho: 0.01
+    reallocation_freq: 100
+    solver: closed_form
+    fixed: false
+  influencer:
+    enabled: true
+    budget: 14
+  learning_type: decentralized
+  use_gpu: false
+  td_lambda: 0.3
+  heuristic: nearest_correct_task_stay_wrong
+  stopping:
+    condition: none
+    patience_steps: 1500000
+    improvement_threshold: 1.0e-07
+    min_steps_before_stop: 2000000
+eval:
+  eval_steps: 1000
+  n_test_states: 50
+  checkpoint_freq: 100
+logging:
+  output_dir: output/actor_critique_load_critique
+  main_csv_freq: 10
+  detail_csv_freq: 12
+  timing_csv_freq: 4

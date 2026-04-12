@@ -1,0 +1,3 @@
+- in influenncer we "double count" other q and values. Should we look into capping 
+the weight at 1?
+- 

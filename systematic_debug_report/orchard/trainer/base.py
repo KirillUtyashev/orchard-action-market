@@ -59,6 +59,14 @@ class TrainerBase(ABC):
         """Load trainer state from disk and return the saved step if present."""
         ...
 
+    def load_critic_checkpoint(self, path: str | Path) -> int | None:
+            """Load critic weights only. Only supported by actor-critic trainers."""
+            raise NotImplementedError(f"{type(self).__name__} does not support load_critic_checkpoint.")
+
+    def load_actor_checkpoint(self, path: str | Path) -> int | None:
+        """Load actor weights only. Only supported by actor-critic trainers."""
+        raise NotImplementedError(f"{type(self).__name__} does not support load_actor_checkpoint.")
+    
     @property
     @abstractmethod
     def critic_networks(self) -> list[ValueNetwork]:

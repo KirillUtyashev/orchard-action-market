@@ -290,7 +290,6 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
 
 def _parse_eval(d: dict[str, Any]) -> EvalConfig:
     return EvalConfig(
-        rollout_len=int(d.get("rollout_len", 2000)),
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
         checkpoint_freq=int(d.get("checkpoint_freq", 0)),
