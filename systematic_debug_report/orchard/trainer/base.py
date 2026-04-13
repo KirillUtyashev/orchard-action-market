@@ -49,6 +49,9 @@ class TrainerBase(ABC):
     def close(self) -> None:
         """Release trainer-owned resources such as auxiliary loggers."""
 
+    def flush_pending_updates(self) -> None:
+        """Apply any deferred training updates. Default is no-op."""
+
     @abstractmethod
     def save_checkpoint(self, path: Path, step: int) -> None:
         """Persist trainer state to disk."""

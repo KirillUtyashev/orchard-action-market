@@ -164,14 +164,17 @@ class PolicyNetwork(nn.Module):
             raise ValueError("Each action mask must allow at least one action.")
         return logits.masked_fill(~mask, torch.finfo(logits.dtype).min)
 
-    def get_action_probabilities(self, enc: EncoderOutput, legal_mask) -> np.ndarray:
+    def get_action_probabilities_tensor(self, enc: EncoderOutput, legal_mask) -> torch.Tensor:
         self.eval()
         with torch.no_grad():
             logits = self.forward(enc)
             masked_logits = self._masked_logits(logits, legal_mask)
             probs = F.softmax(masked_logits, dim=1)
         self.train()
-        return probs.squeeze(0).detach().cpu().numpy()
+        return probs.squeeze(0).detach()
+
+    def get_action_probabilities(self, enc: EncoderOutput, legal_mask) -> np.ndarray:
+        return self.get_action_probabilities_tensor(enc, legal_mask).cpu().numpy()
 
     def sample_action(self, enc: EncoderOutput, legal_mask) -> tuple[Action, np.ndarray]:
         probs = self.get_action_probabilities(enc, legal_mask)
@@ -196,6 +199,7 @@ class PolicyNetwork(nn.Module):
         if not self.batch_states:
             return None
 
+        sample_count = len(self.batch_states)
         states = _stack_encoder_outputs(self.batch_states)
         legal_masks = np.stack(self.batch_legal_masks, axis=0)
 
@@ -220,6 +224,7 @@ class PolicyNetwork(nn.Module):
             "loss": float(loss.item()),
             "advantage_mean": float(advantages.mean().item()),
             "entropy_mean": float(entropy.mean().item()),
+            "sample_count": float(sample_count),
         }
 
         self.batch_states = []

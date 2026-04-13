@@ -46,7 +46,7 @@ def rollout_trajectory(
                 tau = s_moved.task_type_at(s_moved.agent_positions[s_moved.actor])
                 pick_action = make_pick_action(tau)
             else:
-                pick_action = policy_fn(s_moved, True)
+                pick_action = policy_fn(s_moved.with_pick_phase(), True)
 
             s_picked, pick_rewards = env.resolve_pick(
                 s_moved,
