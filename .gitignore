@@ -15,9 +15,9 @@ systematic_debug_report/runs/
 systematic_debug_report/profile/
 systematic_debug_report/backups/
 systematic_debug_report/request_slurm.sh
-systematic_debug_report/orchard/configs/my_configs
+systematic_debug_report/my_configs/
 systematic_debug_report/TODO.txt
-
+ 
 # Data/model files
 *.npz
 *.pt
