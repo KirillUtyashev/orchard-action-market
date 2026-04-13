@@ -1,3 +1,0 @@
-run_name,conv_channels,mlp_layers,width,height,mean_random_reward,mean_nearest_reward,mean_learned_reward
-decentralized,16-32,2,4,4,0.121,0.421,0.203
-decentralized,16-32,2,4,4,0.131,0.405,0.327
