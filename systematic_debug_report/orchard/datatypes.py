@@ -214,7 +214,6 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class EvalConfig:
-    rollout_len: int = 2000
     eval_steps: int = 1000
     n_test_states: int = 50
     checkpoint_freq: int = 0

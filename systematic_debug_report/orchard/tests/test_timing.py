@@ -212,7 +212,6 @@ train:
   epsilon:
     start: 0.3
 eval:
-  rollout_len: 5
   eval_steps: 5
   n_test_states: 2
 logging:
