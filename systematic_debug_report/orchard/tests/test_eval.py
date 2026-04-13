@@ -80,6 +80,7 @@ class TestRolloutTrajectory:
         
         def choice_policy(state, phase2=False):
             if phase2:
+                assert state.pick_phase is True
                 return Action.STAY # Decline the pick!
             return Action.RIGHT # Phase 1: Move right
             
