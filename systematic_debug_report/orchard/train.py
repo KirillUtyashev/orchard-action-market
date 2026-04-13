@@ -235,7 +235,9 @@ def main() -> None:
                         help="Override config values: key=value (dot notation)")
     args = parser.parse_args()
     cfg = load_config(args.config, args.override)
-    train(cfg, resume_checkpoint=args.resume)
+    train(cfg, resume_checkpoint=args.resume,
+      resume_critic_only=args.resume_critic_only,
+      resume_actor_only=args.resume_actor_only)
 
 
 if __name__ == "__main__":
