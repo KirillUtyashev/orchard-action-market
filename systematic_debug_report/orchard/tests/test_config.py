@@ -241,3 +241,54 @@ train:
         with pytest.raises(ValueError, match="train.freeze_critic is only supported"):
             load_config(path)
         os.unlink(path)
+
+
+class TestWarmupSteps:
+    def test_warmup_steps_default_is_zero(self):
+        path = _write_yaml(VALID_YAML)
+        cfg = load_config(path)
+        assert cfg.train.warmup_steps == 0
+        os.unlink(path)
+
+    def test_warmup_steps_custom_value_parses(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  warmup_steps: 250
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.warmup_steps == 250
+        os.unlink(path)
+
+    def test_warmup_steps_negative_raises(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  warmup_steps: -1
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="train.warmup_steps must be >= 0"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_warmup_steps_requires_actor_critic(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  warmup_steps: 100
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="train.warmup_steps>0 requires train.algorithm.name=actor_critic"):
+            load_config(path)
+        os.unlink(path)

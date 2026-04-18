@@ -94,6 +94,7 @@ class ActorCriticTrainerBase(TrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         timer: Timer | None = None,
+        warmup_steps: int = 0,
     ) -> None:
         self._critic_networks_list = critic_networks
         self._actor_networks_list = actor_networks
@@ -104,6 +105,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._total_steps = int(total_steps)
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
+        self._warmup_steps = max(0, int(warmup_steps))
         self._timer = timer or Timer()
         self._n_agents = env.cfg.n_agents
         self._decision_count = 0
@@ -224,6 +226,8 @@ class ActorCriticTrainerBase(TrainerBase):
         advantage: float,
         t: int,
     ) -> None:
+        if t < self._warmup_steps:
+            return
         self._timer.start(TimerSection.TRAIN)
         actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
         actor_net.set_lr(actor_lr)
@@ -582,7 +586,7 @@ class ActorCriticTrainerBase(TrainerBase):
         discount: float,
         t: int,
     ) -> None:
-        if self._freeze_critic:
+        if self._freeze_critic or t < self._warmup_steps:
             self._critic_prev_after = None
             return
 
@@ -608,14 +612,14 @@ class ActorCriticTrainerBase(TrainerBase):
     def _postprocess_selected_returns(
         self,
         actor_id: int,
-        selected_returns: list[float],
+        alpha_estimates: list[float],
     ) -> None:
         if self._following_states:
             rho = float(self._following_rates_cfg.rho)
             for observer_id, observer_state in enumerate(self._following_states):
                 if observer_id == actor_id:
                     continue
-                observer_state.update_alpha(actor_id, float(selected_returns[observer_id]), rho)
+                observer_state.update_alpha(actor_id, float(alpha_estimates[observer_id]), rho)
             self._refresh_influencer_beta()
             self._refresh_follower_influencer_values()
             self._decision_count += 1
@@ -652,11 +656,18 @@ class ActorCriticTrainerBase(TrainerBase):
         advantage = selected_q_value - baseline_value
         selected_rewards = rewards_by_action[action_idx]
         selected_after_values = after_values_by_action[action_idx]
-        selected_returns = [
-            float(selected_rewards[idx]) + float(discount) * float(selected_after_values[idx])
-            for idx in range(self._n_agents)
-        ]
-        self._postprocess_selected_returns(actor_id, selected_returns)
+        if self._following_states:
+            stay_idx = int(Action.STAY.value)
+            stay_rewards = rewards_by_action[stay_idx]
+            stay_after_values = after_values_by_action[stay_idx]
+            alpha_estimates = [
+                (float(selected_rewards[idx]) + float(discount) * float(selected_after_values[idx]))
+                - (float(stay_rewards[idx]) + float(discount) * float(stay_after_values[idx]))
+                for idx in range(self._n_agents)
+            ]
+        else:
+            alpha_estimates = []
+        self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states_by_action[action_idx]
         self._train_critic_after_transition(
@@ -985,6 +996,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         timer: Timer | None = None,
+        warmup_steps: int = 0,
     ) -> None:
         super().__init__(
             critic_networks=critic_networks,
@@ -999,6 +1011,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             following_rates_cfg=following_rates_cfg,
             influencer_cfg=influencer_cfg,
             timer=timer,
+            warmup_steps=warmup_steps,
         )
         self._bt = bt
 
@@ -1110,11 +1123,22 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
 
         selected_rewards = rewards_list[action_pos]
         selected_after_values_t = after_values_t[action_pos]
-        selected_returns = (
-            torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device) +
-            float(discount) * selected_after_values_t
-        ).detach().cpu().tolist()
-        self._postprocess_selected_returns(actor_id, selected_returns)
+        if self._following_states:
+            stay_pos = legal_indices.index(int(Action.STAY.value))
+            stay_rewards = rewards_list[stay_pos]
+            stay_after_values_t = after_values_t[stay_pos]
+            selected_one_step_t = (
+                torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device) +
+                float(discount) * selected_after_values_t
+            )
+            stay_one_step_t = (
+                torch.as_tensor(stay_rewards, dtype=stay_after_values_t.dtype, device=device) +
+                float(discount) * stay_after_values_t
+            )
+            alpha_estimates = (selected_one_step_t - stay_one_step_t).detach().cpu().tolist()
+        else:
+            alpha_estimates = []
+        self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states[action_pos]
         self._train_critic_after_transition(

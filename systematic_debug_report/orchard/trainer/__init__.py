@@ -54,6 +54,7 @@ def create_trainer(
                 following_rates_cfg=cfg.train.following_rates,
                 influencer_cfg=cfg.train.influencer,
                 timer=timer,
+                warmup_steps=cfg.train.warmup_steps,
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
         print(f"ActorCriticCpuTrainer: {len(critics)} critics on CPU")
@@ -70,6 +71,7 @@ def create_trainer(
             following_rates_cfg=cfg.train.following_rates,
             influencer_cfg=cfg.train.influencer,
             timer=timer,
+            warmup_steps=cfg.train.warmup_steps,
         )
 
     networks = create_networks(cfg.model, cfg.env, cfg.train)

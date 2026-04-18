@@ -269,6 +269,12 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     if influencer_cfg.enabled and not following_cfg.enabled:
         raise ValueError("train.influencer.enabled=true requires train.following_rates.enabled=true.")
 
+    warmup_steps = int(d.get("warmup_steps", 0))
+    if warmup_steps < 0:
+        raise ValueError("train.warmup_steps must be >= 0.")
+    if warmup_steps > 0 and algorithm_name != AlgorithmName.ACTOR_CRITIC:
+        raise ValueError("train.warmup_steps>0 requires train.algorithm.name=actor_critic.")
+
     return TrainConfig(
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
@@ -285,6 +291,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         comm_weight=float(d.get("comm_weight", 0.0)),
         heuristic=heuristic,
         stopping=stopping,
+        warmup_steps=int(d.get("warmup_steps", 0)),
     )
 
 

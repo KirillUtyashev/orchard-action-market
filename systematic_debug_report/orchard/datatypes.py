@@ -201,6 +201,7 @@ class TrainConfig:
     comm_weight: float = 0.0
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
+    warmup_steps: int = 0
 
 
 @dataclass(frozen=True)
