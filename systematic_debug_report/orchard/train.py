@@ -102,10 +102,23 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     stopper = EarlyStopper(cfg.train.stopping, cfg.logging.main_csv_freq)
 
     timing_logger = None
+    _nvml_available = False
+    _nvml_handle = None
     if cfg.logging.timing_csv_freq > 0:
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            _nvml_available = True
+        except Exception as e:
+            print(f"[timing] pynvml unavailable ({e}), sm_util will be -1")
         timing_logger = CSVLogger(
             run_dir / "timing.csv",
-            ["step", "wall_time", "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms"],
+            ["step", "wall_time",
+             "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms",
+             "total_ms",
+             "sm_util_pct", "gpu_mem_util_pct",
+             "vram_allocated_mb"],
         )
 
     state = env.init_state()
@@ -197,14 +210,34 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         # ── Timing CSV ──
         if timing_logger is not None and (t + 1) % cfg.logging.timing_csv_freq == 0:
             report = trainer._timer.report_and_reset()
+            encode_ms = round(report[TimerSection.ENCODE] * 1000, 4)
+            train_ms  = round(report[TimerSection.TRAIN]  * 1000, 4)
+            action_ms = round(report[TimerSection.ACTION] * 1000, 4)
+            env_ms    = round(report[TimerSection.ENV]    * 1000, 4)
+            eval_ms   = round(report[TimerSection.EVAL]   * 1000, 4)
+
+            sm_util = gpu_mem_util = -1
+            if _nvml_available:
+                try:
+                    util = pynvml.nvmlDeviceGetUtilizationRates(_nvml_handle)
+                    sm_util      = util.gpu
+                    gpu_mem_util = util.memory
+                except Exception:
+                    pass
+
             timing_logger.log({
-                "step": t + 1,
-                "wall_time": round(time.time() - start_time, 3),
-                "encode_ms": round(report[TimerSection.ENCODE] * 1000, 4),
-                "train_ms": round(report[TimerSection.TRAIN] * 1000, 4),
-                "action_ms": round(report[TimerSection.ACTION] * 1000, 4),
-                "env_ms": round(report[TimerSection.ENV] * 1000, 4),
-                "eval_ms": round(report[TimerSection.EVAL] * 1000, 4),
+                "step":             t + 1,
+                "wall_time":        round(time.time() - start_time, 3),
+                "encode_ms":        encode_ms,
+                "train_ms":         train_ms,
+                "action_ms":        action_ms,
+                "env_ms":           env_ms,
+                "eval_ms":          eval_ms,
+                "total_ms":         round(encode_ms + train_ms + action_ms + env_ms + eval_ms, 4),
+                "sm_util_pct":      sm_util,
+                "gpu_mem_util_pct": gpu_mem_util,
+                "vram_allocated_mb": round(torch.cuda.memory_allocated() / 1024**2, 1)
+                                     if torch.cuda.is_available() else -1,
             })
 
     # --- Finalize ---

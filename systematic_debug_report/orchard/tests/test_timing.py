@@ -255,6 +255,7 @@ class TestTimingIntegration:
             assert set(reader.fieldnames) == {
                 "step", "wall_time",
                 "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms",
+                "total_ms", "sm_util_pct", "vram_allocated_mb", "gpu_mem_util_pct",
             }
             rows = list(reader)
             # 10 total steps / freq 5 = 2 rows

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import multiprocessing
 import os
 import socket
 import subprocess
@@ -84,6 +85,29 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
             "slurm_array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID", None),
         },
     }
+    hw: dict[str, Any] = {
+        "cpu_logical_cores": multiprocessing.cpu_count(),
+        "cpu_affinity_cores": len(os.sched_getaffinity(0)),
+    }
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        hw["gpu_name"] = pynvml.nvmlDeviceGetName(handle)
+        hw["gpu_vram_mb"] = pynvml.nvmlDeviceGetMemoryInfo(handle).total // 1024**2
+        try:
+            import torch
+            hw["gpu_sm_count"] = torch.cuda.get_device_properties(0).multi_processor_count
+        except Exception:
+            hw["gpu_sm_count"] = None
+        pynvml.nvmlShutdown()
+    except Exception as e:
+        hw["gpu_name"] = None
+        hw["gpu_sm_count"] = None
+        hw["gpu_vram_mb"] = None
+        hw["gpu_pynvml_error"] = str(e)
+    metadata["run"].update(hw)
+
     with open(run_dir / "metadata.yaml", "w") as f:
         yaml.dump(metadata, f, default_flow_style=False, sort_keys=False)
 
