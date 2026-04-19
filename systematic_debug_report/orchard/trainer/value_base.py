@@ -106,7 +106,7 @@ class ValueTrainerBase(TrainerBase):
         self.train_move(s_moved, on_task, t)
 
         if on_task:
-            pick_action = self.select_pick(s_moved, t)
+            pick_action = self.select_pick(s_moved.with_pick_phase(), t)
             self._timer.start(TimerSection.ENV)
             s_picked, pick_rewards = self._env.resolve_pick(
                 s_moved,
@@ -132,7 +132,7 @@ class ValueTrainerBase(TrainerBase):
         if rng.random() < eps:
             action = actions[rng.randint(0, len(actions) - 1)]
         else:
-            action = self._greedy_action(state, phase2=False)
+            action = self._greedy_action(state)
         self._timer.stop()
         return action
 
@@ -143,12 +143,13 @@ class ValueTrainerBase(TrainerBase):
         if rng.random() < eps:
             action = actions[rng.randint(0, len(actions) - 1)]
         else:
-            action = self._greedy_action(state, phase2=True)
+            action = self._greedy_action(state)
         self._timer.stop()
         return action
 
-    def _greedy_action(self, state: State, phase2: bool) -> Action:
+    def _greedy_action(self, state: State) -> Action:
         """Argmax over Q_team = immediate_reward + weighted sum of V_i(after_state)."""
+        phase2 = state.pick_phase
         all_actions = get_phase2_actions(state, self._env.cfg) if phase2 else get_all_actions(self._env.cfg)
         actor = state.actor
 
@@ -166,7 +167,7 @@ class ValueTrainerBase(TrainerBase):
             elif phase2:
                 after_states.append(state)
                 immediate_rewards.append(0.0)
-            else:
+            else: #
                 s = self._env.apply_action(state, a)
                 if s.is_agent_on_task(s.actor):
                     after_states.append(s.with_pick_phase())
@@ -229,11 +230,11 @@ class ValueTrainerBase(TrainerBase):
         from orchard.eval import evaluate_policy_metrics
         eval_start = env.init_state()
 
-        def greedy_policy(s: State, phase2: bool = False) -> Action:
-            return self._greedy_action(s, phase2=phase2)
+        def greedy_policy(s: State) -> Action:
+            return self._greedy_action(s)
 
-        def baseline_policy(s: State, phase2: bool = False) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic, phase2=phase2)
+        def baseline_policy(s: State) -> Action:
+            return heuristic_action(s, env.cfg, self._heuristic)
 
         heuristic_name = self._heuristic.name.lower()
         greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)

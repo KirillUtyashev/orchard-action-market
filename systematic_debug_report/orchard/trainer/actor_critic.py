@@ -297,7 +297,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._timer.step_begin()
 
         self._timer.start(TimerSection.ACTION)
-        move_action, move_actor_state, move_probs, move_mask = self._sample_action(state, phase2=False)
+        move_action, move_actor_state, move_probs, move_mask = self._sample_action(state)
         self._timer.stop()
 
         self._timer.start(TimerSection.ENV)
@@ -319,10 +319,7 @@ class ActorCriticTrainerBase(TrainerBase):
             )
 
             self._timer.start(TimerSection.ACTION)
-            pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(
-                pick_state,
-                phase2=True,
-            )
+            pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(pick_state)
             self._timer.stop()
 
             self._timer.start(TimerSection.ENV)
@@ -387,30 +384,29 @@ class ActorCriticTrainerBase(TrainerBase):
         enc = encoding.encode(state, actor_id)
         return _move_encoder_output_to_device(enc, self._actor_device(actor_id))
 
-    def _legal_mask(self, state: State, phase2: bool) -> np.ndarray:
-        if phase2:
+    def _legal_mask(self, state: State) -> np.ndarray:
+        if state.pick_phase:
             return build_phase2_legal_mask(state, self._env.cfg)
         return build_phase1_legal_mask(state, self._env.cfg)
 
-    def _actor_probabilities(self, state: State, phase2: bool) -> np.ndarray:
+    def _actor_probabilities(self, state: State) -> np.ndarray:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         return self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
 
     def _sample_action(
         self,
         state: State,
-        phase2: bool,
     ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         action, probs = self._actor_networks_list[actor_id].sample_action(actor_state, legal_mask)
         return action, actor_state, probs, legal_mask
 
-    def _greedy_action(self, state: State, phase2: bool) -> Action:
-        probs = self._actor_probabilities(state, phase2)
+    def _greedy_action(self, state: State) -> Action:
+        probs = self._actor_probabilities(state)
         return policy_index_to_action(int(np.argmax(probs)))
 
     # ------------------------------------------------------------------
@@ -700,11 +696,11 @@ class ActorCriticTrainerBase(TrainerBase):
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
         eval_start = env.init_state()
 
-        def greedy_policy(s: State, phase2: bool = False) -> Action:
-            return self._greedy_action(s, phase2=phase2)
+        def greedy_policy(s: State) -> Action:
+            return self._greedy_action(s)
 
-        def baseline_policy(s: State, phase2: bool = False) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic, phase2=phase2)
+        def baseline_policy(s: State) -> Action:
+            return heuristic_action(s, env.cfg, self._heuristic)
 
         heuristic_name = self._heuristic.name.lower()
         greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
@@ -861,13 +857,13 @@ class ActorCriticTrainerBase(TrainerBase):
     def log_auxiliary(self, step: int, wall_time: float) -> None:
         if self._phase1_logger is not None and self._phase1_eval_states is not None:
             for idx, state in enumerate(self._phase1_eval_states):
-                probs = self._actor_probabilities(state, phase2=False)
+                probs = self._actor_probabilities(state)
                 self._phase1_logger.log(
                     build_phase1_policy_prob_row(step, wall_time, idx, state, probs, self._env.cfg)
                 )
         if self._phase2_logger is not None and self._phase2_eval_states is not None:
             for idx, (label, state) in enumerate(self._phase2_eval_states):
-                probs = self._actor_probabilities(state, phase2=True)
+                probs = self._actor_probabilities(state)
                 self._phase2_logger.log(
                     build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg)
                 )
@@ -1134,11 +1130,10 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     def _sample_action(
         self,
         state: State,
-        phase2: bool,
     ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
         action_idx = int(torch.multinomial(probs_t, 1).item())
         return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask

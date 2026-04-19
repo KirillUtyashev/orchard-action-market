@@ -36,11 +36,11 @@ def get_phase2_actions(state: State, env_cfg: EnvConfig) -> list[Action]:
 # ---------------------------------------------------------------------------
 # Heuristic policies
 # ---------------------------------------------------------------------------
-def nearest_task_action(state: State, env_cfg: EnvConfig, phase2: bool = False) -> Action:
+def nearest_task_action(state: State, env_cfg: EnvConfig) -> Action:
     """Move actor toward nearest task (Manhattan distance)."""
     actor = state.actor
 
-    if phase2:
+    if state.pick_phase:
         tasks_here = state.tasks_at(state.agent_positions[actor])
         if tasks_here:
             _, tau = tasks_here[0]
@@ -69,7 +69,7 @@ def nearest_task_action(state: State, env_cfg: EnvConfig, phase2: bool = False) 
     return best_action
 
 
-def nearest_correct_task_action(state: State, env_cfg: EnvConfig, phase2: bool = False) -> Action:
+def nearest_correct_task_action(state: State, env_cfg: EnvConfig) -> Action:
     """Move toward nearest correct-type task (τ ∈ G_actor).
 
     Phase 2: always picks whatever task is present (mirrors forced-pick behavior).
@@ -77,7 +77,7 @@ def nearest_correct_task_action(state: State, env_cfg: EnvConfig, phase2: bool =
     actor = state.actor
     good_types = set(env_cfg.task_assignments[actor]) if env_cfg.task_assignments else set()
 
-    if phase2:
+    if state.pick_phase:
         tasks_here = state.tasks_at(state.agent_positions[actor])
         if tasks_here:
             _, tau = tasks_here[0]
@@ -115,31 +115,31 @@ def nearest_correct_task_action(state: State, env_cfg: EnvConfig, phase2: bool =
 
 
 def nearest_correct_task_stay_wrong_action(
-    state: State, env_cfg: EnvConfig, phase2: bool = False,
+    state: State, env_cfg: EnvConfig,
 ) -> Action:
     """Move toward nearest correct-type task; phase 2 picks correct, STAYs on wrong."""
     actor = state.actor
     good_types = set(env_cfg.task_assignments[actor]) if env_cfg.task_assignments else set()
 
-    if phase2:
+    if state.pick_phase:
         tasks_here = state.tasks_at(state.agent_positions[actor])
         for _, tau in tasks_here:
             if tau in good_types:
                 return make_pick_action(tau)
         return Action.STAY
 
-    return nearest_correct_task_action(state, env_cfg, phase2=False)
+    return nearest_correct_task_action(state, env_cfg)
 
 
 def heuristic_action(
-    state: State, env_cfg: EnvConfig, heuristic: Heuristic, phase2: bool = False,
+    state: State, env_cfg: EnvConfig, heuristic: Heuristic,
 ) -> Action:
     """Dispatch to the configured heuristic policy."""
     if heuristic == Heuristic.NEAREST_TASK:
-        return nearest_task_action(state, env_cfg, phase2=phase2)
+        return nearest_task_action(state, env_cfg)
     elif heuristic == Heuristic.NEAREST_CORRECT_TASK:
-        return nearest_correct_task_action(state, env_cfg, phase2=phase2)
+        return nearest_correct_task_action(state, env_cfg)
     elif heuristic == Heuristic.NEAREST_CORRECT_TASK_STAY_WRONG:
-        return nearest_correct_task_stay_wrong_action(state, env_cfg, phase2=phase2)
+        return nearest_correct_task_stay_wrong_action(state, env_cfg)
     else:
         raise ValueError(f"Unknown heuristic: {heuristic}")

@@ -98,9 +98,9 @@ class TestHeuristicPolicies:
             actor=0, task_types=(1,)
         )
         # Phase 2 logic: should STAY because it's the wrong type
-        action_wrong = nearest_correct_task_stay_wrong_action(s_wrong, cfg, phase2=True)
+        action_wrong = nearest_correct_task_stay_wrong_action(s_wrong.with_pick_phase(), cfg)
         assert action_wrong == Action.STAY
-        
+
         # Actor 0 standing on a Type 0 task
         s_correct = State(
             agent_positions=(Grid(2, 2), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
@@ -108,7 +108,7 @@ class TestHeuristicPolicies:
             actor=0, task_types=(0,)
         )
         # Phase 2 logic: should pick because it's the correct type
-        action_correct = nearest_correct_task_stay_wrong_action(s_correct, cfg, phase2=True)
+        action_correct = nearest_correct_task_stay_wrong_action(s_correct.with_pick_phase(), cfg)
         assert action_correct == make_pick_action(0)
 
     def test_heuristic_dispatch(self):

@@ -14,7 +14,7 @@ from orchard.datatypes import State, Transition
 # ---------------------------------------------------------------------------
 def rollout_trajectory(
     start_state: State,
-    policy_fn: Callable[[State, bool], Action],
+    policy_fn: Callable[[State], Action],
     env: BaseEnv,
     n_steps: int,
 ) -> Iterator[Transition]:
@@ -33,7 +33,7 @@ def rollout_trajectory(
     zero_rewards = tuple(0.0 for _ in range(env.cfg.n_agents))
 
     for _ in range(n_steps):
-        move_action = policy_fn(s, False)
+        move_action = policy_fn(s)
         assert move_action.is_move(), f"Phase 1 must be a move action, got {move_action}"
         s_moved = env.apply_action(s, move_action)
 
@@ -46,7 +46,7 @@ def rollout_trajectory(
                 tau = s_moved.task_type_at(s_moved.agent_positions[s_moved.actor])
                 pick_action = make_pick_action(tau)
             else:
-                pick_action = policy_fn(s_moved.with_pick_phase(), True)
+                pick_action = policy_fn(s_moved.with_pick_phase())
 
             s_picked, pick_rewards = env.resolve_pick(
                 s_moved,
@@ -72,7 +72,7 @@ def rollout_trajectory(
 # ---------------------------------------------------------------------------
 def evaluate_policy_metrics(
     start_state: State,
-    policy_fn: Callable[[State, bool], Action],
+    policy_fn: Callable[[State], Action],
     env: BaseEnv,
     n_steps: int,
 ) -> dict[str, float]:

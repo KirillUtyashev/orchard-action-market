@@ -118,12 +118,11 @@ def _greedy_actor_action(
     state: State,
     actor_networks: list[PolicyNetwork],
     env,
-    phase2: bool = False,
 ) -> Action:
     """Greedy action via actor network argmax (no critic involved)."""
     actor_id = state.actor
     enc = encoding.encode(state, actor_id)
-    legal_mask = build_phase2_legal_mask(state, env.cfg) if phase2 else build_phase1_legal_mask(state, env.cfg)
+    legal_mask = build_phase2_legal_mask(state, env.cfg) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
     with torch.no_grad():
         probs = actor_networks[actor_id].get_action_probabilities(enc, legal_mask)
     return policy_index_to_action(int(np.argmax(probs)))
@@ -133,10 +132,10 @@ def _greedy_action_batched(
     state: State,
     networks: list[ValueNetwork],
     env,
-    phase2: bool = False,
     comm_weight: float = 0.0,
 ) -> Action:
     """Standalone greedy argmax over Q_team for viz (no trainer needed)."""
+    phase2 = state.pick_phase
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     actor = state.actor
     centralized = (len(networks) == 1)
@@ -198,35 +197,32 @@ def make_policy_fn(
     comm_weight: float = 0.0,
     actor_networks: list[PolicyNetwork] | None = None,
 ):
-    """Return a policy function: (State, bool) -> Action.
+    """Return a policy function: State -> Action.
 
-    The second argument is *phase2*: True when the actor has landed on a
-    task and is deciding whether / what to pick (CHOICE mode).
-    In FORCED mode, rollout_trajectory handles the pick automatically
-    and never calls the policy with phase2=True.
+    Phase is determined by state.pick_phase. In FORCED mode, rollout_trajectory
+    handles the pick automatically and never calls the policy in pick phase.
 
     If actor_networks is provided, 'learned' uses actor argmax (actor_critic mode).
     Otherwise, 'learned' uses critic argmax (value mode).
     """
     if policy_name == "learned":
         if actor_networks is not None:
-            def policy(s: State, phase2: bool = False) -> Action:
-                return _greedy_actor_action(s, actor_networks, env, phase2=phase2)
+            def policy(s: State) -> Action:
+                return _greedy_actor_action(s, actor_networks, env)
             return policy
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
-        def policy(s: State, phase2: bool = False) -> Action:
-            return _greedy_action_batched(s, networks, env, phase2=phase2,
-                                         comm_weight=comm_weight)
+        def policy(s: State) -> Action:
+            return _greedy_action_batched(s, networks, env, comm_weight=comm_weight)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
-        def policy(s: State, phase2: bool = False) -> Action:
-            return heuristic_action(s, env.cfg, h, phase2=phase2)
+        def policy(s: State) -> Action:
+            return heuristic_action(s, env.cfg, h)
         return policy
     elif policy_name == "random":
         n_act = num_actions(env.cfg.pick_mode, env.cfg.n_task_types)
-        def policy(s: State, phase2: bool = False) -> Action:
+        def policy(s: State) -> Action:
             return Action(rng.randint(0, n_act - 1))
         return policy
     else:

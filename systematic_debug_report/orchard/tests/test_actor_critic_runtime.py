@@ -424,9 +424,9 @@ def _install_identity_critic_spy(trainer):
 
 
 def _install_scripted_actions(trainer, *, move_action: Action, pick_action: Action | None = None) -> None:
-    def _sample_action(self, state: State, phase2: bool):
+    def _sample_action(self, state: State):
         actor_state = self._encode_actor_state(state, state.actor)
-        if phase2:
+        if state.pick_phase:
             assert pick_action is not None
             mask = build_phase2_legal_mask(state, self._env.cfg)
             return pick_action, actor_state, np.zeros(mask.shape[0], dtype=float), mask
@@ -443,9 +443,9 @@ def _install_two_actor_choice_cycle_actions(
     actor0_pick: Action,
     actor1_move: Action,
 ) -> None:
-    def _sample_action(self, state: State, phase2: bool):
+    def _sample_action(self, state: State):
         actor_state = self._encode_actor_state(state, state.actor)
-        if phase2:
+        if state.pick_phase:
             mask = build_phase2_legal_mask(state, self._env.cfg)
             return actor0_pick, actor_state, np.zeros(mask.shape[0], dtype=float), mask
         mask = build_phase1_legal_mask(state, self._env.cfg)
