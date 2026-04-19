@@ -40,8 +40,8 @@ class TrainerBase(ABC):
     def get_detail_metrics(self) -> dict[str, float | int | str]:
         return {}
 
-    def setup_aux_loggers(self, run_dir: Path) -> None:
-        del run_dir
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+        del run_dir, alpha_state_log_freq
 
     def log_auxiliary(self, step: int, wall_time: float) -> None:
         del step, wall_time

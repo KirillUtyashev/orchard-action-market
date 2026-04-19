@@ -226,6 +226,7 @@ class LoggingConfig:
     main_csv_freq: int = 10000
     detail_csv_freq: int = 50000
     timing_csv_freq: int = 0
+    alpha_state_log_freq: int = 0
 
 
 @dataclass(frozen=True)

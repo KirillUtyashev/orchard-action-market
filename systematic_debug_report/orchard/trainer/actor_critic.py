@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+import json
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +166,8 @@ class ActorCriticTrainerBase(TrainerBase):
         self._phase2_logger: CSVLogger | None = None
         self._following_loggers: dict[int, CSVLogger] = {}
         self._influencer_logger: CSVLogger | None = None
+        self._alpha_state_log: Any = None  # open file handle for alpha_states.jsonl
+        self._alpha_state_log_freq: int = 0
         self._phase1_eval_states: list[State] | None = None
         self._phase2_eval_states: list[tuple[str, State]] | None = None
 
@@ -660,13 +663,18 @@ class ActorCriticTrainerBase(TrainerBase):
             stay_idx = int(Action.STAY.value)
             stay_rewards = rewards_by_action[stay_idx]
             stay_after_values = after_values_by_action[stay_idx]
-            alpha_estimates = [
-                (float(selected_rewards[idx]) + float(discount) * float(selected_after_values[idx]))
-                - (float(stay_rewards[idx]) + float(discount) * float(stay_after_values[idx]))
-                for idx in range(self._n_agents)
-            ]
+            reward_diffs = [float(selected_rewards[i]) - float(stay_rewards[i]) for i in range(self._n_agents)]
+            value_diffs = [float(selected_after_values[i]) - float(stay_after_values[i]) for i in range(self._n_agents)]
+            alpha_estimates = [reward_diffs[i] + discount * value_diffs[i] for i in range(self._n_agents)]
         else:
+            reward_diffs = []
+            value_diffs = []
             alpha_estimates = []
+        selected_after_state = after_states_by_action[action_idx]
+        after_actor_pos = (selected_after_state.agent_positions[actor_id].row,
+                           selected_after_state.agent_positions[actor_id].col)
+        self._log_alpha_state(state, actor_id, alpha_estimates, action_idx, after_actor_pos,
+                              reward_diffs, value_diffs, discount, t)
         self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states_by_action[action_idx]
@@ -776,7 +784,8 @@ class ActorCriticTrainerBase(TrainerBase):
                 row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
         return row
 
-    def setup_aux_loggers(self, run_dir: Path) -> None:
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+        self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
             run_dir / "phase1_policy_probabilities.csv",
             build_phase1_policy_prob_csv_fieldnames(self._env.cfg.n_task_types),
@@ -799,6 +808,55 @@ class ActorCriticTrainerBase(TrainerBase):
                 run_dir / "external_influencer.csv",
                 build_influencer_csv_fieldnames(self._n_agents),
             )
+        if alpha_state_log_freq > 0 and self._following_states:
+            self._alpha_state_log = open(run_dir / "alpha_states.jsonl", "w")
+
+    def _log_alpha_state(
+        self,
+        state: State,
+        actor_id: int,
+        alpha_estimates: list[float],
+        action_idx: int,
+        after_actor_pos: tuple[int, int],
+        reward_diffs: list[float],
+        value_diffs: list[float],
+        discount: float,
+        t: int,
+    ) -> None:
+        if self._alpha_state_log is None:
+            return
+        freq = self._alpha_state_log_freq
+        if freq <= 0 or t % freq != 0:
+            return
+        assignments = self._env.cfg.task_assignments or ()
+        actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
+        teammate_of_actor = [
+            i != actor_id and bool(set(assignments[i]) & actor_types if i < len(assignments) else False)
+            for i in range(self._n_agents)
+        ]
+        record = {
+            "step": t,
+            "actor_id": actor_id,
+            "action_idx": action_idx,
+            "pick_phase": bool(state.pick_phase),
+            "discount": discount,
+            # current state (before action)
+            "agent_positions": [[p.row, p.col] for p in state.agent_positions],
+            "task_positions": (
+                [[p.row, p.col, int(tt)] for p, tt in zip(state.task_positions, state.task_types)]
+                if state.task_positions and state.task_types is not None else []
+            ),
+            # where the actor ends up after the selected action
+            "actor_after_pos": list(after_actor_pos),
+            "teammate_of_actor": teammate_of_actor,
+            # per-observer decomposition
+            "reward_diffs": reward_diffs,
+            "value_diffs": value_diffs,
+            "gamma_value_diffs": [discount * v for v in value_diffs],
+            "alpha_estimates": alpha_estimates,
+        }
+        self._alpha_state_log.write(json.dumps(record) + "\n")
+        self._alpha_state_log.flush()
 
     def log_auxiliary(self, step: int, wall_time: float) -> None:
         if self._phase1_logger is not None and self._phase1_eval_states is not None:
@@ -1135,9 +1193,20 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
                 torch.as_tensor(stay_rewards, dtype=stay_after_values_t.dtype, device=device) +
                 float(discount) * stay_after_values_t
             )
+            reward_diffs = (torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device)
+                            - torch.as_tensor(stay_rewards, dtype=stay_after_values_t.dtype, device=device)
+                            ).detach().cpu().tolist()
+            value_diffs = (selected_after_values_t - stay_after_values_t).detach().cpu().tolist()
             alpha_estimates = (selected_one_step_t - stay_one_step_t).detach().cpu().tolist()
         else:
+            reward_diffs = []
+            value_diffs = []
             alpha_estimates = []
+        selected_after_state = after_states[action_pos]
+        after_actor_pos = (selected_after_state.agent_positions[actor_id].row,
+                           selected_after_state.agent_positions[actor_id].col)
+        self._log_alpha_state(state, actor_id, alpha_estimates, action_idx, after_actor_pos,
+                              reward_diffs, value_diffs, discount, t)
         self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states[action_pos]
