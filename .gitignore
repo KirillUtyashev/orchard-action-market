@@ -24,7 +24,7 @@ systematic_debug_report/QUESTIONS.txt
 *.pt
 *.pth
 *.pkl
-
+saved_models/
 # IDE
 .vscode/
 .idea/

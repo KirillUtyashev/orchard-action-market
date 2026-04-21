@@ -28,11 +28,11 @@ class TestRolloutTrajectory:
             actor=0, task_types=(0,)
         )
         
-        def dummy_policy(state, phase2=False):
+        def dummy_policy(state):
             return Action.RIGHT
-            
+
         transitions = list(rollout_trajectory(s, dummy_policy, env, n_steps=1))
-        
+
         # Should be exactly 1 transition (just the move)
         assert len(transitions) == 1
         t = transitions[0]
@@ -51,8 +51,8 @@ class TestRolloutTrajectory:
             actor=0, task_types=(0,)
         )
         
-        def dummy_policy(state, phase2=False):
-            return Action.RIGHT # Move right onto the task
+        def dummy_policy(state):
+            return Action.RIGHT  # Move right onto the task
             
         transitions = list(rollout_trajectory(s, dummy_policy, env, n_steps=1))
         
@@ -78,11 +78,10 @@ class TestRolloutTrajectory:
             actor=0, task_types=(0,)
         )
         
-        def choice_policy(state, phase2=False):
-            if phase2:
-                assert state.pick_phase is True
-                return Action.STAY # Decline the pick!
-            return Action.RIGHT # Phase 1: Move right
+        def choice_policy(state):
+            if state.pick_phase:
+                return Action.STAY  # Decline the pick!
+            return Action.RIGHT  # Phase 1: Move right
             
         transitions = list(rollout_trajectory(s, choice_policy, env, n_steps=1))
         
@@ -108,13 +107,12 @@ class TestEvaluatePolicyMetrics:
         
         # A scripted policy that takes exactly 2 steps to pick a correct task and a wrong task
         step_counter = 0
-        def scripted_policy(state, phase2=False):
+        def scripted_policy(state):
             nonlocal step_counter
-            if not phase2:
+            if not state.pick_phase:
                 step_counter += 1
-                return Action.RIGHT # Step 1 lands on type 0, Step 2 lands on type 1
+                return Action.RIGHT  # Step 1 lands on type 0, Step 2 lands on type 1
             else:
-                # Always pick what we are standing on
                 tau = state.task_type_at(state.agent_positions[state.actor])
                 return make_pick_action(tau)
 

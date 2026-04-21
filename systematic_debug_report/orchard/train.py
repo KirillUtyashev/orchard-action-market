@@ -82,7 +82,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
 
     # --- Logging ---
     run_dir = setup_logging(cfg)
-    trainer.setup_aux_loggers(run_dir)
+    trainer.setup_aux_loggers(run_dir, alpha_state_log_freq=cfg.logging.alpha_state_log_freq)
     trainer.save_checkpoint(run_dir / "checkpoints" / "step_0.pt", 0)
 
     heuristic_name = cfg.train.heuristic.name.lower()

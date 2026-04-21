@@ -237,6 +237,12 @@ train:
   # Useful when bootstrapping from a pretrained value checkpoint via --resume.
   freeze_critic: false
 
+  # Number of initial steps where critic and actor weight updates are skipped.
+  # Forward passes, alpha/beta updates, and following-rate reallocations still run,
+  # so this lets alpha/beta warm up before touching pretrained weights. Requires
+  # algorithm.name=actor_critic.
+  warmup_steps: 0
+
   # Optional following-rate extension for actor-critic only.
   following_rates:
     enabled: false                 # requires algorithm.name=actor_critic

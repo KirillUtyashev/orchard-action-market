@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+import json
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,7 @@ class ActorCriticTrainerBase(TrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         timer: Timer | None = None,
+        warmup_steps: int = 0,
     ) -> None:
         self._critic_networks_list = critic_networks
         self._actor_networks_list = actor_networks
@@ -104,6 +106,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._total_steps = int(total_steps)
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
+        self._warmup_steps = max(0, int(warmup_steps))
         self._timer = timer or Timer()
         self._n_agents = env.cfg.n_agents
         self._decision_count = 0
@@ -163,6 +166,8 @@ class ActorCriticTrainerBase(TrainerBase):
         self._phase2_logger: CSVLogger | None = None
         self._following_loggers: dict[int, CSVLogger] = {}
         self._influencer_logger: CSVLogger | None = None
+        self._alpha_state_log: Any = None  # open file handle for alpha_states.jsonl
+        self._alpha_state_log_freq: int = 0
         self._phase1_eval_states: list[State] | None = None
         self._phase2_eval_states: list[tuple[str, State]] | None = None
 
@@ -224,6 +229,8 @@ class ActorCriticTrainerBase(TrainerBase):
         advantage: float,
         t: int,
     ) -> None:
+        if t < self._warmup_steps:
+            return
         self._timer.start(TimerSection.TRAIN)
         actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
         actor_net.set_lr(actor_lr)
@@ -290,7 +297,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._timer.step_begin()
 
         self._timer.start(TimerSection.ACTION)
-        move_action, move_actor_state, move_probs, move_mask = self._sample_action(state, phase2=False)
+        move_action, move_actor_state, move_probs, move_mask = self._sample_action(state)
         self._timer.stop()
 
         self._timer.start(TimerSection.ENV)
@@ -312,10 +319,7 @@ class ActorCriticTrainerBase(TrainerBase):
             )
 
             self._timer.start(TimerSection.ACTION)
-            pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(
-                pick_state,
-                phase2=True,
-            )
+            pick_action, pick_actor_state, pick_probs, pick_mask = self._sample_action(pick_state)
             self._timer.stop()
 
             self._timer.start(TimerSection.ENV)
@@ -380,30 +384,29 @@ class ActorCriticTrainerBase(TrainerBase):
         enc = encoding.encode(state, actor_id)
         return _move_encoder_output_to_device(enc, self._actor_device(actor_id))
 
-    def _legal_mask(self, state: State, phase2: bool) -> np.ndarray:
-        if phase2:
+    def _legal_mask(self, state: State) -> np.ndarray:
+        if state.pick_phase:
             return build_phase2_legal_mask(state, self._env.cfg)
         return build_phase1_legal_mask(state, self._env.cfg)
 
-    def _actor_probabilities(self, state: State, phase2: bool) -> np.ndarray:
+    def _actor_probabilities(self, state: State) -> np.ndarray:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         return self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
 
     def _sample_action(
         self,
         state: State,
-        phase2: bool,
     ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         action, probs = self._actor_networks_list[actor_id].sample_action(actor_state, legal_mask)
         return action, actor_state, probs, legal_mask
 
-    def _greedy_action(self, state: State, phase2: bool) -> Action:
-        probs = self._actor_probabilities(state, phase2)
+    def _greedy_action(self, state: State) -> Action:
+        probs = self._actor_probabilities(state)
         return policy_index_to_action(int(np.argmax(probs)))
 
     # ------------------------------------------------------------------
@@ -582,7 +585,7 @@ class ActorCriticTrainerBase(TrainerBase):
         discount: float,
         t: int,
     ) -> None:
-        if self._freeze_critic:
+        if self._freeze_critic or t < self._warmup_steps:
             self._critic_prev_after = None
             return
 
@@ -608,14 +611,14 @@ class ActorCriticTrainerBase(TrainerBase):
     def _postprocess_selected_returns(
         self,
         actor_id: int,
-        selected_returns: list[float],
+        alpha_estimates: list[float],
     ) -> None:
         if self._following_states:
             rho = float(self._following_rates_cfg.rho)
             for observer_id, observer_state in enumerate(self._following_states):
                 if observer_id == actor_id:
                     continue
-                observer_state.update_alpha(actor_id, float(selected_returns[observer_id]), rho)
+                observer_state.update_alpha(actor_id, float(alpha_estimates[observer_id]), rho)
             self._refresh_influencer_beta()
             self._refresh_follower_influencer_values()
             self._decision_count += 1
@@ -652,11 +655,23 @@ class ActorCriticTrainerBase(TrainerBase):
         advantage = selected_q_value - baseline_value
         selected_rewards = rewards_by_action[action_idx]
         selected_after_values = after_values_by_action[action_idx]
-        selected_returns = [
-            float(selected_rewards[idx]) + float(discount) * float(selected_after_values[idx])
-            for idx in range(self._n_agents)
-        ]
-        self._postprocess_selected_returns(actor_id, selected_returns)
+        if self._following_states:
+            stay_idx = int(Action.STAY.value)
+            stay_rewards = rewards_by_action[stay_idx]
+            stay_after_values = after_values_by_action[stay_idx]
+            reward_diffs = [float(selected_rewards[i]) - float(stay_rewards[i]) for i in range(self._n_agents)]
+            value_diffs = [float(selected_after_values[i]) - float(stay_after_values[i]) for i in range(self._n_agents)]
+            alpha_estimates = [reward_diffs[i] + discount * value_diffs[i] for i in range(self._n_agents)]
+        else:
+            reward_diffs = []
+            value_diffs = []
+            alpha_estimates = []
+        selected_after_state = after_states_by_action[action_idx]
+        after_actor_pos = (selected_after_state.agent_positions[actor_id].row,
+                           selected_after_state.agent_positions[actor_id].col)
+        self._log_alpha_state(state, actor_id, alpha_estimates, action_idx, after_actor_pos,
+                              reward_diffs, value_diffs, discount, t)
+        self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states_by_action[action_idx]
         self._train_critic_after_transition(
@@ -681,11 +696,11 @@ class ActorCriticTrainerBase(TrainerBase):
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
         eval_start = env.init_state()
 
-        def greedy_policy(s: State, phase2: bool = False) -> Action:
-            return self._greedy_action(s, phase2=phase2)
+        def greedy_policy(s: State) -> Action:
+            return self._greedy_action(s)
 
-        def baseline_policy(s: State, phase2: bool = False) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic, phase2=phase2)
+        def baseline_policy(s: State) -> Action:
+            return heuristic_action(s, env.cfg, self._heuristic)
 
         heuristic_name = self._heuristic.name.lower()
         greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
@@ -765,7 +780,8 @@ class ActorCriticTrainerBase(TrainerBase):
                 row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
         return row
 
-    def setup_aux_loggers(self, run_dir: Path) -> None:
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+        self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
             run_dir / "phase1_policy_probabilities.csv",
             build_phase1_policy_prob_csv_fieldnames(self._env.cfg.n_task_types),
@@ -788,17 +804,66 @@ class ActorCriticTrainerBase(TrainerBase):
                 run_dir / "external_influencer.csv",
                 build_influencer_csv_fieldnames(self._n_agents),
             )
+        if alpha_state_log_freq > 0 and self._following_states:
+            self._alpha_state_log = open(run_dir / "alpha_states.jsonl", "w")
+
+    def _log_alpha_state(
+        self,
+        state: State,
+        actor_id: int,
+        alpha_estimates: list[float],
+        action_idx: int,
+        after_actor_pos: tuple[int, int],
+        reward_diffs: list[float],
+        value_diffs: list[float],
+        discount: float,
+        t: int,
+    ) -> None:
+        if self._alpha_state_log is None:
+            return
+        freq = self._alpha_state_log_freq
+        if freq <= 0 or t % freq != 0:
+            return
+        assignments = self._env.cfg.task_assignments or ()
+        actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
+        teammate_of_actor = [
+            i != actor_id and bool(set(assignments[i]) & actor_types if i < len(assignments) else False)
+            for i in range(self._n_agents)
+        ]
+        record = {
+            "step": t,
+            "actor_id": actor_id,
+            "action_idx": action_idx,
+            "pick_phase": bool(state.pick_phase),
+            "discount": discount,
+            # current state (before action)
+            "agent_positions": [[p.row, p.col] for p in state.agent_positions],
+            "task_positions": (
+                [[p.row, p.col, int(tt)] for p, tt in zip(state.task_positions, state.task_types)]
+                if state.task_positions and state.task_types is not None else []
+            ),
+            # where the actor ends up after the selected action
+            "actor_after_pos": list(after_actor_pos),
+            "teammate_of_actor": teammate_of_actor,
+            # per-observer decomposition
+            "reward_diffs": reward_diffs,
+            "value_diffs": value_diffs,
+            "gamma_value_diffs": [discount * v for v in value_diffs],
+            "alpha_estimates": alpha_estimates,
+        }
+        self._alpha_state_log.write(json.dumps(record) + "\n")
+        self._alpha_state_log.flush()
 
     def log_auxiliary(self, step: int, wall_time: float) -> None:
         if self._phase1_logger is not None and self._phase1_eval_states is not None:
             for idx, state in enumerate(self._phase1_eval_states):
-                probs = self._actor_probabilities(state, phase2=False)
+                probs = self._actor_probabilities(state)
                 self._phase1_logger.log(
                     build_phase1_policy_prob_row(step, wall_time, idx, state, probs, self._env.cfg)
                 )
         if self._phase2_logger is not None and self._phase2_eval_states is not None:
             for idx, (label, state) in enumerate(self._phase2_eval_states):
-                probs = self._actor_probabilities(state, phase2=True)
+                probs = self._actor_probabilities(state)
                 self._phase2_logger.log(
                     build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg)
                 )
@@ -985,6 +1050,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         timer: Timer | None = None,
+        warmup_steps: int = 0,
     ) -> None:
         super().__init__(
             critic_networks=critic_networks,
@@ -999,6 +1065,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             following_rates_cfg=following_rates_cfg,
             influencer_cfg=influencer_cfg,
             timer=timer,
+            warmup_steps=warmup_steps,
         )
         self._bt = bt
 
@@ -1063,11 +1130,10 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     def _sample_action(
         self,
         state: State,
-        phase2: bool,
     ) -> tuple[Action, EncoderOutput, np.ndarray | torch.Tensor, np.ndarray]:
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
-        legal_mask = self._legal_mask(state, phase2)
+        legal_mask = self._legal_mask(state)
         probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
         action_idx = int(torch.multinomial(probs_t, 1).item())
         return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask
@@ -1110,11 +1176,33 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
 
         selected_rewards = rewards_list[action_pos]
         selected_after_values_t = after_values_t[action_pos]
-        selected_returns = (
-            torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device) +
-            float(discount) * selected_after_values_t
-        ).detach().cpu().tolist()
-        self._postprocess_selected_returns(actor_id, selected_returns)
+        if self._following_states:
+            stay_pos = legal_indices.index(int(Action.STAY.value))
+            stay_rewards = rewards_list[stay_pos]
+            stay_after_values_t = after_values_t[stay_pos]
+            selected_one_step_t = (
+                torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device) +
+                float(discount) * selected_after_values_t
+            )
+            stay_one_step_t = (
+                torch.as_tensor(stay_rewards, dtype=stay_after_values_t.dtype, device=device) +
+                float(discount) * stay_after_values_t
+            )
+            reward_diffs = (torch.as_tensor(selected_rewards, dtype=selected_after_values_t.dtype, device=device)
+                            - torch.as_tensor(stay_rewards, dtype=stay_after_values_t.dtype, device=device)
+                            ).detach().cpu().tolist()
+            value_diffs = (selected_after_values_t - stay_after_values_t).detach().cpu().tolist()
+            alpha_estimates = (selected_one_step_t - stay_one_step_t).detach().cpu().tolist()
+        else:
+            reward_diffs = []
+            value_diffs = []
+            alpha_estimates = []
+        selected_after_state = after_states[action_pos]
+        after_actor_pos = (selected_after_state.agent_positions[actor_id].row,
+                           selected_after_state.agent_positions[actor_id].col)
+        self._log_alpha_state(state, actor_id, alpha_estimates, action_idx, after_actor_pos,
+                              reward_diffs, value_diffs, discount, t)
+        self._postprocess_selected_returns(actor_id, alpha_estimates)
 
         selected_after_state = after_states[action_pos]
         self._train_critic_after_transition(

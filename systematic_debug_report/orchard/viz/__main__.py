@@ -9,10 +9,18 @@ from pathlib import Path
 
 import torch
 
+import numpy as np
+
 import orchard.encoding as encoding
+from orchard.actor_critic import (
+    PolicyNetwork,
+    build_phase1_legal_mask,
+    build_phase2_legal_mask,
+    policy_index_to_action,
+)
 from orchard.config import load_config
 from orchard.env import create_env
-from orchard.model import ValueNetwork, create_networks
+from orchard.model import ValueNetwork, create_networks, create_actor_networks
 from orchard.policy import (
     heuristic_action, get_all_actions, get_phase2_actions,
 )
@@ -68,10 +76,15 @@ def parse_args() -> argparse.Namespace:
 def load_checkpoint(
     checkpoint_path: str,
     networks: list[ValueNetwork],
-) -> int:
-    """Load checkpoint into networks. Returns the training step."""
+) -> tuple[int, dict]:
+    """Load critic weights into networks. Returns (training step, raw ckpt dict)."""
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-    state_dicts = ckpt["networks"]
+    if "networks" in ckpt:
+        state_dicts = ckpt["networks"]
+    elif "critics" in ckpt:
+        state_dicts = ckpt["critics"]
+    else:
+        raise KeyError(f"Checkpoint has neither 'networks' nor 'critics' key. Keys: {list(ckpt.keys())}")
     if len(state_dicts) != len(networks):
         raise ValueError(
             f"Checkpoint has {len(state_dicts)} networks but config specifies "
@@ -80,20 +93,53 @@ def load_checkpoint(
     for net, sd in zip(networks, state_dicts):
         net.load_state_dict(sd, strict=True)
         net.eval()
-    return ckpt.get("step", 0)
+    return ckpt.get("step", 0), ckpt
+
+
+def load_actor_networks(
+    ckpt: dict,
+    actor_networks: list[PolicyNetwork],
+) -> None:
+    """Load actor weights from a checkpoint dict into actor networks."""
+    if "actors" not in ckpt:
+        raise KeyError(f"Checkpoint has no 'actors' key. Keys: {list(ckpt.keys())}")
+    state_dicts = ckpt["actors"]
+    if len(state_dicts) != len(actor_networks):
+        raise ValueError(
+            f"Checkpoint has {len(state_dicts)} actors but config specifies "
+            f"{len(actor_networks)} agents"
+        )
+    for net, sd in zip(actor_networks, state_dicts):
+        net.load_state_dict(sd, strict=True)
+        net.eval()
+
+
+def _greedy_actor_action(
+    state: State,
+    actor_networks: list[PolicyNetwork],
+    env,
+) -> Action:
+    """Greedy action via actor network argmax (no critic involved)."""
+    actor_id = state.actor
+    enc = encoding.encode(state, actor_id)
+    legal_mask = build_phase2_legal_mask(state, env.cfg) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
+    with torch.no_grad():
+        probs = actor_networks[actor_id].get_action_probabilities(enc, legal_mask)
+    return policy_index_to_action(int(np.argmax(probs)))
 
 
 def _greedy_action_batched(
     state: State,
     networks: list[ValueNetwork],
     env,
-    phase2: bool = False,
     comm_weight: float = 0.0,
 ) -> Action:
     """Standalone greedy argmax over Q_team for viz (no trainer needed)."""
+    phase2 = state.pick_phase
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
     actor = state.actor
     centralized = (len(networks) == 1)
+    n_nets = len(networks)
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
@@ -116,15 +162,23 @@ def _greedy_action_batched(
             immediate_rewards.append(0.0)
 
     n_actions = len(after_states)
+
+    # Use encode_all_agents_for_actions to match GPU trainer encoding exactly.
+    # encode_batch_for_actions omits Ch5 (actor position) for the actor's own
+    # encoding, causing wrong critic inputs vs what was seen during training.
+    grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
+    # grids: (N, B, C, H, W), scalars: (N, B, S)
+
     team_values = [0.0] * n_actions
+    per_agent_vals: list[list[float]] = []
     with torch.no_grad():
         for i, net in enumerate(networks):
-            agent_idx = 0 if centralized else i
-            batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
-            vals = net(batch_enc)
+            vals = net.forward_raw(grids[i], scalars[i])  # (B,)
+            agent_vals = [vals[k].item() for k in range(n_actions)]
+            per_agent_vals.append(agent_vals)
             weight = 1.0 if (centralized or i == actor) else comm_weight
             for k in range(n_actions):
-                team_values[k] += weight * vals[k].item()
+                team_values[k] += weight * agent_vals[k]
 
     best_idx = 0
     best_val = team_values[0] + immediate_rewards[0]
@@ -141,29 +195,34 @@ def make_policy_fn(
     networks: list[ValueNetwork] | None,
     env,
     comm_weight: float = 0.0,
+    actor_networks: list[PolicyNetwork] | None = None,
 ):
-    """Return a policy function: (State, bool) -> Action.
+    """Return a policy function: State -> Action.
 
-    The second argument is *phase2*: True when the actor has landed on a
-    task and is deciding whether / what to pick (CHOICE mode).
-    In FORCED mode, rollout_trajectory handles the pick automatically
-    and never calls the policy with phase2=True.
+    Phase is determined by state.pick_phase. In FORCED mode, rollout_trajectory
+    handles the pick automatically and never calls the policy in pick phase.
+
+    If actor_networks is provided, 'learned' uses actor argmax (actor_critic mode).
+    Otherwise, 'learned' uses critic argmax (value mode).
     """
     if policy_name == "learned":
+        if actor_networks is not None:
+            def policy(s: State) -> Action:
+                return _greedy_actor_action(s, actor_networks, env)
+            return policy
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
-        def policy(s: State, phase2: bool = False) -> Action:
-            return _greedy_action_batched(s, networks, env, phase2=phase2,
-                                         comm_weight=comm_weight)
+        def policy(s: State) -> Action:
+            return _greedy_action_batched(s, networks, env, comm_weight=comm_weight)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
-        def policy(s: State, phase2: bool = False) -> Action:
-            return heuristic_action(s, env.cfg, h, phase2=phase2)
+        def policy(s: State) -> Action:
+            return heuristic_action(s, env.cfg, h)
         return policy
     elif policy_name == "random":
         n_act = num_actions(env.cfg.pick_mode, env.cfg.n_task_types)
-        def policy(s: State, phase2: bool = False) -> Action:
+        def policy(s: State) -> Action:
             return Action(rng.randint(0, n_act - 1))
         return policy
     else:
@@ -261,18 +320,24 @@ def main() -> None:
     encoding.init_encoder(cfg.model.encoder, cfg.env)
 
     # --- Load checkpoint if provided ---
-    from orchard.enums import LearningType
+    from orchard.enums import LearningType, AlgorithmName
     centralized = cfg.train.learning_type == LearningType.CENTRALIZED
     n_networks = 1 if centralized else cfg.env.n_agents
+    use_actor_argmax = cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC
 
     networks: list[ValueNetwork] | None = None
+    actor_networks: list[PolicyNetwork] | None = None
     if args.checkpoint:
         print(f"Loading checkpoint: {args.checkpoint}")
         if centralized:
             print(f"  Centralized mode: creating 1 shared network for {cfg.env.n_agents} agents")
         networks = create_networks(cfg.model, cfg.env, cfg.train)
-        ckpt_step = load_checkpoint(args.checkpoint, networks)
+        ckpt_step, ckpt = load_checkpoint(args.checkpoint, networks)
         print(f"  Loaded checkpoint at training step {ckpt_step}")
+        if use_actor_argmax:
+            print(f"  Algorithm=actor_critic: loading actor networks for argmax")
+            actor_networks = create_actor_networks(cfg.actor_model, cfg.env, cfg.train)
+            load_actor_networks(ckpt, actor_networks)
 
     # --- Determine policy ---
     if args.policy is not None:
@@ -310,7 +375,8 @@ def main() -> None:
     t0 = time.time()
 
     policy_fn = make_policy_fn(policy_name, networks, env,
-                               comm_weight=cfg.train.comm_weight)
+                               comm_weight=cfg.train.comm_weight,
+                               actor_networks=actor_networks)
     frames = generate_frames(
         start_state=init_state,
         policy_fn=policy_fn,
@@ -345,8 +411,10 @@ def main() -> None:
 
         print(f"Rolling out {args.steps} decisions with policy: {compare_name} (compare)")
         env_compare = create_env(cfg.env)
+        compare_actor_networks = actor_networks if compare_name == "learned" else None
         compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
-                                    comm_weight=cfg.train.comm_weight)
+                                    comm_weight=cfg.train.comm_weight,
+                                    actor_networks=compare_actor_networks)
         compare_frames = generate_frames(
             start_state=init_state,
             policy_fn=compare_fn,

@@ -18,7 +18,7 @@ from orchard.viz.frame import Decision, Frame
 
 def generate_frames(
     start_state: State,
-    policy_fn: "Callable[[State, bool], Action]",
+    policy_fn: "Callable[[State], Action]",
     env: BaseEnv,
     n_steps: int,
     policy_name: str = "",

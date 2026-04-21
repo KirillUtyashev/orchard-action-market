@@ -201,6 +201,7 @@ class TrainConfig:
     comm_weight: float = 0.0
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
+    warmup_steps: int = 0
 
 
 @dataclass(frozen=True)
@@ -225,6 +226,7 @@ class LoggingConfig:
     main_csv_freq: int = 10000
     detail_csv_freq: int = 50000
     timing_csv_freq: int = 0
+    alpha_state_log_freq: int = 0
 
 
 @dataclass(frozen=True)

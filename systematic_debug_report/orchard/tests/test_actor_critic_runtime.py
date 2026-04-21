@@ -424,9 +424,9 @@ def _install_identity_critic_spy(trainer):
 
 
 def _install_scripted_actions(trainer, *, move_action: Action, pick_action: Action | None = None) -> None:
-    def _sample_action(self, state: State, phase2: bool):
+    def _sample_action(self, state: State):
         actor_state = self._encode_actor_state(state, state.actor)
-        if phase2:
+        if state.pick_phase:
             assert pick_action is not None
             mask = build_phase2_legal_mask(state, self._env.cfg)
             return pick_action, actor_state, np.zeros(mask.shape[0], dtype=float), mask
@@ -443,9 +443,9 @@ def _install_two_actor_choice_cycle_actions(
     actor0_pick: Action,
     actor1_move: Action,
 ) -> None:
-    def _sample_action(self, state: State, phase2: bool):
+    def _sample_action(self, state: State):
         actor_state = self._encode_actor_state(state, state.actor)
-        if phase2:
+        if state.pick_phase:
             mask = build_phase2_legal_mask(state, self._env.cfg)
             return actor0_pick, actor_state, np.zeros(mask.shape[0], dtype=float), mask
         mask = build_phase1_legal_mask(state, self._env.cfg)
@@ -760,6 +760,274 @@ class TestActorCriticTrainingLoop:
 
         gpu_trainer.step(_make_always_pick_choice_state(), 0)
         assert calls == 2
+
+    def test_warmup_skips_critic_updates(self):
+        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        trainer._warmup_steps = 5
+        spy = _install_identity_critic_spy(trainer)
+        _install_scripted_actions(
+            trainer,
+            move_action=Action.RIGHT,
+            pick_action=make_pick_action(0),
+        )
+
+        sentinel_after = State(
+            agent_positions=(Grid(2, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=1,
+            task_types=(),
+        )
+        trainer._critic_prev_after = sentinel_after
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(Grid(0, 1),),
+            actor=0,
+            task_types=(0,),
+        )
+
+        trainer.step(state, t=0)
+
+        assert spy["td_calls"] == []
+        assert trainer._critic_prev_after is None
+
+    def test_warmup_skips_actor_updates(self):
+        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        trainer._warmup_steps = 5
+        _install_scripted_actions(
+            trainer,
+            move_action=Action.RIGHT,
+            pick_action=make_pick_action(0),
+        )
+
+        before_params = _clone_actor_params(trainer.actor_networks)
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(Grid(0, 1),),
+            actor=0,
+            task_types=(0,),
+        )
+
+        trainer.step(state, t=0)
+
+        for actor_before, actor_after in zip(before_params, trainer.actor_networks):
+            for name, tensor in actor_after.state_dict().items():
+                torch.testing.assert_close(actor_before[name], tensor, atol=0.0, rtol=0.0)
+
+    def test_warmup_resumes_critic_updates_after_threshold(self):
+        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        trainer._warmup_steps = 5
+        spy = _install_identity_critic_spy(trainer)
+        _install_scripted_actions(
+            trainer,
+            move_action=Action.RIGHT,
+            pick_action=make_pick_action(0),
+        )
+
+        sentinel_after = State(
+            agent_positions=(Grid(2, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=1,
+            task_types=(),
+        )
+        trainer._critic_prev_after = sentinel_after
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(Grid(0, 1),),
+            actor=0,
+            task_types=(0,),
+        )
+
+        trainer.step(state, t=5)
+
+        assert len(spy["td_calls"]) == 2
+        assert trainer._critic_prev_after is not None
+
+    def test_warmup_does_not_skip_following_rate_alpha_updates(self):
+        env_cfg = EnvConfig(
+            height=3,
+            width=3,
+            n_agents=2,
+            n_tasks=1,
+            gamma=0.5,
+            r_picker=1.0,
+            n_task_types=1,
+            r_low=0.0,
+            task_assignments=((0,), (0,)),
+            pick_mode=PickMode.CHOICE,
+            max_tasks_per_type=1,
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        )
+        model_cfg = ModelConfig(
+            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            mlp_dims=(8,),
+            conv_specs=((4, 3),),
+        )
+        train_cfg = TrainConfig(
+            total_steps=1,
+            seed=7,
+            lr=ScheduleConfig(start=0.0, end=0.0),
+            epsilon=ScheduleConfig(start=0.0, end=0.0),
+            actor_lr=ScheduleConfig(start=0.0, end=0.0),
+            algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+            freeze_critic=True,
+            following_rates=FollowingRatesConfig(
+                enabled=True,
+                budget=1.0,
+                rho=1.0,
+                reallocation_freq=1,
+                fixed=True,
+            ),
+            learning_type=LearningType.DECENTRALIZED,
+            use_gpu=False,
+            td_lambda=0.0,
+            heuristic=Heuristic.NEAREST_TASK,
+            stopping=StoppingConfig(),
+            warmup_steps=100,
+        )
+        cfg = ExperimentConfig(
+            env=env_cfg,
+            model=model_cfg,
+            actor_model=None,
+            train=train_cfg,
+            eval=EvalConfig(),
+            logging=LoggingConfig(output_dir="unused"),
+        )
+        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = create_env(env_cfg)
+        trainer = create_trainer(cfg, env)
+
+        def _critic_values_for_after_states(self, state, after_states):
+            return [
+                [10.0 * len(s.task_positions) for _ in range(self._n_agents)]
+                for s in after_states
+            ]
+
+        trainer._critic_values_for_after_states = MethodType(
+            _critic_values_for_after_states, trainer
+        )
+
+        pick_state = State(
+            agent_positions=(Grid(1, 1), Grid(2, 2)),
+            task_positions=(Grid(1, 1),),
+            actor=0,
+            task_types=(0,),
+            pick_phase=True,
+        )
+        legal_mask = build_phase2_legal_mask(pick_state, env.cfg)
+        actor_state = trainer._encode_actor_state(pick_state, 0)
+        probs = trainer._actor_networks_list[0].get_action_probabilities(actor_state, legal_mask)
+
+        prev_decision_count = trainer._decision_count
+        trainer._train_decision(
+            state=pick_state,
+            action=make_pick_action(0),
+            legal_mask=legal_mask,
+            discount=1.0,
+            t=0,
+            actor_state=actor_state,
+            probs=probs,
+        )
+
+        assert trainer._decision_count == prev_decision_count + 1
+        assert not np.isclose(trainer._following_states[1].agent_alphas[0], 0.0)
+
+    def test_alpha_update_uses_stay_baseline(self):
+        env_cfg = EnvConfig(
+            height=3,
+            width=3,
+            n_agents=2,
+            n_tasks=1,
+            gamma=0.5,
+            r_picker=1.0,
+            n_task_types=1,
+            r_low=0.0,
+            task_assignments=((0,), (0,)),
+            pick_mode=PickMode.CHOICE,
+            max_tasks_per_type=1,
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        )
+        model_cfg = ModelConfig(
+            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            mlp_dims=(8,),
+            conv_specs=((4, 3),),
+        )
+        train_cfg = TrainConfig(
+            total_steps=1,
+            seed=7,
+            lr=ScheduleConfig(start=0.0, end=0.0),
+            epsilon=ScheduleConfig(start=0.0, end=0.0),
+            actor_lr=ScheduleConfig(start=0.0, end=0.0),
+            algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+            freeze_critic=True,
+            following_rates=FollowingRatesConfig(
+                enabled=True,
+                budget=1.0,
+                rho=1.0,
+                reallocation_freq=1,
+                fixed=True,
+            ),
+            learning_type=LearningType.DECENTRALIZED,
+            use_gpu=False,
+            td_lambda=0.0,
+            heuristic=Heuristic.NEAREST_TASK,
+            stopping=StoppingConfig(),
+        )
+        cfg = ExperimentConfig(
+            env=env_cfg,
+            model=model_cfg,
+            actor_model=None,
+            train=train_cfg,
+            eval=EvalConfig(),
+            logging=LoggingConfig(output_dir="unused"),
+        )
+        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = create_env(env_cfg)
+        trainer = create_trainer(cfg, env)
+
+        def _critic_values_for_after_states(self, state, after_states):
+            return [
+                [10.0 * len(s.task_positions) for _ in range(self._n_agents)]
+                for s in after_states
+            ]
+
+        trainer._critic_values_for_after_states = MethodType(
+            _critic_values_for_after_states, trainer
+        )
+
+        pick_state = State(
+            agent_positions=(Grid(1, 1), Grid(2, 2)),
+            task_positions=(Grid(1, 1),),
+            actor=0,
+            task_types=(0,),
+            pick_phase=True,
+        )
+        legal_mask = build_phase2_legal_mask(pick_state, env.cfg)
+        actor_state = trainer._encode_actor_state(pick_state, 0)
+        probs = trainer._actor_networks_list[0].get_action_probabilities(actor_state, legal_mask)
+
+        trainer._train_decision(
+            state=pick_state,
+            action=make_pick_action(0),
+            legal_mask=legal_mask,
+            discount=1.0,
+            t=0,
+            actor_state=actor_state,
+            probs=probs,
+        )
+
+        # Pick removes the only task → after_state has 0 tasks → V(after_pick) = 0
+        # Stay keeps the task → after_state has 1 task → V(after_stay) = 10
+        # Pick rewards: (1.0, 0.0); Stay rewards: (0.0, 0.0); discount = 1.0
+        # Old definition would store Q1(s, pick) = 0 + 1.0*0 = 0
+        # New definition stores Q1(s, pick) - Q1(s, Stay) = 0 - 10 = -10
+        assert np.isclose(trainer._following_states[1].agent_alphas[0], -10.0)
+        # Actor's own following state never updates its self-edge
+        assert trainer._following_states[0].agent_alphas[0] == 0.0
+        # Other observer dimensions of the non-actor remain at their initial values
+        assert trainer._following_states[0].agent_alphas[1] == 0.0
 
     def test_freeze_critic_skips_critic_updates(self):
         _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
