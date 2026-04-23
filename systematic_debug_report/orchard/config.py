@@ -257,8 +257,6 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     if algorithm_name == AlgorithmName.ACTOR_CRITIC:
         if d.get("learning_type", "decentralized").strip().lower() != "decentralized":
             raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
-        if float(d.get("comm_weight", 0.0)) != 0.0:
-            raise ValueError("train.comm_weight is only supported for train.algorithm.name=value.")
         if comm_only_teammates and not use_gpu:
             raise ValueError("train.comm_only_teammates=true is only supported for GPU actor-critic.")
     elif freeze_critic:
@@ -322,7 +320,6 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
         use_gpu=use_gpu,
         td_lambda=float(d.get("td_lambda", 0.0)),
-        comm_weight=float(d.get("comm_weight", 0.0)),
         comm_only_teammates=comm_only_teammates,
         heuristic=heuristic,
         stopping=stopping,

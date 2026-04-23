@@ -132,24 +132,18 @@ def _greedy_action_batched(
     state: State,
     networks: list[ValueNetwork],
     env,
-    comm_weight: float = 0.0,
 ) -> Action:
-    """Standalone greedy argmax over Q_team for viz (no trainer needed)."""
+    """Standalone greedy argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
     phase2 = state.pick_phase
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
-    actor = state.actor
-    centralized = (len(networks) == 1)
-    n_nets = len(networks)
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
     for a in all_actions:
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
-            team_r = sum(rewards)
-            weighted_r = rewards[actor] + comm_weight * (team_r - rewards[actor])
             after_states.append(s_after)
-            immediate_rewards.append(weighted_r)
+            immediate_rewards.append(sum(rewards))
         elif phase2:
             after_states.append(state)
             immediate_rewards.append(0.0)
@@ -170,15 +164,11 @@ def _greedy_action_batched(
     # grids: (N, B, C, H, W), scalars: (N, B, S)
 
     team_values = [0.0] * n_actions
-    per_agent_vals: list[list[float]] = []
     with torch.no_grad():
         for i, net in enumerate(networks):
             vals = net.forward_raw(grids[i], scalars[i])  # (B,)
-            agent_vals = [vals[k].item() for k in range(n_actions)]
-            per_agent_vals.append(agent_vals)
-            weight = 1.0 if (centralized or i == actor) else comm_weight
             for k in range(n_actions):
-                team_values[k] += weight * agent_vals[k]
+                team_values[k] += vals[k].item()
 
     best_idx = 0
     best_val = team_values[0] + immediate_rewards[0]
@@ -194,7 +184,6 @@ def make_policy_fn(
     policy_name: str,
     networks: list[ValueNetwork] | None,
     env,
-    comm_weight: float = 0.0,
     actor_networks: list[PolicyNetwork] | None = None,
 ):
     """Return a policy function: State -> Action.
@@ -213,7 +202,7 @@ def make_policy_fn(
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
         def policy(s: State) -> Action:
-            return _greedy_action_batched(s, networks, env, comm_weight=comm_weight)
+            return _greedy_action_batched(s, networks, env)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
@@ -375,7 +364,6 @@ def main() -> None:
     t0 = time.time()
 
     policy_fn = make_policy_fn(policy_name, networks, env,
-                               comm_weight=cfg.train.comm_weight,
                                actor_networks=actor_networks)
     frames = generate_frames(
         start_state=init_state,
@@ -413,7 +401,6 @@ def main() -> None:
         env_compare = create_env(cfg.env)
         compare_actor_networks = actor_networks if compare_name == "learned" else None
         compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
-                                    comm_weight=cfg.train.comm_weight,
                                     actor_networks=compare_actor_networks)
         compare_frames = generate_frames(
             start_state=init_state,

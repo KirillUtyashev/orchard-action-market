@@ -41,7 +41,6 @@ class ValueTrainerBase(TrainerBase):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         heuristic: Heuristic,
-        comm_weight: float = 0.0,
         timer: Timer | None = None,
     ) -> None:
         self._networks_list = network_list
@@ -54,7 +53,6 @@ class ValueTrainerBase(TrainerBase):
         self._lr_schedule = lr_schedule
         self._total_steps = total_steps
         self._heuristic = heuristic
-        self._comm_weight = comm_weight
         self._timer = timer or Timer()
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
@@ -85,9 +83,9 @@ class ValueTrainerBase(TrainerBase):
 
     @abstractmethod
     def _compute_team_values(
-        self, state: State, after_states: list[State], actor: int,
+        self, state: State, after_states: list[State],
     ) -> list[float]:
-        """Compute comm-weighted team value for each candidate after-state."""
+        """Compute sum_j V_j(after_state) for each candidate after-state."""
         ...
 
     # ------------------------------------------------------------------
@@ -148,10 +146,9 @@ class ValueTrainerBase(TrainerBase):
         return action
 
     def _greedy_action(self, state: State) -> Action:
-        """Argmax over Q_team = immediate_reward + weighted sum of V_i(after_state)."""
+        """Argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
         phase2 = state.pick_phase
         all_actions = get_phase2_actions(state, self._env.cfg) if phase2 else get_all_actions(self._env.cfg)
-        actor = state.actor
 
         # Build after-states and immediate rewards for each candidate action
         after_states: list[State] = []
@@ -159,11 +156,8 @@ class ValueTrainerBase(TrainerBase):
         for a in all_actions:
             if phase2 and a.is_pick():
                 s_after, rewards = self._env.resolve_pick(state, pick_type=a.pick_type())
-                team_r = sum(rewards)
-                # Below, the math is reward of actor + sum of rewards j (j not actor) of weight * r^(j), just written differently.
-                weighted_r = rewards[actor] + self._comm_weight * (team_r - rewards[actor])
                 after_states.append(s_after)
-                immediate_rewards.append(weighted_r)
+                immediate_rewards.append(sum(rewards))
             elif phase2:
                 after_states.append(state)
                 immediate_rewards.append(0.0)
@@ -175,7 +169,7 @@ class ValueTrainerBase(TrainerBase):
                     after_states.append(s)
                 immediate_rewards.append(0.0)
 
-        team_values = self._compute_team_values(state, after_states, actor)
+        team_values = self._compute_team_values(state, after_states)
 
         best_idx = 0
         best_val = team_values[0] + immediate_rewards[0]

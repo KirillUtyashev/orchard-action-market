@@ -34,14 +34,12 @@ class GpuTrainer(ValueTrainerBase):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         heuristic: Heuristic,
-        comm_weight: float = 0.0,
         timer: Timer | None = None,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
-            total_steps=total_steps, heuristic=heuristic,
-            comm_weight=comm_weight, timer=timer,
+            total_steps=total_steps, heuristic=heuristic, timer=timer,
         )
         self._bt = bt
 
@@ -62,24 +60,6 @@ class GpuTrainer(ValueTrainerBase):
         grids_next, scalars_next = current
         rewards_t = torch.tensor(rewards, dtype=torch.float32)
 
-        if self._comm_weight > 0.0 and self._n_networks > 1:
-            w = self._comm_weight
-            with torch.no_grad():
-                v_s = self._bt.forward_single_batched(grids_t, scalars_t)
-                v_next = self._bt.forward_single_batched(grids_next, scalars_next)
-            
-            team_v_s = v_s.sum()
-            team_v_next = v_next.sum()
-            team_r = rewards_t.sum()
-            # below is just r_i' = r_i + w * sum_{j != i} [ r_j + discount * V_j(s') - V_j(s) ] in a different form
-            rewards_t = rewards_t.to(self._bt.device)
-            rewards_t = (
-                rewards_t 
-                + w * (team_r - rewards_t)
-                + discount * w * (team_v_next - v_next)
-                - w * (team_v_s - v_s)
-            )
-
         return self._bt.td_lambda_step_batched(
             grids_t, scalars_t, rewards_t, discount,
             grids_next, scalars_next,
@@ -90,20 +70,11 @@ class GpuTrainer(ValueTrainerBase):
     # Value computation for greedy action selection
     # ------------------------------------------------------------------
     def _compute_team_values(
-        self, state: State, after_states: list[State], actor: int,
+        self, state: State, after_states: list[State],
     ) -> list[float]:
         grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
         values = self._bt.forward_batched(grids, scalars)  # (N, B)
-        n_nets = values.size(0)
-
-        if n_nets > 1 and self._comm_weight < 1.0:
-            weights = torch.full((n_nets, 1), self._comm_weight, device=values.device)
-            weights[actor] = 1.0
-            team_values = (values * weights).sum(dim=0)
-        else: # centralized case
-            team_values = values.sum(dim=0)
-
-        return team_values.tolist()
+        return values.sum(dim=0).tolist()
 
     # ------------------------------------------------------------------
     # Sync

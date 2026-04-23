@@ -29,6 +29,7 @@ saved_models/
 .vscode/
 .idea/
 pyrightconfig.json
+.claude/
 
 # Logs
 *.log

@@ -40,27 +40,11 @@ class CpuTrainer(ValueTrainerBase):
         s_encs: list[EncoderOutput] = prev
         s_next_encs: list[EncoderOutput] = current
 
-        actual_rewards = rewards
-        if self._comm_weight > 0.0 and self._n_networks > 1:
-            w = self._comm_weight
-            with torch.no_grad():
-                v_s = [net(s_encs[i]).item() for i, net in enumerate(self._networks_list)]
-                v_next = [net(s_next_encs[i]).item() for i, net in enumerate(self._networks_list)]
-            team_v_s = sum(v_s)
-            team_v_next = sum(v_next)
-            team_r = sum(rewards)
-            actual_rewards = tuple(
-                (1 - w) * rewards[i] + w * team_r
-                + discount * w * (team_v_next - v_next[i])
-                - w * (team_v_s - v_s[i])
-                for i in range(self._n_networks)
-            )
-
         alpha = compute_schedule_value(self._lr_schedule, t, self._total_steps)
         total_loss = 0.0
         for i in range(self._n_networks):
             delta = self._networks_list[i].td_step(
-                s_enc=s_encs[i], reward=actual_rewards[i],
+                s_enc=s_encs[i], reward=rewards[i],
                 discount=discount, s_next_enc=s_next_encs[i],
                 alpha=alpha,
             )
@@ -71,7 +55,7 @@ class CpuTrainer(ValueTrainerBase):
     # Value computation for greedy action selection
     # ------------------------------------------------------------------
     def _compute_team_values(
-        self, state: State, after_states: list[State], actor: int,
+        self, state: State, after_states: list[State],
     ) -> list[float]:
         n_actions = len(after_states)
         team_values = [0.0] * n_actions
@@ -80,9 +64,8 @@ class CpuTrainer(ValueTrainerBase):
                 agent_idx = 0 if self._centralized else i
                 batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
                 vals = net(batch_enc)
-                weight = 1.0 if (self._centralized or i == actor) else self._comm_weight
                 for k in range(n_actions):
-                    team_values[k] += weight * vals[k].item()
+                    team_values[k] += vals[k].item()
         return team_values
 
     # ------------------------------------------------------------------

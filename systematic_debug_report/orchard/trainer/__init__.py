@@ -98,7 +98,6 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
         )
     else:
@@ -112,6 +111,5 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
         )

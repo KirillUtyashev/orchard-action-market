@@ -200,7 +200,6 @@ class TrainConfig:
     learning_type: LearningType = LearningType.DECENTRALIZED
     use_gpu: bool = True
     td_lambda: float = 0.0
-    comm_weight: float = 0.0
     comm_only_teammates: bool = False
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()

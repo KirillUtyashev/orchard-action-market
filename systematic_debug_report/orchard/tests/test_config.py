@@ -190,21 +190,6 @@ train:
             load_config(path)
         os.unlink(path)
 
-    def test_actor_critic_rejects_comm_weight(self):
-        yaml_str = VALID_YAML + """
-train:
-  total_steps: 100
-  comm_weight: 0.5
-  lr:
-    start: 0.001
-  algorithm:
-    name: actor_critic
-"""
-        path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="train.comm_weight is only supported"):
-            load_config(path)
-        os.unlink(path)
-
     def test_influencer_requires_following_rates(self):
         yaml_str = VALID_YAML + """
 train:
