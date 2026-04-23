@@ -53,6 +53,7 @@ def create_trainer(
                 freeze_critic=cfg.train.freeze_critic,
                 following_rates_cfg=cfg.train.following_rates,
                 influencer_cfg=cfg.train.influencer,
+                comm_only_teammates=cfg.train.comm_only_teammates,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
             )
@@ -70,6 +71,7 @@ def create_trainer(
             freeze_critic=cfg.train.freeze_critic,
             following_rates_cfg=cfg.train.following_rates,
             influencer_cfg=cfg.train.influencer,
+            comm_only_teammates=cfg.train.comm_only_teammates,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
         )

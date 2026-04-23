@@ -246,19 +246,25 @@ def _make_dual_actor_critic_trainers(
     pick_mode: PickMode,
     *,
     following_rates_cfg: FollowingRatesConfig | None = None,
+    task_assignments: tuple[tuple[int, ...], ...] | None = None,
+    comm_only_teammates: bool = False,
 ):
     torch.manual_seed(11)
+    assignments = task_assignments or ((0,), (1,))
+    n_agents = len(assignments)
+    all_task_types = {task_type for group in assignments for task_type in group}
+    n_task_types = max(all_task_types) + 1 if all_task_types else 1
 
     env_cfg = EnvConfig(
         height=3,
         width=3,
-        n_agents=2,
+        n_agents=n_agents,
         n_tasks=2,
         gamma=0.99,
         r_picker=1.0,
-        n_task_types=2,
+        n_task_types=n_task_types,
         r_low=-0.25,
-        task_assignments=((0,), (1,)),
+        task_assignments=assignments,
         pick_mode=pick_mode,
         max_tasks_per_type=2,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
@@ -281,6 +287,7 @@ def _make_dual_actor_critic_trainers(
         learning_type=LearningType.DECENTRALIZED,
         use_gpu=True,
         td_lambda=0.0,
+        comm_only_teammates=comm_only_teammates,
         heuristic=Heuristic.NEAREST_TASK,
         stopping=StoppingConfig(),
     )
@@ -306,6 +313,7 @@ def _make_dual_actor_critic_trainers(
         freeze_critic=False,
         following_rates_cfg=following_cfg,
         influencer_cfg=InfluencerConfig(),
+        comm_only_teammates=comm_only_teammates,
     )
     gpu_trainer = ActorCriticGpuTrainer(
         critic_networks=gpu_critics,
@@ -320,8 +328,63 @@ def _make_dual_actor_critic_trainers(
         freeze_critic=False,
         following_rates_cfg=following_cfg,
         influencer_cfg=InfluencerConfig(),
+        comm_only_teammates=comm_only_teammates,
     )
     return env, cpu_trainer, gpu_trainer
+
+
+def _make_single_actor_critic_trainer(
+    pick_mode: PickMode,
+    *,
+    task_assignments: tuple[tuple[int, ...], ...],
+    following_rates_cfg: FollowingRatesConfig,
+):
+    env_cfg = EnvConfig(
+        height=3,
+        width=3,
+        n_agents=len(task_assignments),
+        n_tasks=2,
+        gamma=0.99,
+        r_picker=1.0,
+        n_task_types=max({task_type for group in task_assignments for task_type in group}, default=0) + 1,
+        r_low=-0.25,
+        task_assignments=task_assignments,
+        pick_mode=pick_mode,
+        max_tasks_per_type=2,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+    )
+    model_cfg = ModelConfig(
+        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        mlp_dims=(8,),
+        conv_specs=((4, 3),),
+    )
+    train_cfg = TrainConfig(
+        total_steps=20,
+        seed=11,
+        lr=ScheduleConfig(start=0.01, end=0.01),
+        epsilon=ScheduleConfig(start=0.0, end=0.0),
+        actor_lr=ScheduleConfig(start=0.01, end=0.01),
+        algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+        freeze_critic=False,
+        following_rates=following_rates_cfg,
+        learning_type=LearningType.DECENTRALIZED,
+        use_gpu=False,
+        td_lambda=0.0,
+        heuristic=Heuristic.NEAREST_TASK,
+        stopping=StoppingConfig(),
+    )
+    cfg = ExperimentConfig(
+        env=env_cfg,
+        model=model_cfg,
+        actor_model=None,
+        train=train_cfg,
+        eval=EvalConfig(),
+        logging=LoggingConfig(output_dir="unused"),
+    )
+    encoding.init_encoder(model_cfg.encoder, env_cfg)
+    env = create_env(env_cfg)
+    trainer = create_trainer(cfg, env)
+    return env, trainer
 
 
 def _clone_actor_params(actors: list[PolicyNetwork]) -> list[dict[str, torch.Tensor]]:
@@ -620,6 +683,137 @@ class TestActorCriticTrainingLoop:
         np.testing.assert_allclose(
             cpu_q_values[np.asarray(legal_indices, dtype=int)],
             gpu_q_legal.detach().cpu().numpy(),
+            atol=1e-6,
+        )
+
+    def test_gpu_comm_only_teammates_masks_non_teammates_without_following_rates(self):
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            PickMode.CHOICE,
+            task_assignments=((0,), (0,), (1,), (1,)),
+            comm_only_teammates=True,
+        )
+        rewards_t = torch.tensor(
+            [
+                [1.0, 10.0, 100.0, 1000.0],
+                [2.0, 20.0, 200.0, 2000.0],
+            ],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [
+                [0.5, 5.0, 50.0, 500.0],
+                [1.5, 6.0, 60.0, 600.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=0.5,
+        )
+
+        expected = (
+            rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1]
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_gpu_comm_only_teammates_keeps_default_full_team_objective_when_disabled(self):
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            PickMode.CHOICE,
+            task_assignments=((0,), (0,), (1,), (1,)),
+            comm_only_teammates=False,
+        )
+        rewards_t = torch.tensor(
+            [[1.0, 10.0, 100.0, 1000.0]],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [[0.5, 5.0, 50.0, 500.0]],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=0.5,
+        )
+
+        expected = (
+            rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1] +
+            rewards_t[:, 2] + 0.5 * after_values_t[:, 2] +
+            rewards_t[:, 3] + 0.5 * after_values_t[:, 3]
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_gpu_comm_only_teammates_preserves_teammate_following_weights_only(self):
+        following_cfg = FollowingRatesConfig(
+            enabled=True,
+            budget=3.0,
+            rho=0.5,
+            reallocation_freq=1,
+            fixed=True,
+        )
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            PickMode.CHOICE,
+            following_rates_cfg=following_cfg,
+            task_assignments=((0,), (0,), (1,), (1,)),
+            comm_only_teammates=True,
+        )
+        gpu_trainer._following_states[1].set_following_rates([0.7, 0.0, 0.0, 0.0])
+        gpu_trainer._following_states[2].set_following_rates([1.5, 0.0, 0.0, 0.0])
+        gpu_trainer._following_states[3].set_following_rates([2.0, 0.0, 0.0, 0.0])
+
+        rewards_t = torch.tensor(
+            [[1.0, 10.0, 100.0, 1000.0]],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [[0.0, 1.0, 2.0, 3.0]],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=1.0,
+        )
+
+        teammate_weight = 1.0 - np.exp(-0.7)
+        expected = torch.tensor(
+            [1.0 + teammate_weight * 11.0],
+            dtype=torch.float32,
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_fixed_following_rates_dual_budgets_initialize_expected_rates(self):
+        _, trainer = _make_single_actor_critic_trainer(
+            PickMode.CHOICE,
+            task_assignments=((0,), (0,), (1,), (1,)),
+            following_rates_cfg=FollowingRatesConfig(
+                enabled=True,
+                teammate_budget=2.0,
+                non_teammate_budget=6.0,
+                rho=0.5,
+                reallocation_freq=1,
+                solver="closed_form",
+                fixed=True,
+            ),
+        )
+
+        np.testing.assert_allclose(
+            trainer._following_states[0].following_rates,
+            np.array([0.0, 2.0, 3.0, 3.0]),
+            atol=1e-6,
+        )
+        np.testing.assert_allclose(
+            trainer._following_states[2].following_rates,
+            np.array([3.0, 3.0, 0.0, 2.0]),
             atol=1e-6,
         )
 

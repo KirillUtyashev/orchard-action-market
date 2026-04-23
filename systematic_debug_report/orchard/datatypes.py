@@ -172,6 +172,8 @@ class AlgorithmConfig:
 class FollowingRatesConfig:
     enabled: bool = False
     budget: float = 0.0
+    teammate_budget: float | None = None
+    non_teammate_budget: float | None = None
     rho: float = 0.0
     reallocation_freq: int = 1
     solver: str = "closed_form"
@@ -199,6 +201,7 @@ class TrainConfig:
     use_gpu: bool = True
     td_lambda: float = 0.0
     comm_weight: float = 0.0
+    comm_only_teammates: bool = False
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0

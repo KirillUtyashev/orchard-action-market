@@ -225,11 +225,23 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     actor_lr_d = d.get("actor_lr", algorithm_d.get("actor_lr"))
     actor_lr_cfg = _parse_schedule(actor_lr_d, "train.actor_lr") if actor_lr_d else None
     freeze_critic = bool(d.get("freeze_critic", False))
+    comm_only_teammates = bool(d.get("comm_only_teammates", False))
+    use_gpu = bool(d.get("use_gpu", d.get("use_gpu_batched", True)))
 
     following_d = d.get("following_rates", {})
     following_cfg = FollowingRatesConfig(
         enabled=bool(following_d.get("enabled", False)),
         budget=float(following_d.get("budget", 0.0)),
+        teammate_budget=(
+            float(following_d["teammate_budget"])
+            if "teammate_budget" in following_d and following_d.get("teammate_budget") is not None
+            else None
+        ),
+        non_teammate_budget=(
+            float(following_d["non_teammate_budget"])
+            if "non_teammate_budget" in following_d and following_d.get("non_teammate_budget") is not None
+            else None
+        ),
         rho=float(following_d.get("rho", 0.0)),
         reallocation_freq=int(following_d.get("reallocation_freq", 1)),
         solver=str(following_d.get("solver", "closed_form")),
@@ -247,13 +259,35 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
             raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
         if float(d.get("comm_weight", 0.0)) != 0.0:
             raise ValueError("train.comm_weight is only supported for train.algorithm.name=value.")
+        if comm_only_teammates and not use_gpu:
+            raise ValueError("train.comm_only_teammates=true is only supported for GPU actor-critic.")
     elif freeze_critic:
         raise ValueError("train.freeze_critic is only supported for train.algorithm.name=actor_critic.")
+    elif comm_only_teammates:
+        raise ValueError("train.comm_only_teammates is only supported for train.algorithm.name=actor_critic.")
     if following_cfg.enabled:
         if algorithm_name != AlgorithmName.ACTOR_CRITIC:
             raise ValueError("train.following_rates.enabled=true requires train.algorithm.name=actor_critic.")
-        if following_cfg.budget < 0.0:
-            raise ValueError("train.following_rates.budget must be >= 0.")
+        if following_cfg.fixed:
+            if following_cfg.teammate_budget is None or following_cfg.non_teammate_budget is None:
+                raise ValueError(
+                    "train.following_rates.fixed=true requires both "
+                    "train.following_rates.teammate_budget and "
+                    "train.following_rates.non_teammate_budget."
+                )
+            if following_cfg.teammate_budget < 0.0:
+                raise ValueError("train.following_rates.teammate_budget must be >= 0.")
+            if following_cfg.non_teammate_budget < 0.0:
+                raise ValueError("train.following_rates.non_teammate_budget must be >= 0.")
+        else:
+            if following_cfg.budget < 0.0:
+                raise ValueError("train.following_rates.budget must be >= 0.")
+            if following_cfg.teammate_budget is not None or following_cfg.non_teammate_budget is not None:
+                raise ValueError(
+                    "train.following_rates.teammate_budget and "
+                    "train.following_rates.non_teammate_budget are only supported when "
+                    "train.following_rates.fixed=true."
+                )
         if not (0.0 < following_cfg.rho <= 1.0):
             raise ValueError("train.following_rates.rho must be in (0, 1].")
         if following_cfg.reallocation_freq <= 0:
@@ -286,9 +320,10 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         following_rates=following_cfg,
         influencer=influencer_cfg,
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
-        use_gpu=bool(d.get("use_gpu", d.get("use_gpu_batched", True))),
+        use_gpu=use_gpu,
         td_lambda=float(d.get("td_lambda", 0.0)),
         comm_weight=float(d.get("comm_weight", 0.0)),
+        comm_only_teammates=comm_only_teammates,
         heuristic=heuristic,
         stopping=stopping,
         warmup_steps=int(d.get("warmup_steps", 0)),
