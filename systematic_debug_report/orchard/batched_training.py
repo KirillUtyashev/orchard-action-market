@@ -101,12 +101,7 @@ class BatchedTrainer:
             return out[0], (out[0], out[1])  # (V(s_t) for grad, (V(s_t), V(s_next)) as aux)
 
         self._vmap_grad_with_vnext = vmap(grad(_f_stacked, has_aux=True))
-        self._vmap_forward = vmap(_f)  # used for forward_single_batched
-
-        def _f_batched(params, buffers, grid_batch, scalar_batch):
-            return functional_call(self._base, (params, buffers), (grid_batch, scalar_batch))
-
-        self._vmap_forward_batched = vmap(_f_batched)  # used for forward_batched
+        self._vmap_forward = vmap(_f)  # used for action selection
 
     # ------------------------------------------------------------------
     # Training
@@ -188,8 +183,15 @@ class BatchedTrainer:
         """
         grids = grids.to(self.device)
         scalars = scalars.to(self.device)
+
+        def _f(params, buffers, grid_batch, scalar_batch):
+            # Each vmap lane: grid_batch (B, C, H, W), scalar_batch (B, S)
+            return functional_call(
+                self._base, (params, buffers), (grid_batch, scalar_batch),
+            )
+
         with torch.no_grad():
-            return self._vmap_forward_batched(self._params, self._buffers, grids, scalars)  # (N, B)
+            return vmap(_f)(self._params, self._buffers, grids, scalars)  # (N, B)
 
     def forward_single_batched(
         self,
