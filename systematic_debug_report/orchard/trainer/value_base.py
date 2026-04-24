@@ -153,6 +153,7 @@ class ValueTrainerBase(TrainerBase):
         # Build after-states and immediate rewards for each candidate action
         after_states: list[State] = []
         immediate_rewards: list[float] = []
+        self._timer.start(TimerSection.ACTION_ENV)
         for a in all_actions:
             if phase2 and a.is_pick():
                 s_after, rewards = self._env.resolve_pick(state, pick_type=a.pick_type())
@@ -168,6 +169,7 @@ class ValueTrainerBase(TrainerBase):
                 else:
                     after_states.append(s)
                 immediate_rewards.append(0.0)
+        self._timer.stop()
 
         team_values = self._compute_team_values(state, after_states)
 

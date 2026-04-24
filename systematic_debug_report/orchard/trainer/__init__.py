@@ -33,7 +33,7 @@ def create_trainer(
             device = "cuda" if torch.cuda.is_available() else "cpu"
             for actor in actors:
                 actor.to(device)
-            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device)
+            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
             if device == "cuda":
                 alloc = torch.cuda.memory_allocated() / 1024**2
@@ -80,7 +80,7 @@ def create_trainer(
     if cfg.train.use_gpu:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         bt = BatchedTrainer(
-            networks, td_lambda=cfg.train.td_lambda, device=device,
+            networks, td_lambda=cfg.train.td_lambda, device=device, timer=timer,
         )
         print(f"GpuTrainer: {len(networks)} networks on {device}")
         if device == "cuda":

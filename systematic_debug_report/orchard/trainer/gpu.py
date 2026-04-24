@@ -72,8 +72,13 @@ class GpuTrainer(ValueTrainerBase):
     def _compute_team_values(
         self, state: State, after_states: list[State],
     ) -> list[float]:
+        from orchard.trainer.timer import TimerSection
+        self._timer.start(TimerSection.ACTION_ENCODE)
         grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
+        self._timer.stop()
+        self._timer.start(TimerSection.ACTION_FORWARD)
         values = self._bt.forward_batched(grids, scalars)  # (N, B)
+        self._timer.stop()
         return values.sum(dim=0).tolist()
 
     # ------------------------------------------------------------------

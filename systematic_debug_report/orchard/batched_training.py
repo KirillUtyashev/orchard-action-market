@@ -18,6 +18,7 @@ from torch.func import functional_call, grad_and_value, stack_module_state, vmap
 
 from orchard.datatypes import EncoderOutput
 from orchard.model import ValueNetwork
+from orchard.trainer.timer import Timer, TimerSection
 
 
 class _VmapForwardWrapper(nn.Module):
@@ -53,11 +54,13 @@ class BatchedTrainer:
         networks: list[ValueNetwork],
         td_lambda: float,
         device: str = "cuda",
+        timer: Timer | None = None,
     ) -> None:
         self.n = len(networks)
         self.networks = networks
         self._td_lambda = td_lambda
         self.device = torch.device(device)
+        self._timer = timer or Timer()
 
         # Create wrapper modules with identical structure
         wrappers = [_VmapForwardWrapper(net) for net in networks]
@@ -115,31 +118,39 @@ class BatchedTrainer:
         scalars_next = scalars_next.to(self.device)
 
         # Forward + backward: all N grads and values
+        self._timer.start(TimerSection.TRAIN_GRAD)
         grads, v_s = self._vmap_grad_and_value(
             self._params, self._buffers, grids_t, scalars_t
         )
+        self._timer.stop()
 
         # z ← γ_prev · λ · z + ∇V(s)
+        self._timer.start(TimerSection.TRAIN_TRACE)
         for name in self._params:
             gp = self._gamma_prev
             for _ in range(self._traces[name].dim() - 1):
                 gp = gp.unsqueeze(-1)
             self._traces[name] = gp * self._td_lambda * self._traces[name] + grads[name]
+        self._timer.stop()
 
         # δ = r + γ · V(s') − V(s)
+        self._timer.start(TimerSection.TRAIN_V_NEXT)
         with torch.no_grad():
             v_next = self._vmap_forward(
                 self._params, self._buffers, grids_next, scalars_next
             )
+        self._timer.stop()
         deltas = rewards + discount * v_next - v_s.detach()
 
         # θ ← θ + α · δ · z
+        self._timer.start(TimerSection.TRAIN_PARAM)
         with torch.no_grad():
             for name in self._params:
                 d = deltas
                 for _ in range(self._params[name].dim() - 1):
                     d = d.unsqueeze(-1)
                 self._params[name] = self._params[name] + alpha * d * self._traces[name]
+        self._timer.stop()
 
         self._gamma_prev.fill_(discount)
         return (deltas ** 2).sum().item()

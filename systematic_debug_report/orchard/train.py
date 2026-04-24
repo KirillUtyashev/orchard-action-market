@@ -115,14 +115,18 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         timing_logger = CSVLogger(
             run_dir / "timing.csv",
             ["step", "wall_time",
-             "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms",
-             "total_ms",
+             "encode_ms", "env_ms",
+             "action_env_ms", "action_encode_ms", "action_forward_ms",
+             "train_grad_ms", "train_trace_ms", "train_v_next_ms", "train_param_ms",
+             "eval_wall_ms",
+             "total_step_ms",
              "sm_util_pct", "gpu_mem_util_pct",
              "vram_allocated_mb"],
         )
 
     state = env.init_state()
     last_completed_step = 0
+    _eval_wall_accum: float = 0.0  # accumulated eval wall-time between timing reports
 
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
@@ -134,7 +138,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         if (t + 1) % cfg.logging.main_csv_freq == 0:
             trainer.sync_to_cpu()
             wall_time = time.time() - start_time
+            _eval_t0 = time.perf_counter()
             metrics = trainer.evaluate(env, cfg.eval)
+            _eval_wall_accum += time.perf_counter() - _eval_t0
             td_loss_value = round(trainer.get_td_loss(), 8)
             row: dict[str, float | int | str] = {
                 "step": t + 1,
@@ -210,11 +216,29 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         # ── Timing CSV ──
         if timing_logger is not None and (t + 1) % cfg.logging.timing_csv_freq == 0:
             report = trainer._timer.report_and_reset()
-            encode_ms = round(report[TimerSection.ENCODE] * 1000, 4)
-            train_ms  = round(report[TimerSection.TRAIN]  * 1000, 4)
-            action_ms = round(report[TimerSection.ACTION] * 1000, 4)
-            env_ms    = round(report[TimerSection.ENV]    * 1000, 4)
-            eval_ms   = round(report[TimerSection.EVAL]   * 1000, 4)
+            n = cfg.logging.timing_csv_freq
+            ms = {s: round(report[s] * 1000, 4) for s in TimerSection}
+
+            encode_ms          = ms[TimerSection.ENCODE]
+            env_ms             = ms[TimerSection.ENV]
+            action_env_ms      = ms[TimerSection.ACTION_ENV]
+            action_encode_ms   = ms[TimerSection.ACTION_ENCODE]
+            action_forward_ms  = ms[TimerSection.ACTION_FORWARD]
+            train_grad_ms      = ms[TimerSection.TRAIN_GRAD]
+            train_trace_ms     = ms[TimerSection.TRAIN_TRACE]
+            train_v_next_ms    = ms[TimerSection.TRAIN_V_NEXT]
+            train_param_ms     = ms[TimerSection.TRAIN_PARAM]
+            # eval_wall_ms: total eval wall time in this window, averaged per step
+            eval_wall_ms       = round(_eval_wall_accum * 1000 / n, 4)
+            _eval_wall_accum   = 0.0
+
+            total_step_ms = round(
+                encode_ms + env_ms
+                + action_env_ms + action_encode_ms + action_forward_ms
+                + train_grad_ms + train_trace_ms + train_v_next_ms + train_param_ms
+                + eval_wall_ms,
+                4,
+            )
 
             sm_util = gpu_mem_util = -1
             if _nvml_available:
@@ -226,18 +250,23 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
                     pass
 
             timing_logger.log({
-                "step":             t + 1,
-                "wall_time":        round(time.time() - start_time, 3),
-                "encode_ms":        encode_ms,
-                "train_ms":         train_ms,
-                "action_ms":        action_ms,
-                "env_ms":           env_ms,
-                "eval_ms":          eval_ms,
-                "total_ms":         round(encode_ms + train_ms + action_ms + env_ms + eval_ms, 4),
-                "sm_util_pct":      sm_util,
-                "gpu_mem_util_pct": gpu_mem_util,
-                "vram_allocated_mb": round(torch.cuda.memory_allocated() / 1024**2, 1)
-                                     if torch.cuda.is_available() else -1,
+                "step":               t + 1,
+                "wall_time":          round(time.time() - start_time, 3),
+                "encode_ms":          encode_ms,
+                "env_ms":             env_ms,
+                "action_env_ms":      action_env_ms,
+                "action_encode_ms":   action_encode_ms,
+                "action_forward_ms":  action_forward_ms,
+                "train_grad_ms":      train_grad_ms,
+                "train_trace_ms":     train_trace_ms,
+                "train_v_next_ms":    train_v_next_ms,
+                "train_param_ms":     train_param_ms,
+                "eval_wall_ms":       eval_wall_ms,
+                "total_step_ms":      total_step_ms,
+                "sm_util_pct":        sm_util,
+                "gpu_mem_util_pct":   gpu_mem_util,
+                "vram_allocated_mb":  round(torch.cuda.memory_allocated() / 1024**2, 1)
+                                      if torch.cuda.is_available() else -1,
             })
 
     # --- Finalize ---

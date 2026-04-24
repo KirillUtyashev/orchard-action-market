@@ -14,6 +14,17 @@ class TimerSection(Enum):
     ACTION = auto()
     EVAL = auto()
     ENV = auto()
+    # Fine-grained subsections (sum ≈ parent section)
+    ACTION_ENV = auto()      # env after-state building inside greedy selection
+    ACTION_ENCODE = auto()   # encode_all_agents_for_actions
+    ACTION_FORWARD = auto()  # vmap forward (value computation)
+    TRAIN_GRAD = auto()      # vmap grad_and_value call
+    TRAIN_TRACE = auto()     # eligibility trace update loop
+    TRAIN_V_NEXT = auto()    # V(s') forward pass
+    TRAIN_PARAM = auto()     # parameter update loop
+    # Note: EVAL_GREEDY/EVAL_HEURISTIC cannot be tracked with this flat timer
+    # because the ACTION_* subsections fire inside them and overwrite the active
+    # section before it accumulates.  Eval time is measured by wall-clock in train.py.
 
 
 class Timer:
