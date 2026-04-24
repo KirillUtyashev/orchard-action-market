@@ -82,6 +82,14 @@ class BatchedTrainer:
         # Per-network gamma_prev (all start at 0.0)
         self._gamma_prev = torch.zeros(self.n, device=self.device)
 
+        # Pre-compute broadcast shapes for trace/param updates.
+        # Each param is (N, *shape); gamma_prev/deltas are (N,).
+        # We need to reshape them to (N, 1, 1, ...) to broadcast over *shape.
+        self._param_view_shapes = {
+            k: (-1,) + (1,) * (v.dim() - 1)
+            for k, v in self._params.items()
+        }
+
         # Build the vmapped grad_and_value function (cached)
         def _f(params, buffers, grid, scalar):
             return functional_call(self._base, (params, buffers), (grid, scalar))
@@ -124,13 +132,11 @@ class BatchedTrainer:
         )
         self._timer.stop()
 
-        # z ← γ_prev · λ · z + ∇V(s)
+        # z ← γ_prev · λ · z + ∇V(s)  (in-place: avoids allocating new tensors)
         self._timer.start(TimerSection.TRAIN_TRACE)
         for name in self._params:
-            gp = self._gamma_prev
-            for _ in range(self._traces[name].dim() - 1):
-                gp = gp.unsqueeze(-1)
-            self._traces[name] = gp * self._td_lambda * self._traces[name] + grads[name]
+            gp = self._gamma_prev.view(self._param_view_shapes[name])
+            self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
         self._timer.stop()
 
         # δ = r + γ · V(s') − V(s)
@@ -142,14 +148,12 @@ class BatchedTrainer:
         self._timer.stop()
         deltas = rewards + discount * v_next - v_s.detach()
 
-        # θ ← θ + α · δ · z
+        # θ ← θ + α · δ · z  (in-place: avoids allocating new tensors)
         self._timer.start(TimerSection.TRAIN_PARAM)
         with torch.no_grad():
             for name in self._params:
-                d = deltas
-                for _ in range(self._params[name].dim() - 1):
-                    d = d.unsqueeze(-1)
-                self._params[name] = self._params[name] + alpha * d * self._traces[name]
+                d = deltas.view(self._param_view_shapes[name])
+                self._params[name].add_(self._traces[name] * d, alpha=alpha)
         self._timer.stop()
 
         self._gamma_prev.fill_(discount)
