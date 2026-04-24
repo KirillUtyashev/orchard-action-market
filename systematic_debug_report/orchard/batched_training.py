@@ -14,7 +14,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from torch.func import functional_call, grad_and_value, stack_module_state, vmap
+from torch.func import functional_call, grad, grad_and_value, stack_module_state, vmap
 
 from orchard.datatypes import EncoderOutput
 from orchard.model import ValueNetwork
@@ -90,12 +90,18 @@ class BatchedTrainer:
             for k, v in self._params.items()
         }
 
-        # Build the vmapped grad_and_value function (cached)
         def _f(params, buffers, grid, scalar):
             return functional_call(self._base, (params, buffers), (grid, scalar))
 
-        self._vmap_grad_and_value = vmap(grad_and_value(_f))
-        self._vmap_forward = vmap(_f)
+        # Stacked forward: grids_pair is (2, C, H, W), returns (2,).
+        # grad(has_aux=True) differentiates out[0]=V(s_t) and returns out[1]=V(s_next)
+        # as aux — so one vmap call replaces the old grad_and_value + separate v_next forward.
+        def _f_stacked(params, buffers, grids_pair, scalars_pair):
+            out = functional_call(self._base, (params, buffers), (grids_pair, scalars_pair))
+            return out[0], (out[0], out[1])  # (V(s_t) for grad, (V(s_t), V(s_next)) as aux)
+
+        self._vmap_grad_with_vnext = vmap(grad(_f_stacked, has_aux=True))
+        self._vmap_forward = vmap(_f)  # used for action selection
 
     # ------------------------------------------------------------------
     # Training
@@ -125,10 +131,13 @@ class BatchedTrainer:
         grids_next = grids_next.to(self.device)
         scalars_next = scalars_next.to(self.device)
 
-        # Forward + backward: all N grads and values
+        # Single vmap call: grad of V(s_t) + V(s_t) + V(s_next) via stacked forward.
+        # Stacks s_t and s_next along batch dim so the network processes both in one pass.
         self._timer.start(TimerSection.TRAIN_GRAD)
-        grads, v_s = self._vmap_grad_and_value(
-            self._params, self._buffers, grids_t, scalars_t
+        grids_pair   = torch.stack([grids_t,   grids_next],   dim=1)  # (N, 2, C, H, W)
+        scalars_pair = torch.stack([scalars_t, scalars_next], dim=1)  # (N, 2, S)
+        grads, (v_s, v_next) = self._vmap_grad_with_vnext(
+            self._params, self._buffers, grids_pair, scalars_pair
         )
         self._timer.stop()
 
@@ -139,13 +148,7 @@ class BatchedTrainer:
             self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
         self._timer.stop()
 
-        # δ = r + γ · V(s') − V(s)
-        self._timer.start(TimerSection.TRAIN_V_NEXT)
-        with torch.no_grad():
-            v_next = self._vmap_forward(
-                self._params, self._buffers, grids_next, scalars_next
-            )
-        self._timer.stop()
+        # δ = r + γ · V(s') − V(s)  (v_next free from the stacked forward above)
         deltas = rewards + discount * v_next - v_s.detach()
 
         # θ ← θ + α · δ · z  (in-place: avoids allocating new tensors)
