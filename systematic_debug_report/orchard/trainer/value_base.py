@@ -41,6 +41,7 @@ class ValueTrainerBase(TrainerBase):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         heuristic: Heuristic,
+        reward_scale: float = 1.0,
         timer: Timer | None = None,
     ) -> None:
         self._networks_list = network_list
@@ -48,11 +49,16 @@ class ValueTrainerBase(TrainerBase):
         self._n_agents = env.cfg.n_agents
         self._n_networks = len(network_list)
         self._centralized = (self._n_networks == 1)
+        if reward_scale <= 0.0:
+            raise ValueError("reward_scale must be > 0.")
+        if self._centralized and reward_scale != 1.0:
+            raise ValueError("reward_scale is only supported for decentralized value learning.")
         self._gamma = gamma
         self._epsilon_schedule = epsilon_schedule
         self._lr_schedule = lr_schedule
         self._total_steps = total_steps
         self._heuristic = heuristic
+        self._reward_scale = reward_scale
         self._timer = timer or Timer()
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
@@ -87,6 +93,11 @@ class ValueTrainerBase(TrainerBase):
     ) -> list[float]:
         """Compute sum_j V_j(after_state) for each candidate after-state."""
         ...
+
+    def _value_learning_rewards(self, rewards: tuple[float, ...]) -> tuple[float, ...]:
+        if self._centralized:
+            return (sum(rewards),)
+        return tuple(self._reward_scale * r for r in rewards)
 
     # ------------------------------------------------------------------
     # Turn stepping
@@ -157,7 +168,7 @@ class ValueTrainerBase(TrainerBase):
             if phase2 and a.is_pick():
                 s_after, rewards = self._env.resolve_pick(state, pick_type=a.pick_type())
                 after_states.append(s_after)
-                immediate_rewards.append(sum(rewards))
+                immediate_rewards.append(sum(self._value_learning_rewards(rewards)))
             elif phase2:
                 after_states.append(state)
                 immediate_rewards.append(0.0)
@@ -207,7 +218,7 @@ class ValueTrainerBase(TrainerBase):
         pick_enc = self._encode_all(s_picked)
         self._timer.stop()
 
-        train_rewards = (sum(rewards),) if self._centralized else rewards
+        train_rewards = self._value_learning_rewards(rewards)
 
         self._timer.start(TimerSection.TRAIN)
         loss = self._td_step(self._move, train_rewards, 1.0, pick_enc, t)

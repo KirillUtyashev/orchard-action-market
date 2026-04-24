@@ -222,6 +222,10 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
 
     algorithm_d = d.get("algorithm", {})
     algorithm_name = _enum(algorithm_d.get("name", "value"), "algorithm_name")
+    reward_scale = float(algorithm_d.get("reward_scale", 1.0))
+    if reward_scale <= 0.0:
+        raise ValueError("train.algorithm.reward_scale must be > 0.")
+    learning_type = _enum(d.get("learning_type", "decentralized"), "learning_type")
     actor_lr_d = d.get("actor_lr", algorithm_d.get("actor_lr"))
     actor_lr_cfg = _parse_schedule(actor_lr_d, "train.actor_lr") if actor_lr_d else None
     freeze_critic = bool(d.get("freeze_critic", False))
@@ -255,7 +259,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     )
 
     if algorithm_name == AlgorithmName.ACTOR_CRITIC:
-        if d.get("learning_type", "decentralized").strip().lower() != "decentralized":
+        if learning_type != LearningType.DECENTRALIZED:
             raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
         if comm_only_teammates and not use_gpu:
             raise ValueError("train.comm_only_teammates=true is only supported for GPU actor-critic.")
@@ -300,6 +304,12 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
             )
     if influencer_cfg.enabled and not following_cfg.enabled:
         raise ValueError("train.influencer.enabled=true requires train.following_rates.enabled=true.")
+    if reward_scale != 1.0 and (
+        algorithm_name != AlgorithmName.VALUE or learning_type != LearningType.DECENTRALIZED
+    ):
+        raise ValueError(
+            "train.algorithm.reward_scale is only supported for decentralized value learning."
+        )
 
     warmup_steps = int(d.get("warmup_steps", 0))
     if warmup_steps < 0:
@@ -314,10 +324,10 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         actor_lr=actor_lr_cfg,
         freeze_critic=freeze_critic,
         epsilon=eps_cfg,
-        algorithm=AlgorithmConfig(name=algorithm_name),
+        algorithm=AlgorithmConfig(name=algorithm_name, reward_scale=reward_scale),
         following_rates=following_cfg,
         influencer=influencer_cfg,
-        learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
+        learning_type=learning_type,
         use_gpu=use_gpu,
         td_lambda=float(d.get("td_lambda", 0.0)),
         comm_only_teammates=comm_only_teammates,

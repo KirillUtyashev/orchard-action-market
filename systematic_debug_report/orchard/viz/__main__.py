@@ -132,6 +132,7 @@ def _greedy_action_batched(
     state: State,
     networks: list[ValueNetwork],
     env,
+    reward_scale: float = 1.0,
 ) -> Action:
     """Standalone greedy argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
     phase2 = state.pick_phase
@@ -143,7 +144,7 @@ def _greedy_action_batched(
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
             after_states.append(s_after)
-            immediate_rewards.append(sum(rewards))
+            immediate_rewards.append(reward_scale * sum(rewards))
         elif phase2:
             after_states.append(state)
             immediate_rewards.append(0.0)
@@ -185,6 +186,7 @@ def make_policy_fn(
     networks: list[ValueNetwork] | None,
     env,
     actor_networks: list[PolicyNetwork] | None = None,
+    reward_scale: float = 1.0,
 ):
     """Return a policy function: State -> Action.
 
@@ -202,7 +204,7 @@ def make_policy_fn(
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
         def policy(s: State) -> Action:
-            return _greedy_action_batched(s, networks, env)
+            return _greedy_action_batched(s, networks, env, reward_scale=reward_scale)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
@@ -353,6 +355,8 @@ def main() -> None:
     # Print config info (always)
     print(f"  T={n_task_types}, N={cfg.env.n_agents}, grid={cfg.env.height}x{cfg.env.width}")
     print(f"  Pick mode: {pick_mode.name}, r_picker={cfg.env.r_picker}, r_low={cfg.env.r_low}")
+    if cfg.train.algorithm.reward_scale != 1.0:
+        print(f"  Value reward scale: {cfg.train.algorithm.reward_scale}")
     if task_assignments is not None:
         print(f"  Assignments: {task_assignments}")
 
@@ -363,8 +367,11 @@ def main() -> None:
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
     t0 = time.time()
 
-    policy_fn = make_policy_fn(policy_name, networks, env,
-                               actor_networks=actor_networks)
+    policy_fn = make_policy_fn(
+        policy_name, networks, env,
+        actor_networks=actor_networks,
+        reward_scale=cfg.train.algorithm.reward_scale,
+    )
     frames = generate_frames(
         start_state=init_state,
         policy_fn=policy_fn,
@@ -400,8 +407,11 @@ def main() -> None:
         print(f"Rolling out {args.steps} decisions with policy: {compare_name} (compare)")
         env_compare = create_env(cfg.env)
         compare_actor_networks = actor_networks if compare_name == "learned" else None
-        compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
-                                    actor_networks=compare_actor_networks)
+        compare_fn = make_policy_fn(
+            compare_name, compare_networks, env_compare,
+            actor_networks=compare_actor_networks,
+            reward_scale=cfg.train.algorithm.reward_scale,
+        )
         compare_frames = generate_frames(
             start_state=init_state,
             policy_fn=compare_fn,

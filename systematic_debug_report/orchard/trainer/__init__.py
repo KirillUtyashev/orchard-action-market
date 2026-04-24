@@ -98,6 +98,7 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
+            reward_scale=cfg.train.algorithm.reward_scale,
             timer=timer,
         )
     else:
@@ -111,5 +112,6 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
+            reward_scale=cfg.train.algorithm.reward_scale,
             timer=timer,
         )

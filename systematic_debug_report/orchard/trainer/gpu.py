@@ -34,12 +34,14 @@ class GpuTrainer(ValueTrainerBase):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         heuristic: Heuristic,
+        reward_scale: float = 1.0,
         timer: Timer | None = None,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
-            total_steps=total_steps, heuristic=heuristic, timer=timer,
+            total_steps=total_steps, heuristic=heuristic,
+            reward_scale=reward_scale, timer=timer,
         )
         self._bt = bt
 

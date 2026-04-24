@@ -166,6 +166,7 @@ class StoppingConfig:
 @dataclass(frozen=True)
 class AlgorithmConfig:
     name: AlgorithmName = AlgorithmName.VALUE
+    reward_scale: float = 1.0
 
 
 @dataclass(frozen=True)
