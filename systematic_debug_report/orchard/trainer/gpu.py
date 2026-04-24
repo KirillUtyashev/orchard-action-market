@@ -79,7 +79,16 @@ class GpuTrainer(ValueTrainerBase):
         self._timer.start(TimerSection.ACTION_FORWARD)
         values = self._bt.forward_batched(grids, scalars)  # (N, B)
         self._timer.stop()
+        self._last_action_grids = grids      # (N, B, C, H, W) — kept for enc caching
+        self._last_action_scalars = scalars  # (N, B, S)
         return values.sum(dim=0).tolist()
+
+    def _cache_selected_enc(self, best_idx: int) -> None:
+        """Cache the encoding of the selected after-state for reuse in train_move/train_pick."""
+        self._cached_enc = (
+            self._last_action_grids[:, best_idx].contiguous(),
+            self._last_action_scalars[:, best_idx].contiguous(),
+        )
 
     # ------------------------------------------------------------------
     # Sync

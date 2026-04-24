@@ -61,6 +61,11 @@ class ValueTrainerBase(TrainerBase):
         self._prev: Any = None
         self._move: Any = None
 
+        # Cached encoding of the selected after-state from the most recent greedy
+        # action selection. Set by _greedy_action via _cache_selected_enc(); consumed
+        # and cleared by train_move/train_pick to avoid re-encoding the same state.
+        self._cached_enc: Any = None
+
         # Loss accumulator
         self._td_loss_accum: float = 0.0
         self._td_loss_count: int = 0
@@ -87,6 +92,13 @@ class ValueTrainerBase(TrainerBase):
     ) -> list[float]:
         """Compute sum_j V_j(after_state) for each candidate after-state."""
         ...
+
+    def _cache_selected_enc(self, best_idx: int) -> None:
+        """Optionally cache the encoding at best_idx for reuse in train_move/train_pick.
+
+        Default no-op. GpuTrainer overrides this to slice and store the encoding
+        already computed inside _compute_team_values, avoiding a redundant encode call.
+        """
 
     # ------------------------------------------------------------------
     # Turn stepping
@@ -180,6 +192,8 @@ class ValueTrainerBase(TrainerBase):
             if val > best_val:
                 best_val = val
                 best_idx = k
+        if not phase2:
+            self._cache_selected_enc(best_idx)
         return all_actions[best_idx]
 
     # ------------------------------------------------------------------
@@ -188,8 +202,12 @@ class ValueTrainerBase(TrainerBase):
     def train_move(self, s_moved: State, on_task: bool, t: int) -> None:
         """Encode move after-state. TD update: prev_after →[r=0, γ=γ]→ move_after."""
         self._timer.start(TimerSection.ENCODE)
-        enc_state = s_moved.with_pick_phase() if on_task else s_moved
-        self._move = self._encode_all(enc_state)
+        if self._cached_enc is not None:
+            self._move = self._cached_enc
+            self._cached_enc = None
+        else:
+            enc_state = s_moved.with_pick_phase() if on_task else s_moved
+            self._move = self._encode_all(enc_state)
         self._timer.stop()
 
         if self._prev is not None:
