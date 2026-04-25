@@ -85,6 +85,64 @@ class CnnGridEncoder(GridEncoder):
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
+    def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
+        N = self.env_cfg.n_agents
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grids = torch.zeros(N, 4, h, w, dtype=torch.float32)
+
+        # Ch0: tasks — same for all agents
+        for tp in state.task_positions:
+            grids[:, 0, tp.row, tp.col] += 1.0
+
+        # Ch1: self positions
+        self_grids = torch.zeros(N, h, w, dtype=torch.float32)
+        for i, pos in enumerate(state.agent_positions):
+            self_grids[i, pos.row, pos.col] = 1.0
+        grids[:, 1] = self_grids
+
+        # Ch2: all other agents = total - self
+        total_agents = self_grids.sum(0)
+        grids[:, 2] = total_agents.unsqueeze(0) - self_grids
+
+        # Ch3: actor — same for all agents
+        actor_pos = state.agent_positions[state.actor]
+        grids[:, 3, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalars (N, 1): is_self_actor
+        scalars = torch.zeros(N, 1, dtype=torch.float32)
+        scalars[state.actor, 0] = 1.0
+
+        return grids, scalars
+
+    def encode_all_agents_for_actions(
+        self, state: State, after_states: list[State],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        N = self.env_cfg.n_agents
+        B = len(after_states)
+        h, w = self.env_cfg.height, self.env_cfg.width
+
+        grids = torch.zeros(N, B, 4, h, w, dtype=torch.float32)
+        scalars = torch.zeros(N, B, 1, dtype=torch.float32)
+
+        # Ch1 per-agent, per-action self positions; Ch2 = total - self
+        self_grids = torch.zeros(N, B, h, w, dtype=torch.float32)
+        for k, s in enumerate(after_states):
+            for i, pos in enumerate(s.agent_positions):
+                self_grids[i, k, pos.row, pos.col] = 1.0
+        grids[:, :, 1] = self_grids
+        total_agents = self_grids.sum(0)  # (B, H, W)
+        grids[:, :, 2] = total_agents.unsqueeze(0) - self_grids
+
+        # Ch0 (tasks), Ch3 (actor), scalars — per action, broadcast across agents
+        for k, s in enumerate(after_states):
+            for tp in s.task_positions:
+                grids[:, k, 0, tp.row, tp.col] += 1.0
+            actor_pos = s.agent_positions[s.actor]
+            grids[:, k, 3, actor_pos.row, actor_pos.col] = 1.0
+            scalars[s.actor, k, 0] = 1.0
+
+        return grids, scalars
+
 
 class CentralizedTaskGridEncoder(GridEncoder):
     """Centralized task-specialization encoding.
