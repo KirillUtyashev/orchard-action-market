@@ -35,13 +35,16 @@ class GpuTrainer(ValueTrainerBase):
         total_steps: int,
         heuristic: Heuristic,
         reward_scale: float = 1.0,
+        reward_translation: float = 0.0,
         timer: Timer | None = None,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
             total_steps=total_steps, heuristic=heuristic,
-            reward_scale=reward_scale, timer=timer,
+            reward_scale=reward_scale,
+            reward_translation=reward_translation,
+            timer=timer,
         )
         self._bt = bt
 

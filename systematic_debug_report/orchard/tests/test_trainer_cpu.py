@@ -14,7 +14,12 @@ import orchard.encoding as encoding
 from orchard.trainer.cpu import CpuTrainer
 
 
-def _setup_cpu_trainer(n_agents=2, r_picker=1.0, reward_scale=1.0):
+def _setup_cpu_trainer(
+    n_agents=2,
+    r_picker=1.0,
+    reward_scale=1.0,
+    reward_translation=0.0,
+):
     env_cfg = EnvConfig(
         height=3, width=3, n_agents=n_agents, n_tasks=1,
         gamma=0.99, r_picker=r_picker, n_task_types=1,
@@ -45,6 +50,7 @@ def _setup_cpu_trainer(n_agents=2, r_picker=1.0, reward_scale=1.0):
         epsilon_schedule=eps_cfg, lr_schedule=lr_cfg,
         total_steps=100, heuristic=Heuristic.NEAREST_TASK,
         reward_scale=reward_scale,
+        reward_translation=reward_translation,
     )
     return env, networks, trainer
 
@@ -111,6 +117,46 @@ class TestCpuTrainerTDStep:
         trainer.train_pick(s, rewards=(-1.0, 0.0, 2.0 / 3.0), t=1)
 
         assert captured["rewards"] == pytest.approx((-1.0, 0.0, 2.0 / 3.0))
+
+    def test_train_pick_translates_decentralized_rewards(self):
+        _, _, trainer = _setup_cpu_trainer(
+            n_agents=3,
+            reward_scale=0.25,
+            reward_translation=0.5,
+        )
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(1, 1), Grid(2, 2)),
+            task_positions=(), actor=0, task_types=(),
+        )
+        trainer.train_move(s_moved=s, on_task=True, t=0)
+        captured = {}
+
+        def capture_td_step(prev, rewards, discount, current, t):
+            captured["rewards"] = rewards
+            return 0.0
+
+        trainer._td_step = capture_td_step
+        trainer.train_pick(s, rewards=(-1.0, 0.0, 2.0 / 3.0), t=1)
+
+        assert captured["rewards"] == pytest.approx((0.25, 0.5, 2.0 / 3.0))
+
+    def test_train_move_translates_zero_rewards(self):
+        _, _, trainer = _setup_cpu_trainer(n_agents=2, reward_translation=0.5)
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(1, 1)),
+            task_positions=(), actor=0, task_types=(),
+        )
+        trainer.train_move(s_moved=s, on_task=False, t=0)
+        captured = {}
+
+        def capture_td_step(prev, rewards, discount, current, t):
+            captured["rewards"] = rewards
+            return 0.0
+
+        trainer._td_step = capture_td_step
+        trainer.train_move(s_moved=s, on_task=False, t=1)
+
+        assert captured["rewards"] == pytest.approx((0.5, 0.5))
 
     def test_greedy_action_uses_scaled_immediate_rewards(self):
         _, _, trainer = _setup_cpu_trainer(n_agents=2, r_picker=-1.0, reward_scale=0.25)

@@ -223,6 +223,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     algorithm_d = d.get("algorithm", {})
     algorithm_name = _enum(algorithm_d.get("name", "value"), "algorithm_name")
     reward_scale = float(algorithm_d.get("reward_scale", 1.0))
+    reward_translation = float(algorithm_d.get("reward_translation", 0.0))
     if reward_scale <= 0.0:
         raise ValueError("train.algorithm.reward_scale must be > 0.")
     learning_type = _enum(d.get("learning_type", "decentralized"), "learning_type")
@@ -304,11 +305,12 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
             )
     if influencer_cfg.enabled and not following_cfg.enabled:
         raise ValueError("train.influencer.enabled=true requires train.following_rates.enabled=true.")
-    if reward_scale != 1.0 and (
+    reward_transform_configured = reward_scale != 1.0 or reward_translation != 0.0
+    if reward_transform_configured and (
         algorithm_name != AlgorithmName.VALUE or learning_type != LearningType.DECENTRALIZED
     ):
         raise ValueError(
-            "train.algorithm.reward_scale is only supported for decentralized value learning."
+            "train.algorithm reward transforms are only supported for decentralized value learning."
         )
 
     warmup_steps = int(d.get("warmup_steps", 0))
@@ -324,7 +326,11 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         actor_lr=actor_lr_cfg,
         freeze_critic=freeze_critic,
         epsilon=eps_cfg,
-        algorithm=AlgorithmConfig(name=algorithm_name, reward_scale=reward_scale),
+        algorithm=AlgorithmConfig(
+            name=algorithm_name,
+            reward_scale=reward_scale,
+            reward_translation=reward_translation,
+        ),
         following_rates=following_cfg,
         influencer=influencer_cfg,
         learning_type=learning_type,

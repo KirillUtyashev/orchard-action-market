@@ -133,10 +133,12 @@ def _greedy_action_batched(
     networks: list[ValueNetwork],
     env,
     reward_scale: float = 1.0,
+    reward_translation: float = 0.0,
 ) -> Action:
     """Standalone greedy argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
     phase2 = state.pick_phase
     all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    zero_reward_sum = env.cfg.n_agents * reward_translation
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
@@ -144,17 +146,17 @@ def _greedy_action_batched(
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
             after_states.append(s_after)
-            immediate_rewards.append(reward_scale * sum(rewards))
+            immediate_rewards.append(reward_scale * sum(rewards) + zero_reward_sum)
         elif phase2:
             after_states.append(state)
-            immediate_rewards.append(0.0)
+            immediate_rewards.append(zero_reward_sum)
         else:
             s = env.apply_action(state, a)
             if s.is_agent_on_task(s.actor):
                 after_states.append(s.with_pick_phase())
             else:
                 after_states.append(s)
-            immediate_rewards.append(0.0)
+            immediate_rewards.append(zero_reward_sum)
 
     n_actions = len(after_states)
 
@@ -187,6 +189,7 @@ def make_policy_fn(
     env,
     actor_networks: list[PolicyNetwork] | None = None,
     reward_scale: float = 1.0,
+    reward_translation: float = 0.0,
 ):
     """Return a policy function: State -> Action.
 
@@ -204,7 +207,13 @@ def make_policy_fn(
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
         def policy(s: State) -> Action:
-            return _greedy_action_batched(s, networks, env, reward_scale=reward_scale)
+            return _greedy_action_batched(
+                s,
+                networks,
+                env,
+                reward_scale=reward_scale,
+                reward_translation=reward_translation,
+            )
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
@@ -357,6 +366,8 @@ def main() -> None:
     print(f"  Pick mode: {pick_mode.name}, r_picker={cfg.env.r_picker}, r_low={cfg.env.r_low}")
     if cfg.train.algorithm.reward_scale != 1.0:
         print(f"  Value reward scale: {cfg.train.algorithm.reward_scale}")
+    if cfg.train.algorithm.reward_translation != 0.0:
+        print(f"  Value reward translation: {cfg.train.algorithm.reward_translation}")
     if task_assignments is not None:
         print(f"  Assignments: {task_assignments}")
 
@@ -371,6 +382,7 @@ def main() -> None:
         policy_name, networks, env,
         actor_networks=actor_networks,
         reward_scale=cfg.train.algorithm.reward_scale,
+        reward_translation=cfg.train.algorithm.reward_translation,
     )
     frames = generate_frames(
         start_state=init_state,
@@ -411,6 +423,7 @@ def main() -> None:
             compare_name, compare_networks, env_compare,
             actor_networks=compare_actor_networks,
             reward_scale=cfg.train.algorithm.reward_scale,
+            reward_translation=cfg.train.algorithm.reward_translation,
         )
         compare_frames = generate_frames(
             start_state=init_state,

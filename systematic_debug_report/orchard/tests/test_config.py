@@ -175,13 +175,14 @@ class TestOverrides:
 
 
 class TestValueRewardScaleConfig:
-    def test_reward_scale_defaults_to_one(self):
+    def test_reward_transform_defaults_to_identity(self):
         path = _write_yaml(VALID_YAML)
         cfg = load_config(path)
         assert cfg.train.algorithm.reward_scale == 1.0
+        assert cfg.train.algorithm.reward_translation == 0.0
         os.unlink(path)
 
-    def test_decentralized_value_reward_scale_parses(self):
+    def test_decentralized_value_reward_transform_parses(self):
         yaml_str = VALID_YAML + """
 train:
   total_steps: 100
@@ -191,11 +192,13 @@ train:
   algorithm:
     name: value
     reward_scale: 0.25
+    reward_translation: 0.5
 """
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
         assert cfg.train.algorithm.name == AlgorithmName.VALUE
         assert cfg.train.algorithm.reward_scale == 0.25
+        assert cfg.train.algorithm.reward_translation == 0.5
         os.unlink(path)
 
     def test_reward_scale_must_be_positive(self):
@@ -228,6 +231,21 @@ train:
             load_config(path)
         os.unlink(path)
 
+    def test_actor_critic_rejects_reward_translation(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+    reward_translation: 0.5
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for decentralized value learning"):
+            load_config(path)
+        os.unlink(path)
+
     def test_centralized_value_rejects_reward_scale(self):
         yaml_str = VALID_YAML + """
 train:
@@ -238,6 +256,22 @@ train:
   algorithm:
     name: value
     reward_scale: 0.25
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for decentralized value learning"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_centralized_value_rejects_reward_translation(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  learning_type: centralized
+  lr:
+    start: 0.001
+  algorithm:
+    name: value
+    reward_translation: 0.5
 """
         path = _write_yaml(yaml_str)
         with pytest.raises(ValueError, match="only supported for decentralized value learning"):

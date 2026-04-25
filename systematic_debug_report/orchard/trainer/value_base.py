@@ -42,6 +42,7 @@ class ValueTrainerBase(TrainerBase):
         total_steps: int,
         heuristic: Heuristic,
         reward_scale: float = 1.0,
+        reward_translation: float = 0.0,
         timer: Timer | None = None,
     ) -> None:
         self._networks_list = network_list
@@ -51,17 +52,20 @@ class ValueTrainerBase(TrainerBase):
         self._centralized = (self._n_networks == 1)
         if reward_scale <= 0.0:
             raise ValueError("reward_scale must be > 0.")
-        if self._centralized and reward_scale != 1.0:
-            raise ValueError("reward_scale is only supported for decentralized value learning.")
+        reward_transform_configured = reward_scale != 1.0 or reward_translation != 0.0
+        if self._centralized and reward_transform_configured:
+            raise ValueError("reward transforms are only supported for decentralized value learning.")
         self._gamma = gamma
         self._epsilon_schedule = epsilon_schedule
         self._lr_schedule = lr_schedule
         self._total_steps = total_steps
         self._heuristic = heuristic
         self._reward_scale = reward_scale
+        self._reward_translation = reward_translation
         self._timer = timer or Timer()
 
-        self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
+        raw_zero_rewards = tuple(0.0 for _ in range(self._n_agents))
+        self._zero_rewards = self._value_learning_rewards(raw_zero_rewards)
 
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
@@ -97,7 +101,7 @@ class ValueTrainerBase(TrainerBase):
     def _value_learning_rewards(self, rewards: tuple[float, ...]) -> tuple[float, ...]:
         if self._centralized:
             return (sum(rewards),)
-        return tuple(self._reward_scale * r for r in rewards)
+        return tuple(self._reward_scale * r + self._reward_translation for r in rewards)
 
     # ------------------------------------------------------------------
     # Turn stepping
@@ -171,14 +175,14 @@ class ValueTrainerBase(TrainerBase):
                 immediate_rewards.append(sum(self._value_learning_rewards(rewards)))
             elif phase2:
                 after_states.append(state)
-                immediate_rewards.append(0.0)
+                immediate_rewards.append(sum(self._zero_rewards))
             else: #
                 s = self._env.apply_action(state, a)
                 if s.is_agent_on_task(s.actor):
                     after_states.append(s.with_pick_phase())
                 else:
                     after_states.append(s)
-                immediate_rewards.append(0.0)
+                immediate_rewards.append(sum(self._zero_rewards))
 
         team_values = self._compute_team_values(state, after_states)
 

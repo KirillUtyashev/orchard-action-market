@@ -99,6 +99,7 @@ def create_trainer(
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
             reward_scale=cfg.train.algorithm.reward_scale,
+            reward_translation=cfg.train.algorithm.reward_translation,
             timer=timer,
         )
     else:
@@ -113,5 +114,6 @@ def create_trainer(
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
             reward_scale=cfg.train.algorithm.reward_scale,
+            reward_translation=cfg.train.algorithm.reward_translation,
             timer=timer,
         )
