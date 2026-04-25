@@ -344,6 +344,7 @@ def _parse_logging(d: dict[str, Any]) -> LoggingConfig:
         detail_csv_freq=int(d.get("detail_csv_freq", 50000)),
         timing_csv_freq=int(d.get("timing_csv_freq", 0)),
         alpha_state_log_freq=int(d.get("alpha_state_log_freq", 0)),
+        env_trace=bool(d.get("env_trace", False)),
     )
 
 

@@ -78,7 +78,9 @@ class ValueTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     # Auxiliary logging
     # ------------------------------------------------------------------
-    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0, env_trace: bool = True) -> None:
+        if not env_trace:
+            return
         fields = (
             ["step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type"]
             + [f"reward_{i}" for i in range(self._n_agents)]
