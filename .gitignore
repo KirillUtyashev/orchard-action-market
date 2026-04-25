@@ -18,6 +18,7 @@ systematic_debug_report/request_slurm.sh
 systematic_debug_report/my_configs/
 systematic_debug_report/TODO.txt
 systematic_debug_report/QUESTIONS.txt
+systematic_debug_report/compare_checkpoints.py
 
 # Data/model files
 *.npz
