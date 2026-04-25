@@ -127,6 +127,7 @@ class StochasticConfig:
     despawn_mode: DespawnMode
     despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
     task_spawn_mode: TaskSpawnMode | None = None  # None = auto-select based on pick_mode
+    old_init_rng: bool = False  # if True, init_state uses single combined rng.sample (matches old branch RNG)
 
 
 @dataclass(frozen=True)

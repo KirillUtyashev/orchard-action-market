@@ -27,9 +27,10 @@ class Heuristic(Enum):
 
 
 class EncoderType(Enum):
+    CNN_GRID = auto()                        # dec O(1): 4 channels, 1 scalar — mirrors old BasicGridEncoder
     BLIND_TASK_CNN_GRID = auto()             # dec O(1): 4 grid channels, 3 scalars
     FILTERED_TASK_CNN_GRID = auto()          # dec O(1): 6 grid channels, 3 scalars
-    POSITION_AWARE_TASK_CNN_GRID = auto()    # dec O(1): 5 grid channels, 3 scalars 
+    POSITION_AWARE_TASK_CNN_GRID = auto()    # dec O(1): 5 grid channels, 3 scalars
     CENTRALIZED_TASK_CNN_GRID = auto()       # cen: T+N+1 channels, N scalars
 
 

@@ -43,6 +43,7 @@ from orchard.following_rates import get_supported_rate_solver_names, is_scipy_ra
 # ---------------------------------------------------------------------------
 _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
+        "cnn_grid": EncoderType.CNN_GRID,
         "blind_task_cnn_grid": EncoderType.BLIND_TASK_CNN_GRID,
         "filtered_task_cnn_grid": EncoderType.FILTERED_TASK_CNN_GRID,
         "position_aware_task_cnn_grid": EncoderType.POSITION_AWARE_TASK_CNN_GRID,
@@ -148,6 +149,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_mode=_enum(sd.get("despawn_mode", "probability"), "despawn_mode"),
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         task_spawn_mode=_enum(tsm_raw, "task_spawn_mode") if tsm_raw else None,
+        old_init_rng=bool(sd.get("old_init_rng", False)),
     )
 
     return EnvConfig(

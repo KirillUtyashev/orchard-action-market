@@ -1,6 +1,7 @@
 """Grid-based encoders for the orchard environment.
 
 Active encoders:
+  - CnnGridEncoder: dec O(1), 4 channels, 1 scalar — mirrors old BasicGridEncoder for comparison
   - CentralizedTaskGridEncoder: centralized, T+N+1 channels, N scalars
   - BlindTaskGridEncoder: dec O(1), 4 channels, 3 scalars
   - FilteredTaskGridEncoder: dec O(1), 6 channels, 3 scalars
@@ -12,6 +13,78 @@ import torch
 
 from orchard.encoding.base import GridEncoder
 from orchard.datatypes import EncoderOutput, Grid, State
+
+
+class CnnGridEncoder(GridEncoder):
+    """Mirrors old BasicGridEncoder: 4 channels, 1 scalar, uses task_positions as entities.
+
+    Grid (4 channels):
+      0 — task positions (1.0 per task, regardless of type)
+      1 — self position (1.0 at own cell)
+      2 — all other agents (1.0 per other agent; may sum >1 if overlapping)
+      3 — actor position (1.0 at actor's cell)
+    Scalar (1): is_self_actor (1.0 if agent_idx == state.actor, else 0.0)
+    """
+
+    def grid_channels(self) -> int:
+        return 4
+
+    def scalar_dim(self) -> int:
+        return 1
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grid = torch.zeros(4, h, w, dtype=torch.float32)
+
+        # Ch0: tasks
+        for tp in state.task_positions:
+            grid[0, tp.row, tp.col] += 1.0
+
+        # Ch1: self
+        r, c = state.agent_positions[agent_idx]
+        grid[1, r, c] = 1.0
+
+        # Ch2: all other agents
+        for i, pos in enumerate(state.agent_positions):
+            if i != agent_idx:
+                grid[2, pos.row, pos.col] += 1.0
+
+        # Ch3: actor
+        actor_pos = state.agent_positions[state.actor]
+        grid[3, actor_pos.row, actor_pos.col] = 1.0
+
+        is_actor = 1.0 if agent_idx == state.actor else 0.0
+        scalar = torch.tensor([is_actor], dtype=torch.float32)
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+    def encode_batch_for_actions(
+        self, state: State, agent_idx: int, after_states: list[State],
+    ) -> EncoderOutput:
+        """Batch encode after_states for action selection. Identical to N individual encode calls."""
+        n = len(after_states)
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grids = torch.zeros(n, 4, h, w, dtype=torch.float32)
+        scalars = torch.zeros(n, 1, dtype=torch.float32)
+
+        for k, s in enumerate(after_states):
+            # Ch0: tasks
+            for tp in s.task_positions:
+                grids[k, 0, tp.row, tp.col] += 1.0
+            # Ch1: self
+            r, c = s.agent_positions[agent_idx]
+            grids[k, 1, r, c] = 1.0
+            # Ch2: all other agents
+            for i, pos in enumerate(s.agent_positions):
+                if i != agent_idx:
+                    grids[k, 2, pos.row, pos.col] += 1.0
+            # Ch3: actor
+            actor_pos = s.agent_positions[s.actor]
+            grids[k, 3, actor_pos.row, actor_pos.col] = 1.0
+            # scalar
+            scalars[k, 0] = 1.0 if agent_idx == s.actor else 0.0
+
+        return EncoderOutput(grid=grids, scalar=scalars)
+
 
 class CentralizedTaskGridEncoder(GridEncoder):
     """Centralized task-specialization encoding.

@@ -9,6 +9,7 @@ CpuValueTrainer and GpuValueTrainer override only:
 
 from __future__ import annotations
 
+import csv as _csv
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 import torch
 
 from orchard.datatypes import EvalConfig, ScheduleConfig, State
-from orchard.enums import Action, Heuristic
+from orchard.enums import Action, Heuristic, PickMode
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.policy import get_all_actions, get_phase2_actions, heuristic_action
@@ -70,6 +71,31 @@ class ValueTrainerBase(TrainerBase):
         self._td_loss_accum: float = 0.0
         self._td_loss_count: int = 0
 
+        # Env trace (opened by setup_aux_loggers, closed by close)
+        self._trace_f: Any = None
+        self._trace_w: Any = None
+
+    # ------------------------------------------------------------------
+    # Auxiliary logging
+    # ------------------------------------------------------------------
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+        fields = (
+            ["step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type"]
+            + [f"reward_{i}" for i in range(self._n_agents)]
+            + ["n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
+               "n_tasks_after", "task_positions_after", "agent_positions"]
+        )
+        self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
+        self._trace_w = _csv.DictWriter(self._trace_f, fieldnames=fields)
+        self._trace_w.writeheader()
+        self._trace_f.flush()
+
+    def close(self) -> None:
+        if self._trace_f is not None:
+            self._trace_f.close()
+            self._trace_f = None
+            self._trace_w = None
+
     # ------------------------------------------------------------------
     # Abstract methods — subclass must implement
     # ------------------------------------------------------------------
@@ -106,7 +132,9 @@ class ValueTrainerBase(TrainerBase):
     def step(self, state: State, t: int) -> State:
         self._timer.step_begin()
 
+        _trace_actor = state.actor
         move_action = self.select_move(state, t)
+        _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
 
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
@@ -115,21 +143,60 @@ class ValueTrainerBase(TrainerBase):
 
         self.train_move(s_moved, on_task, t)
 
+        _trace_pick_happened = False
+        _trace_pick_type = -1
+        _trace_pick_rewards: tuple[float, ...] = tuple(0.0 for _ in range(self._n_agents))
+
         if on_task:
-            pick_action = self.select_pick(s_moved.with_pick_phase(), t)
             self._timer.start(TimerSection.ENV)
-            s_picked, pick_rewards = self._env.resolve_pick(
-                s_moved,
-                pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
-            )
+            if self._env.cfg.pick_mode == PickMode.FORCED:
+                # Forced mode: always pick, no epsilon selection (matches old force_pick behavior)
+                s_picked, pick_rewards = self._env.resolve_pick(s_moved)
+                _trace_pick_type = 0
+            else:
+                pick_action = self.select_pick(s_moved.with_pick_phase(), t)
+                s_picked, pick_rewards = self._env.resolve_pick(
+                    s_moved,
+                    pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
+                )
+                _trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
             self._timer.stop()
             self.train_pick(s_picked, pick_rewards, t)
+            _trace_pick_happened = True
+            _trace_pick_rewards = pick_rewards
         else:
             s_picked = s_moved
 
         self._timer.start(TimerSection.ENV)
-        result = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        _s_pre_spawn = s_picked
+        _s_post_spawn = self._env.spawn_and_despawn(s_picked)
+        result = self._env.advance_actor(_s_post_spawn)
         self._timer.stop()
+
+        if self._trace_w is not None:
+            _fmt = lambda ps: ";".join(f"{p.row},{p.col}" for p in sorted(ps))
+            _tasks_before = set(_s_pre_spawn.task_positions)
+            _tasks_after = set(_s_post_spawn.task_positions)
+            _row: dict = {
+                "step": t,
+                "actor": _trace_actor,
+                "epsilon": round(_trace_eps, 6),
+                "action": move_action.name,
+                "on_task": on_task,
+                "pick_happened": _trace_pick_happened,
+                "pick_task_type": _trace_pick_type,
+                "n_tasks_before_spawn": len(_tasks_before),
+                "tasks_despawned": _fmt(_tasks_before - _tasks_after),
+                "tasks_spawned": _fmt(_tasks_after - _tasks_before),
+                "n_tasks_after": len(_tasks_after),
+                "task_positions_after": _fmt(_tasks_after),
+                "agent_positions": _fmt(result.agent_positions),
+            }
+            for i in range(self._n_agents):
+                _row[f"reward_{i}"] = _trace_pick_rewards[i] if i < len(_trace_pick_rewards) else 0.0
+            self._trace_w.writerow(_row)
+            self._trace_f.flush()
+
         return result
 
     # ------------------------------------------------------------------
