@@ -27,27 +27,44 @@ class StochasticEnv(BaseEnv):
         if self.stoch.old_init_rng:
             # Single combined sample matching old code's RNG pattern:
             # rng.sample(cells, n_agents + n_tasks) in one call, then split.
+            # Only valid for n_task_types=1; for multi-type falls through to
+            # per-type placement below so each type gets its initial tasks.
             n_tasks = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
             chosen = rng.sample(cells, self.cfg.n_agents + n_tasks)
             agent_positions = tuple(chosen[:self.cfg.n_agents])
-            task_cells = chosen[self.cfg.n_agents:]
-            all_task_positions = list(task_cells)
-            all_task_types = [0] * len(task_cells)
+            if self.cfg.n_task_types == 1:
+                task_cells = chosen[self.cfg.n_agents:]
+                all_task_positions = list(task_cells)
+                all_task_types = [0] * len(task_cells)
+            else:
+                # Multi-type: agents placed via old RNG, tasks placed per type
+                # using PER_TYPE_UNIQUE (types may share cells, matching runtime).
+                agent_set = set(agent_positions)
+                all_task_positions = []
+                all_task_types = []
+                for tau in range(self.cfg.n_task_types):
+                    count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
+                    cells_with_tau: set[Grid] = set()
+                    available = [c for c in cells if c not in agent_set and c not in cells_with_tau]
+                    to_spawn = min(count, len(available))
+                    for cell in rng.sample(available, to_spawn):
+                        all_task_positions.append(cell)
+                        all_task_types.append(tau)
         else:
-            # Multi-type: place agents first, then tasks per type.
+            # Multi-type: place agents first, then tasks per type using
+            # PER_TYPE_UNIQUE (types may share cells, matching runtime behavior).
             agent_positions = tuple(rng.sample(cells, self.cfg.n_agents))
-            occupied = set(agent_positions)
-            all_task_positions: list[Grid] = []
-            all_task_types: list[int] = []
+            agent_set = set(agent_positions)
+            all_task_positions = []
+            all_task_types = []
             for tau in range(self.cfg.n_task_types):
                 count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
-                available = [c for c in cells if c not in occupied]
+                cells_with_tau = {p for p, t in zip(all_task_positions, all_task_types) if t == tau}
+                available = [c for c in cells if c not in agent_set and c not in cells_with_tau]
                 to_spawn = min(count, len(available))
-                chosen_cells = rng.sample(available, to_spawn)
-                for cell in chosen_cells:
+                for cell in rng.sample(available, to_spawn):
                     all_task_positions.append(cell)
                     all_task_types.append(tau)
-                    occupied.add(cell)
 
         tp, tt = sort_tasks(all_task_positions, all_task_types)
         return State(
@@ -81,11 +98,7 @@ class StochasticEnv(BaseEnv):
         #   explicit task_spawn_mode overrides; None → auto based on pick_mode
         tsm = self.stoch.task_spawn_mode
         if tsm is None:
-            tsm = (
-                TaskSpawnMode.GLOBAL_UNIQUE
-                if self.cfg.pick_mode == PickMode.FORCED
-                else TaskSpawnMode.PER_TYPE_UNIQUE
-            )
+            tsm = TaskSpawnMode.PER_TYPE_UNIQUE
 
         for tau in range(self.cfg.n_task_types):
             n_tau = sum(1 for t in types if t == tau)

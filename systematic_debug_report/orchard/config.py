@@ -309,6 +309,8 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     if warmup_steps > 0 and algorithm_name != AlgorithmName.ACTOR_CRITIC:
         raise ValueError("train.warmup_steps>0 requires train.algorithm.name=actor_critic.")
 
+    train_only_teammates = bool(d.get("train_only_teammates", False))
+
     return TrainConfig(
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
@@ -326,6 +328,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         heuristic=heuristic,
         stopping=stopping,
         warmup_steps=int(d.get("warmup_steps", 0)),
+        train_only_teammates=train_only_teammates,
     )
 
 

@@ -205,6 +205,7 @@ class TrainConfig:
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0
+    train_only_teammates: bool = False
 
 
 @dataclass(frozen=True)

@@ -115,6 +115,7 @@ class BatchedTrainer:
         grids_next: torch.Tensor,     # (N, C, H, W) — s_{t+1} encodings
         scalars_next: torch.Tensor,   # (N, S)
         alpha: float,
+        agent_mask: torch.Tensor | None = None,  # (N,) float 0/1; None = train all
     ) -> float:
         """One batched TD(λ) backward-view step for all N networks.
 
@@ -142,14 +143,23 @@ class BatchedTrainer:
         self._timer.stop()
 
         # z ← γ_prev · λ · z + ∇V(s)  (in-place: avoids allocating new tensors)
+        # When agent_mask provided: non-teammate traces are zeroed so cross-group
+        # transitions don't contaminate their eligibility traces.
         self._timer.start(TimerSection.TRAIN_TRACE)
+        mask = agent_mask.to(self.device) if agent_mask is not None else None
         for name in self._params:
             gp = self._gamma_prev.view(self._param_view_shapes[name])
-            self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
+            if mask is not None:
+                m = mask.view(self._param_view_shapes[name])
+                self._traces[name].mul_(gp * self._td_lambda * m).add_(grads[name] * m)
+            else:
+                self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
         self._timer.stop()
 
         # δ = r + γ · V(s') − V(s)  (v_next free from the stacked forward above)
         deltas = rewards + discount * v_next - v_s.detach()
+        if mask is not None:
+            deltas = deltas * mask
 
         # θ ← θ + α · δ · z  (in-place: avoids allocating new tensors)
         self._timer.start(TimerSection.TRAIN_PARAM)

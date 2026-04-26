@@ -36,22 +36,39 @@ class TestRewardDistribution:
         assert sum(rewards) == 1.0 # Total team reward is +1.0 for a correct pick
 
     def test_wrong_pick_penalizes_picker_only(self):
-        cfg = _make_pick_cfg(n_task_types=2, r_low=-0.5)
+        # In CHOICE mode: agent explicitly picks a wrong-type task → r_low penalty
+        cfg = _make_pick_cfg(n_task_types=2, r_low=-0.5, pick_mode=PickMode.CHOICE)
         env = StochasticEnv(cfg)
-        
-        # Agent 0 (assigned Type 0) picks a Type 1 task
+
+        # Agent 0 (assigned Type 0) explicitly picks a Type 1 task
         s = State(
             agent_positions=(Grid(1, 1), Grid(0, 0), Grid(0, 1), Grid(0, 2)),
             task_positions=(Grid(1, 1),), actor=0, task_types=(1,)
         )
-        
+
         _, rewards = env.resolve_pick(s, pick_type=1)
-        
+
         assert rewards[0] == -0.5
         assert rewards[1] == 0.0
         assert rewards[2] == 0.0
         assert rewards[3] == 0.0
         assert sum(rewards) == -0.5
+
+    def test_forced_wrong_type_stays(self):
+        # In FORCED mode: agent on a wrong-type task stays (no pick, 0 reward)
+        cfg = _make_pick_cfg(n_task_types=2, r_low=-0.5)
+        env = StochasticEnv(cfg)
+
+        # Agent 0 (assigned Type 0) is on a Type 1 task
+        s = State(
+            agent_positions=(Grid(1, 1), Grid(0, 0), Grid(0, 1), Grid(0, 2)),
+            task_positions=(Grid(1, 1),), actor=0, task_types=(1,)
+        )
+
+        s_after, rewards = env.resolve_pick(s)
+
+        assert len(s_after.task_positions) == 1  # task not picked
+        assert sum(rewards) == 0.0
 
 class TestPickModeForced:
     def test_auto_picks_on_resolve(self):

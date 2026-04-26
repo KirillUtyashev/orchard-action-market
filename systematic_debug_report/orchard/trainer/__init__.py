@@ -99,6 +99,7 @@ def create_trainer(
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
         )
     else:
         from orchard.trainer.cpu import CpuTrainer
@@ -112,4 +113,5 @@ def create_trainer(
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
         )

@@ -50,8 +50,11 @@ class BaseEnv(ABC):
         if self.cfg.pick_mode == PickMode.FORCED:
             if not state.is_agent_on_task(actor):
                 return None
-            idx = state.task_positions.index(pos)
-            return idx, state.task_types[idx]
+            g_actor = set(self.cfg.task_assignments[actor])
+            for i, (tp, tt) in enumerate(zip(state.task_positions, state.task_types)):
+                if tp == pos and tt in g_actor:
+                    return i, tt
+            return None  # only wrong-type tasks at this cell: stay
 
         # CHOICE mode: pick_type=None means STAY (decline)
         if pick_type is None:

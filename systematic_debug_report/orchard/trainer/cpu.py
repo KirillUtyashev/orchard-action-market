@@ -36,13 +36,15 @@ class CpuTrainer(ValueTrainerBase):
     def _td_step(
         self, prev: Any, rewards: tuple[float, ...],
         discount: float, current: Any, t: int,
+        teammate_indices: list[int] | None = None,
     ) -> float:
         s_encs: list[EncoderOutput] = prev
         s_next_encs: list[EncoderOutput] = current
 
         alpha = compute_schedule_value(self._lr_schedule, t, self._total_steps)
+        indices = teammate_indices if teammate_indices is not None else range(self._n_networks)
         total_loss = 0.0
-        for i in range(self._n_networks):
+        for i in indices:
             delta = self._networks_list[i].td_step(
                 s_enc=s_encs[i], reward=rewards[i],
                 discount=discount, s_next_enc=s_next_encs[i],

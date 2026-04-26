@@ -43,6 +43,7 @@ class ValueTrainerBase(TrainerBase):
         total_steps: int,
         heuristic: Heuristic,
         timer: Timer | None = None,
+        train_only_teammates: bool = False,
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -57,6 +58,16 @@ class ValueTrainerBase(TrainerBase):
         self._timer = timer or Timer()
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
+
+        # Precompute per-agent teammate index lists (including self) for train_only_teammates
+        if train_only_teammates and env.cfg.task_assignments is not None:
+            self._teammate_sets: list[list[int]] | None = [
+                [j for j in range(env.cfg.n_agents)
+                 if set(env.cfg.task_assignments[i]) & set(env.cfg.task_assignments[j])]
+                for i in range(env.cfg.n_agents)
+            ]
+        else:
+            self._teammate_sets = None
 
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
@@ -110,8 +121,12 @@ class ValueTrainerBase(TrainerBase):
     def _td_step(
         self, prev: Any, rewards: tuple[float, ...],
         discount: float, current: Any, t: int,
+        teammate_indices: list[int] | None = None,
     ) -> float:
-        """Run TD update. Returns sum of δ² for loss tracking."""
+        """Run TD update. Returns sum of δ² for loss tracking.
+
+        teammate_indices: if set, only train those agent networks; others skipped.
+        """
         ...
 
     @abstractmethod
@@ -135,6 +150,7 @@ class ValueTrainerBase(TrainerBase):
         self._timer.step_begin()
 
         _trace_actor = state.actor
+        teammate_indices = self._teammate_sets[state.actor] if self._teammate_sets is not None else None
         move_action = self.select_move(state, t)
         _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
 
@@ -143,7 +159,7 @@ class ValueTrainerBase(TrainerBase):
         on_task = s_moved.is_agent_on_task(s_moved.actor)
         self._timer.stop()
 
-        self.train_move(s_moved, on_task, t)
+        self.train_move(s_moved, on_task, t, teammate_indices)
 
         _trace_pick_happened = False
         _trace_pick_type = -1
@@ -163,7 +179,7 @@ class ValueTrainerBase(TrainerBase):
                 )
                 _trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
             self._timer.stop()
-            self.train_pick(s_picked, pick_rewards, t)
+            self.train_pick(s_picked, pick_rewards, t, teammate_indices)
             _trace_pick_happened = True
             _trace_pick_rewards = pick_rewards
         else:
@@ -268,7 +284,8 @@ class ValueTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
-    def train_move(self, s_moved: State, on_task: bool, t: int) -> None:
+    def train_move(self, s_moved: State, on_task: bool, t: int,
+                   teammate_indices: list[int] | None = None) -> None:
         """Encode move after-state. TD update: prev_after →[r=0, γ=γ]→ move_after."""
         self._timer.start(TimerSection.ENCODE)
         if self._cached_enc is not None:
@@ -282,15 +299,17 @@ class ValueTrainerBase(TrainerBase):
         if self._prev is not None:
             self._timer.start(TimerSection.TRAIN)
             loss = self._td_step(self._prev, self._zero_rewards, self._gamma,
-                                 self._move, t)
+                                 self._move, t, teammate_indices)
+            n_trained = len(teammate_indices) if teammate_indices is not None else self._n_networks
             self._td_loss_accum += loss
-            self._td_loss_count += self._n_networks
+            self._td_loss_count += n_trained
             self._timer.stop()
 
         if not on_task:
             self._prev = self._move
 
-    def train_pick(self, s_picked: State, rewards: tuple[float, ...], t: int) -> None:
+    def train_pick(self, s_picked: State, rewards: tuple[float, ...], t: int,
+                   teammate_indices: list[int] | None = None) -> None:
         """Encode pick after-state. TD update: move_after →[r=rewards, γ=1]→ pick_after."""
         self._timer.start(TimerSection.ENCODE)
         pick_enc = self._encode_all(s_picked)
@@ -299,9 +318,10 @@ class ValueTrainerBase(TrainerBase):
         train_rewards = (sum(rewards),) if self._centralized else rewards
 
         self._timer.start(TimerSection.TRAIN)
-        loss = self._td_step(self._move, train_rewards, 1.0, pick_enc, t)
+        loss = self._td_step(self._move, train_rewards, 1.0, pick_enc, t, teammate_indices)
+        n_trained = len(teammate_indices) if teammate_indices is not None else self._n_networks
         self._td_loss_accum += loss
-        self._td_loss_count += self._n_networks
+        self._td_loss_count += n_trained
         self._timer.stop()
 
         self._prev = pick_enc
