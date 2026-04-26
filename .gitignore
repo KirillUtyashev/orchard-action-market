@@ -33,3 +33,5 @@ pyrightconfig.json
 
 # Logs
 *.log
+
+.venv/*
