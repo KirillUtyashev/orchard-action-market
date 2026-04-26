@@ -9,7 +9,7 @@ from orchard.seed import set_all_seeds
 
 def _make_spawn_cfg(spawn_prob=1.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0,
                     task_spawn_mode=None, pick_mode=PickMode.FORCED,
-                    spawn_on_agent_cells=False) -> EnvConfig:
+                    spawn_on_agent_cells=False, spawn_at_round_end=False) -> EnvConfig:
     return EnvConfig(
         height=5, width=5, n_agents=1, n_tasks=0, gamma=0.99, r_picker=1.0,
         n_task_types=2, pick_mode=pick_mode, max_tasks_per_type=3,
@@ -18,6 +18,7 @@ def _make_spawn_cfg(spawn_prob=1.0, despawn_mode=DespawnMode.NONE, despawn_prob=
             spawn_prob=spawn_prob, despawn_mode=despawn_mode,
             despawn_prob=despawn_prob, task_spawn_mode=task_spawn_mode,
             spawn_on_agent_cells=spawn_on_agent_cells,
+            spawn_at_round_end=spawn_at_round_end,
         )
     )
 
@@ -165,3 +166,75 @@ class TestSpawnOnAgentCells:
         for row in range(1, 10):
             assert row_hits[row] > 10, \
                 f"Row {row} only got {row_hits[row]} tasks in {n_cycles} cycles — possible bias"
+
+
+class TestSpawnAtRoundEnd:
+    def test_noop_for_non_last_actor(self):
+        """spawn_at_round_end=True: no state change when actor != n_agents-1."""
+        set_all_seeds(0)
+        # 2 agents, despawn_prob=1.0 so any fire clears all tasks
+        cfg = EnvConfig(
+            height=5, width=5, n_agents=2, n_tasks=0, gamma=0.99, r_picker=1.0,
+            n_task_types=1, pick_mode=PickMode.FORCED, max_tasks_per_type=3,
+            task_assignments=((0,), (0,)),
+            stochastic=StochasticConfig(
+                spawn_prob=0.0, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=1.0,
+                spawn_at_round_end=True,
+            ),
+        )
+        env = StochasticEnv(cfg)
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(1, 1)),
+            task_positions=(Grid(2, 2), Grid(3, 3)),
+            actor=0,  # NOT the last actor (n_agents-1 = 1)
+            task_types=(0, 0),
+        )
+        s_after = env.spawn_and_despawn(s)
+        # Tasks must be unchanged since actor=0 != n_agents-1=1
+        assert s_after.task_positions == s.task_positions
+        assert s_after.task_types == s.task_types
+
+    def test_fires_for_last_actor(self):
+        """spawn_at_round_end=True: spawn/despawn fires normally when actor == n_agents-1."""
+        set_all_seeds(0)
+        cfg = EnvConfig(
+            height=5, width=5, n_agents=2, n_tasks=0, gamma=0.99, r_picker=1.0,
+            n_task_types=1, pick_mode=PickMode.FORCED, max_tasks_per_type=3,
+            task_assignments=((0,), (0,)),
+            stochastic=StochasticConfig(
+                spawn_prob=0.0, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=1.0,
+                spawn_at_round_end=True,
+            ),
+        )
+        env = StochasticEnv(cfg)
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(1, 1)),
+            task_positions=(Grid(2, 2), Grid(3, 3)),
+            actor=1,  # last actor (n_agents-1 = 1)
+            task_types=(0, 0),
+        )
+        s_after = env.spawn_and_despawn(s)
+        # despawn_prob=1.0 should clear all tasks
+        assert len(s_after.task_positions) == 0
+
+    def test_default_false_fires_every_step(self):
+        """Default (spawn_at_round_end=False): despawn fires regardless of actor."""
+        set_all_seeds(0)
+        cfg = EnvConfig(
+            height=5, width=5, n_agents=2, n_tasks=0, gamma=0.99, r_picker=1.0,
+            n_task_types=1, pick_mode=PickMode.FORCED, max_tasks_per_type=3,
+            task_assignments=((0,), (0,)),
+            stochastic=StochasticConfig(
+                spawn_prob=0.0, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=1.0,
+                spawn_at_round_end=False,
+            ),
+        )
+        env = StochasticEnv(cfg)
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(1, 1)),
+            task_positions=(Grid(2, 2), Grid(3, 3)),
+            actor=0,  # not the last actor, but should still fire
+            task_types=(0, 0),
+        )
+        s_after = env.spawn_and_despawn(s)
+        assert len(s_after.task_positions) == 0

@@ -80,7 +80,13 @@ class StochasticEnv(BaseEnv):
         )
 
     def spawn_and_despawn(self, state: State) -> State:
-        """Despawn phase then spawn phase."""
+        """Despawn phase then spawn phase.
+
+        If spawn_at_round_end is True, this is a no-op for every actor except
+        the last one (actor == n_agents - 1), so tasks only change once per round.
+        """
+        if self.stoch.spawn_at_round_end and state.actor != self.cfg.n_agents - 1:
+            return state
         return self._spawn_and_despawn_multi(state)
 
     def _spawn_and_despawn_multi(self, state: State) -> State:
