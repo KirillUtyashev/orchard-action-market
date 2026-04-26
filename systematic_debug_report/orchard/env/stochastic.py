@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 from orchard.enums import DespawnMode, PickMode, TaskSpawnMode
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
@@ -92,10 +90,13 @@ class StochasticEnv(BaseEnv):
         types = list(state.task_types)
 
         # --- Despawn phase ---
-        if self.stoch.despawn_mode == DespawnMode.PROBABILITY and positions:
-            keep_mask = np.random.random(len(positions)) >= self.stoch.despawn_prob
-            positions = [p for p, k in zip(positions, keep_mask) if k]
-            types = [t for t, k in zip(types, keep_mask) if k]
+        if self.stoch.despawn_mode == DespawnMode.PROBABILITY:
+            keep = [
+                i for i in range(len(positions))
+                if rng.random() >= self.stoch.despawn_prob
+            ]
+            positions = [positions[i] for i in keep]
+            types = [types[i] for i in keep]
 
         # --- Spawn phase (per type) ---
         # Resolve effective spawn mode:
@@ -129,18 +130,14 @@ class StochasticEnv(BaseEnv):
                     if c not in cells_by_type[tau] and c not in agent_set
                 ]
 
-            if empty_cells:
-                spawn_mask = np.random.random(len(empty_cells)) < self.stoch.spawn_prob
-                n_can_spawn = self.cfg.max_tasks_per_type - n_tau
-                for i in np.where(spawn_mask)[0]:
-                    if n_can_spawn <= 0:
-                        break
-                    cell = empty_cells[i]
+            for cell in empty_cells:
+                if n_tau >= self.cfg.max_tasks_per_type:
+                    break
+                if rng.random() < self.stoch.spawn_prob:
                     positions.append(cell)
                     types.append(tau)
                     cells_by_type[tau].add(cell)
                     n_tau += 1
-                    n_can_spawn -= 1
 
         tp, tt = sort_tasks(positions, types)
         return State(
