@@ -150,6 +150,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         task_spawn_mode=_enum(tsm_raw, "task_spawn_mode") if tsm_raw else None,
         old_init_rng=bool(sd.get("old_init_rng", False)),
+        spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
     )
 
     return EnvConfig(

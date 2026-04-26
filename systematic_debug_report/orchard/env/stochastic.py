@@ -107,6 +107,7 @@ class StochasticEnv(BaseEnv):
 
         # Build shared structures once (avoids O(n_types) redundant passes).
         agent_set = set(state.agent_positions)
+        block_agents = not self.stoch.spawn_on_agent_cells
         n_tau_counts = [0] * self.cfg.n_task_types
         cells_by_type: list[set[Grid]] = [set() for _ in range(self.cfg.n_task_types)]
         for pos, tau in zip(positions, types):
@@ -122,14 +123,15 @@ class StochasticEnv(BaseEnv):
                 task_set = set(positions)
                 empty_cells = [
                     c for c in self._all_cells
-                    if c not in task_set and c not in agent_set
+                    if c not in task_set and (not block_agents or c not in agent_set)
                 ]
             else:
                 empty_cells = [
                     c for c in self._all_cells
-                    if c not in cells_by_type[tau] and c not in agent_set
+                    if c not in cells_by_type[tau] and (not block_agents or c not in agent_set)
                 ]
 
+            rng.shuffle(empty_cells)
             for cell in empty_cells:
                 if n_tau >= self.cfg.max_tasks_per_type:
                     break
