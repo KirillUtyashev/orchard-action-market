@@ -15,6 +15,11 @@ class StochasticEnv(BaseEnv):
         super().__init__(cfg)
         assert cfg.stochastic is not None, "StochasticEnv requires stochastic config"
         self.stoch = cfg.stochastic
+        self._all_cells: list[Grid] = [
+            Grid(r, c)
+            for r in range(cfg.height)
+            for c in range(cfg.width)
+        ]
 
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
@@ -100,35 +105,29 @@ class StochasticEnv(BaseEnv):
         if tsm is None:
             tsm = TaskSpawnMode.PER_TYPE_UNIQUE
 
+        # Build shared structures once (avoids O(n_types) redundant passes).
+        agent_set = set(state.agent_positions)
+        n_tau_counts = [0] * self.cfg.n_task_types
+        cells_by_type: list[set[Grid]] = [set() for _ in range(self.cfg.n_task_types)]
+        for pos, tau in zip(positions, types):
+            n_tau_counts[tau] += 1
+            cells_by_type[tau].add(pos)
+
         for tau in range(self.cfg.n_task_types):
-            n_tau = sum(1 for t in types if t == tau)
+            n_tau = n_tau_counts[tau]
             if n_tau >= self.cfg.max_tasks_per_type:
                 continue
 
             if tsm == TaskSpawnMode.GLOBAL_UNIQUE:
-                # No task of ANY type, no agent
                 task_set = set(positions)
-                agent_set = set(state.agent_positions)
                 empty_cells = [
-                    Grid(r, c)
-                    for r in range(self.cfg.height)
-                    for c in range(self.cfg.width)
-                    if Grid(r, c) not in task_set
-                    and Grid(r, c) not in agent_set
+                    c for c in self._all_cells
+                    if c not in task_set and c not in agent_set
                 ]
             else:
-                # PER_TYPE_UNIQUE: no task of type τ at this cell, no agent
-                cells_with_tau = set(
-                    positions[i] for i in range(len(positions))
-                    if types[i] == tau
-                )
-                agent_set = set(state.agent_positions)
                 empty_cells = [
-                    Grid(r, c)
-                    for r in range(self.cfg.height)
-                    for c in range(self.cfg.width)
-                    if Grid(r, c) not in cells_with_tau
-                    and Grid(r, c) not in agent_set
+                    c for c in self._all_cells
+                    if c not in cells_by_type[tau] and c not in agent_set
                 ]
 
             for cell in empty_cells:
@@ -137,6 +136,7 @@ class StochasticEnv(BaseEnv):
                 if rng.random() < self.stoch.spawn_prob:
                     positions.append(cell)
                     types.append(tau)
+                    cells_by_type[tau].add(cell)
                     n_tau += 1
 
         tp, tt = sort_tasks(positions, types)
