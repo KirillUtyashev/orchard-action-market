@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
 from orchard.enums import AlgorithmName
@@ -24,6 +23,7 @@ def create_trainer(
     """
     gpu_sync = cfg.train.use_gpu and torch.cuda.is_available()
     timer = Timer(enabled=cfg.logging.timing_csv_freq > 0, gpu_sync=gpu_sync)
+    from orchard.batched_training import BatchedTrainer
 
     if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC:
         critics = create_networks(cfg.model, cfg.env, cfg.train)

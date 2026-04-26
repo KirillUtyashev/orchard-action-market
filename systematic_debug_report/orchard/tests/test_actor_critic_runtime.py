@@ -1388,7 +1388,7 @@ class TestActorCriticTrainingLoop:
                 rows = list(csv.DictReader(f))
 
             assert len(rows) == 1
-            assert float(rows[0]["action_ms"]) > 0.0
+            assert float(rows[0]["total_step_ms"]) > 0.0
             assert float(rows[0]["env_ms"]) > 0.0
 
     def test_actor_critic_following_rates_write_snapshots_and_metrics(self):

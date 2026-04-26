@@ -829,7 +829,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
         return row
 
-    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0, env_trace: bool = False) -> None:
         self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
             run_dir / "phase1_policy_probabilities.csv",
