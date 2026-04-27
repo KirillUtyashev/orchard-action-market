@@ -36,12 +36,14 @@ class GpuTrainer(ValueTrainerBase):
         heuristic: Heuristic,
         timer: Timer | None = None,
         train_only_teammates: bool = False,
+        per_type_seeds: tuple[int, ...] | None = None,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
             total_steps=total_steps, heuristic=heuristic, timer=timer,
             train_only_teammates=train_only_teammates,
+            per_type_seeds=per_type_seeds,
         )
         self._bt = bt
 
@@ -63,16 +65,11 @@ class GpuTrainer(ValueTrainerBase):
         grids_next, scalars_next = current
         rewards_t = torch.tensor(rewards, dtype=torch.float32)
 
-        agent_mask: torch.Tensor | None = None
-        if teammate_indices is not None:
-            agent_mask = torch.zeros(self._n_agents, dtype=torch.float32)
-            agent_mask[teammate_indices] = 1.0
-
         return self._bt.td_lambda_step_batched(
             grids_t, scalars_t, rewards_t, discount,
             grids_next, scalars_next,
             alpha=compute_schedule_value(self._lr_schedule, t, self._total_steps),
-            agent_mask=agent_mask,
+            agent_indices=teammate_indices,
         )
 
     # ------------------------------------------------------------------

@@ -115,9 +115,9 @@ class BatchedTrainer:
         grids_next: torch.Tensor,     # (N, C, H, W) — s_{t+1} encodings
         scalars_next: torch.Tensor,   # (N, S)
         alpha: float,
-        agent_mask: torch.Tensor | None = None,  # (N,) float 0/1; None = train all
+        agent_indices: list[int] | None = None,  # None = train all N; else only these K agents
     ) -> float:
-        """One batched TD(λ) backward-view step for all N networks.
+        """One batched TD(λ) backward-view step for all N (or K active) networks.
 
         z ← γ_prev · λ · z + ∇V(s)
         δ = r + γ · V(s') − V(s)
@@ -132,44 +132,62 @@ class BatchedTrainer:
         grids_next = grids_next.to(self.device)
         scalars_next = scalars_next.to(self.device)
 
+        # When only a subset of agents should be trained, gather their data and
+        # run vmap over K agents only. Stranger agents are never touched.
+        if agent_indices is not None:
+            idx = torch.tensor(agent_indices, device=self.device, dtype=torch.long)
+            active_params  = {k: v[idx] for k, v in self._params.items()}
+            active_buffers = {k: v[idx] for k, v in self._buffers.items()}
+            active_gp      = self._gamma_prev[idx]
+            grids_t     = grids_t[idx]
+            scalars_t   = scalars_t[idx]
+            rewards     = rewards[idx]
+            grids_next  = grids_next[idx]
+            scalars_next = scalars_next[idx]
+        else:
+            idx            = None
+            active_params  = self._params
+            active_buffers = self._buffers
+            active_gp      = self._gamma_prev
+
         # Single vmap call: grad of V(s_t) + V(s_t) + V(s_next) via stacked forward.
-        # Stacks s_t and s_next along batch dim so the network processes both in one pass.
         self._timer.start(TimerSection.TRAIN_GRAD)
-        grids_pair   = torch.stack([grids_t,   grids_next],   dim=1)  # (N, 2, C, H, W)
-        scalars_pair = torch.stack([scalars_t, scalars_next], dim=1)  # (N, 2, S)
+        grids_pair   = torch.stack([grids_t,   grids_next],   dim=1)  # (K, 2, C, H, W)
+        scalars_pair = torch.stack([scalars_t, scalars_next], dim=1)  # (K, 2, S)
         grads, (v_s, v_next) = self._vmap_grad_with_vnext(
-            self._params, self._buffers, grids_pair, scalars_pair
+            active_params, active_buffers, grids_pair, scalars_pair
         )
         self._timer.stop()
 
-        # z ← γ_prev · λ · z + ∇V(s)  (in-place: avoids allocating new tensors)
-        # When agent_mask provided: non-teammate traces are zeroed so cross-group
-        # transitions don't contaminate their eligibility traces.
+        # z ← γ_prev · λ · z + ∇V(s)
         self._timer.start(TimerSection.TRAIN_TRACE)
-        mask = agent_mask.to(self.device) if agent_mask is not None else None
-        for name in self._params:
-            gp = self._gamma_prev.view(self._param_view_shapes[name])
-            if mask is not None:
-                m = mask.view(self._param_view_shapes[name])
-                self._traces[name].mul_(gp * self._td_lambda * m).add_(grads[name] * m)
+        for name in active_params:
+            gp = active_gp.view(self._param_view_shapes[name])
+            if idx is not None:
+                trace_k = self._traces[name][idx] * (gp * self._td_lambda) + grads[name]
+                self._traces[name][idx] = trace_k
             else:
                 self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
         self._timer.stop()
 
-        # δ = r + γ · V(s') − V(s)  (v_next free from the stacked forward above)
+        # δ = r + γ · V(s') − V(s)
         deltas = rewards + discount * v_next - v_s.detach()
-        if mask is not None:
-            deltas = deltas * mask
 
-        # θ ← θ + α · δ · z  (in-place: avoids allocating new tensors)
+        # θ ← θ + α · δ · z
         self._timer.start(TimerSection.TRAIN_PARAM)
         with torch.no_grad():
-            for name in self._params:
+            for name in active_params:
                 d = deltas.view(self._param_view_shapes[name])
-                self._params[name].add_(self._traces[name] * d, alpha=alpha)
+                if idx is not None:
+                    self._params[name][idx] = self._params[name][idx] + alpha * self._traces[name][idx] * d
+                else:
+                    self._params[name].add_(self._traces[name] * d, alpha=alpha)
         self._timer.stop()
 
-        self._gamma_prev.fill_(discount)
+        if idx is not None:
+            self._gamma_prev[idx] = discount
+        else:
+            self._gamma_prev.fill_(discount)
         return (deltas ** 2).sum().item()
 
     # ------------------------------------------------------------------

@@ -44,9 +44,21 @@ class State:
     # None when n_task_types == 1 (legacy mode)
     pick_phase: bool = False  # True = agent is on task, pick not yet resolved
 
-    def is_agent_on_task(self, agent_idx: int) -> bool:
-        """Check if agent is on any task cell."""
-        return self.agent_positions[agent_idx] in self.task_positions
+    def is_agent_on_task(self, agent_idx: int, my_types: frozenset[int] | None = None) -> bool:
+        """Check if agent is on a task cell.
+
+        my_types: if provided, only counts tasks whose type is in this set.
+        None means any task type (legacy behaviour).
+        """
+        pos = self.agent_positions[agent_idx]
+        if pos not in self.task_positions:
+            return False
+        if my_types is None:
+            return True
+        for tp, tt in zip(self.task_positions, self.task_types or ()):
+            if tp == pos and tt in my_types:
+                return True
+        return False
 
     def task_type_at(self, pos: Grid) -> int | None:
         """Type of task at pos. None if no task there."""
@@ -130,6 +142,7 @@ class StochasticConfig:
     old_init_rng: bool = False  # if True, init_state uses single combined rng.sample (matches old branch RNG)
     spawn_on_agent_cells: bool = False  # if True, agent positions don't block task spawning (removes inter-team spawn coupling)
     spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
+    per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
 
 
 @dataclass(frozen=True)

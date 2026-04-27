@@ -44,6 +44,7 @@ class ValueTrainerBase(TrainerBase):
         heuristic: Heuristic,
         timer: Timer | None = None,
         train_only_teammates: bool = False,
+        per_type_seeds: tuple[int, ...] | None = None,
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -59,6 +60,18 @@ class ValueTrainerBase(TrainerBase):
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
 
+        # Per-agent epsilon RNGs — one per agent, mapped from per_type_seeds.
+        # Agent i uses the RNG for its first assigned task type.
+        # None → fall back to global rng (existing behaviour).
+        if per_type_seeds is not None and env.cfg.task_assignments is not None:
+            import random as _random
+            self._agent_rngs: list[_random.Random] | None = [
+                _random.Random(per_type_seeds[min(env.cfg.task_assignments[i])])
+                for i in range(env.cfg.n_agents)
+            ]
+        else:
+            self._agent_rngs = None
+
         # Precompute per-agent teammate index lists (including self) for train_only_teammates
         if train_only_teammates and env.cfg.task_assignments is not None:
             self._teammate_sets: list[list[int]] | None = [
@@ -68,6 +81,17 @@ class ValueTrainerBase(TrainerBase):
             ]
         else:
             self._teammate_sets = None
+
+        # Per-team TD trace: one _prev per team so stranger steps don't contaminate
+        # team k's discount chain. Only active when train_only_teammates is set.
+        if self._teammate_sets is not None and env.cfg.task_assignments is not None:
+            self._agent_team_idx: list[int] | None = [
+                min(env.cfg.task_assignments[i]) for i in range(env.cfg.n_agents)
+            ]
+            self._prev_per_team: list[Any] = [None] * env.cfg.n_task_types
+        else:
+            self._agent_team_idx = None
+            self._prev_per_team = None
 
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
@@ -86,6 +110,11 @@ class ValueTrainerBase(TrainerBase):
         self._trace_f: Any = None
         self._trace_w: Any = None
 
+        # Debug fields populated each step for env_trace
+        self._dbg_was_greedy: bool = False
+        self._dbg_best_val: float = 0.0
+        self._dbg_td_delta_sq: float = 0.0
+
     # ------------------------------------------------------------------
     # Auxiliary logging
     # ------------------------------------------------------------------
@@ -96,7 +125,10 @@ class ValueTrainerBase(TrainerBase):
             ["step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type"]
             + [f"reward_{i}" for i in range(self._n_agents)]
             + ["n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
-               "n_tasks_after", "task_positions_after", "agent_positions"]
+               "n_tasks_after", "task_positions_after", "task_types_after",
+               "agent_positions", "agent_positions_indexed",
+               "was_greedy", "best_val", "td_delta_sq",
+               "enc_grid_l2", "enc_scalar"]
         )
         self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
         self._trace_w = _csv.DictWriter(self._trace_f, fieldnames=fields)
@@ -143,6 +175,34 @@ class ValueTrainerBase(TrainerBase):
         already computed inside _compute_team_values, avoiding a redundant encode call.
         """
 
+    def _enc_grid_l2_for_actor(self, actor: int) -> float:
+        """L2 norm of actor's grid encoding from self._move (format-agnostic)."""
+        if self._move is None:
+            return float('nan')
+        m = self._move
+        try:
+            if isinstance(m, list):  # CPU: list[EncoderOutput]
+                enc = m[actor] if actor < len(m) else m[0]
+                return enc.grid.norm().item() if enc.grid is not None else float('nan')
+            else:  # GPU: (grids (N,C,H,W), scalars (N,S))
+                return m[0][actor].norm().item()
+        except Exception:
+            return float('nan')
+
+    def _enc_scalar_for_actor(self, actor: int) -> str:
+        """Scalar encoding for actor from self._move as comma-separated string."""
+        if self._move is None:
+            return ''
+        m = self._move
+        try:
+            if isinstance(m, list):  # CPU
+                enc = m[actor] if actor < len(m) else m[0]
+                return ','.join(f'{x:.6f}' for x in enc.scalar.tolist()) if enc.scalar is not None else ''
+            else:  # GPU
+                return ','.join(f'{x:.6f}' for x in m[1][actor].cpu().tolist())
+        except Exception:
+            return ''
+
     # ------------------------------------------------------------------
     # Turn stepping
     # ------------------------------------------------------------------
@@ -151,12 +211,22 @@ class ValueTrainerBase(TrainerBase):
 
         _trace_actor = state.actor
         teammate_indices = self._teammate_sets[state.actor] if self._teammate_sets is not None else None
+
+        # Fix 3: swap in this team's TD trace so stranger steps don't contaminate it
+        _team_idx = self._agent_team_idx[state.actor] if self._agent_team_idx is not None else None
+        if _team_idx is not None:
+            self._prev = self._prev_per_team[_team_idx]
+
         move_action = self.select_move(state, t)
         _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
 
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
-        on_task = s_moved.is_agent_on_task(s_moved.actor)
+        _my_types = (
+            frozenset(self._env.cfg.task_assignments[s_moved.actor])
+            if self._env.cfg.task_assignments is not None else None
+        )
+        on_task = s_moved.is_agent_on_task(s_moved.actor, _my_types)
         self._timer.stop()
 
         self.train_move(s_moved, on_task, t, teammate_indices)
@@ -185,6 +255,10 @@ class ValueTrainerBase(TrainerBase):
         else:
             s_picked = s_moved
 
+        # Fix 3: save this team's TD trace back before moving on to next actor
+        if _team_idx is not None:
+            self._prev_per_team[_team_idx] = self._prev
+
         self._timer.start(TimerSection.ENV)
         _s_pre_spawn = s_picked
         _s_post_spawn = self._env.spawn_and_despawn(s_picked)
@@ -195,6 +269,10 @@ class ValueTrainerBase(TrainerBase):
             _fmt = lambda ps: ";".join(f"{p.row},{p.col}" for p in sorted(ps))
             _tasks_before = set(_s_pre_spawn.task_positions)
             _tasks_after = set(_s_post_spawn.task_positions)
+            _post_pairs = sorted(
+                zip(_s_post_spawn.task_positions, _s_post_spawn.task_types or []),
+                key=lambda x: (x[0].row, x[0].col, x[1]),
+            )
             _row: dict = {
                 "step": t,
                 "actor": _trace_actor,
@@ -207,8 +285,15 @@ class ValueTrainerBase(TrainerBase):
                 "tasks_despawned": _fmt(_tasks_before - _tasks_after),
                 "tasks_spawned": _fmt(_tasks_after - _tasks_before),
                 "n_tasks_after": len(_tasks_after),
-                "task_positions_after": _fmt(_tasks_after),
+                "task_positions_after": ";".join(f"{p.row},{p.col}" for p, _ in _post_pairs),
+                "task_types_after": ";".join(str(tt) for _, tt in _post_pairs),
                 "agent_positions": _fmt(result.agent_positions),
+                "agent_positions_indexed": ";".join(f"{p.row},{p.col}" for p in result.agent_positions),
+                "was_greedy": self._dbg_was_greedy,
+                "best_val": round(self._dbg_best_val, 8),
+                "td_delta_sq": round(self._dbg_td_delta_sq, 10),
+                "enc_grid_l2": round(self._enc_grid_l2_for_actor(_trace_actor), 8),
+                "enc_scalar": self._enc_scalar_for_actor(_trace_actor),
             }
             for i in range(self._n_agents):
                 _row[f"reward_{i}"] = _trace_pick_rewards[i] if i < len(_trace_pick_rewards) else 0.0
@@ -224,10 +309,15 @@ class ValueTrainerBase(TrainerBase):
         self._timer.start(TimerSection.ACTION)
         eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
         actions = get_all_actions(self._env.cfg)
-        if rng.random() < eps:
-            action = actions[rng.randint(0, len(actions) - 1)]
+        _arng = self._agent_rngs[state.actor] if self._agent_rngs is not None else rng
+        roll = _arng.random()
+        if roll < eps:
+            action = actions[_arng.randint(0, len(actions) - 1)]
+            self._dbg_was_greedy = False
+            self._dbg_best_val = 0.0
         else:
             action = self._greedy_action(state)
+            self._dbg_was_greedy = True
         self._timer.stop()
         return action
 
@@ -235,8 +325,9 @@ class ValueTrainerBase(TrainerBase):
         self._timer.start(TimerSection.ACTION)
         eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
         actions = get_phase2_actions(state, self._env.cfg)
-        if rng.random() < eps:
-            action = actions[rng.randint(0, len(actions) - 1)]
+        _arng = self._agent_rngs[state.actor] if self._agent_rngs is not None else rng
+        if _arng.random() < eps:
+            action = actions[_arng.randint(0, len(actions) - 1)]
         else:
             action = self._greedy_action(state)
         self._timer.stop()
@@ -250,6 +341,10 @@ class ValueTrainerBase(TrainerBase):
         # Build after-states and immediate rewards for each candidate action
         after_states: list[State] = []
         immediate_rewards: list[float] = []
+        _actor_types = (
+            frozenset(self._env.cfg.task_assignments[state.actor])
+            if self._env.cfg.task_assignments is not None else None
+        )
         self._timer.start(TimerSection.ACTION_ENV)
         for a in all_actions:
             if phase2 and a.is_pick():
@@ -259,9 +354,9 @@ class ValueTrainerBase(TrainerBase):
             elif phase2:
                 after_states.append(state)
                 immediate_rewards.append(0.0)
-            else: #
+            else:
                 s = self._env.apply_action(state, a)
-                if s.is_agent_on_task(s.actor):
+                if s.is_agent_on_task(s.actor, _actor_types):
                     after_states.append(s.with_pick_phase())
                 else:
                     after_states.append(s)
@@ -279,6 +374,7 @@ class ValueTrainerBase(TrainerBase):
                 best_idx = k
         if not phase2:
             self._cache_selected_enc(best_idx)
+        self._dbg_best_val = team_values[best_idx] + immediate_rewards[best_idx]
         return all_actions[best_idx]
 
     # ------------------------------------------------------------------
@@ -303,7 +399,10 @@ class ValueTrainerBase(TrainerBase):
             n_trained = len(teammate_indices) if teammate_indices is not None else self._n_networks
             self._td_loss_accum += loss
             self._td_loss_count += n_trained
+            self._dbg_td_delta_sq = loss
             self._timer.stop()
+        else:
+            self._dbg_td_delta_sq = 0.0
 
         if not on_task:
             self._prev = self._move

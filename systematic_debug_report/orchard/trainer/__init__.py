@@ -88,6 +88,7 @@ def create_trainer(
             total = torch.cuda.get_device_properties(0).total_memory / 1024**2
             print(f"  VRAM: {alloc:.0f}MB / {total:.0f}MB ({alloc/total*100:.1f}%)")
 
+        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.gpu import GpuTrainer
         return GpuTrainer(
             network_list=networks,
@@ -100,8 +101,10 @@ def create_trainer(
             heuristic=cfg.train.heuristic,
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
+            per_type_seeds=per_type_seeds,
         )
     else:
+        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.cpu import CpuTrainer
         print(f"CpuTrainer: {len(networks)} networks on CPU")
         return CpuTrainer(
@@ -114,4 +117,5 @@ def create_trainer(
             heuristic=cfg.train.heuristic,
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
+            per_type_seeds=per_type_seeds,
         )
