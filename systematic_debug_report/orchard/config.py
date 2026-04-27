@@ -149,7 +149,6 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_mode=_enum(sd.get("despawn_mode", "probability"), "despawn_mode"),
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         task_spawn_mode=_enum(tsm_raw, "task_spawn_mode") if tsm_raw else None,
-        old_init_rng=bool(sd.get("old_init_rng", False)),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
         per_type_seeds=tuple(int(s) for s in sd["per_type_seeds"]) if sd.get("per_type_seeds") else None,

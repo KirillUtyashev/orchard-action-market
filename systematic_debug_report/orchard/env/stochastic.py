@@ -33,16 +33,8 @@ class StochasticEnv(BaseEnv):
             self._type_rngs: list[_random.Random] | None = [
                 _random.Random(s) for s in cfg.stochastic.per_type_seeds
             ]
-            # Per-type spawn timing: type k spawns when its team's LAST agent acts.
-            # This ensures type-k dynamics match a standalone T=1 run exactly.
-            assert cfg.task_assignments is not None
-            self._per_type_last_agent: list[int] | None = [
-                max(i for i in range(cfg.n_agents) if tau in set(cfg.task_assignments[i]))
-                for tau in range(cfg.n_task_types)
-            ]
         else:
             self._type_rngs = None
-            self._per_type_last_agent = None
 
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
@@ -68,9 +60,6 @@ class StochasticEnv(BaseEnv):
                 ]
                 n_team = len(team_agent_indices)
                 chosen = trng.sample(cells, n_team + n_tasks)
-                print(f"[init_state] tau={tau} team_agents={team_agent_indices} "
-                      f"agent_cells={[(c.row,c.col) for c in chosen[:n_team]]} "
-                      f"task_cells={[(c.row,c.col) for c in chosen[n_team:]]}")
                 for idx, agent_i in enumerate(team_agent_indices):
                     agent_positions_by_idx[agent_i] = chosen[idx]
                 for cell in chosen[n_team:]:
@@ -79,34 +68,8 @@ class StochasticEnv(BaseEnv):
             agent_positions = tuple(
                 agent_positions_by_idx[i] for i in range(self.cfg.n_agents)
             )
-        elif self.stoch.old_init_rng:
-            # Single combined sample matching old code's RNG pattern:
-            # rng.sample(cells, n_agents + n_tasks) in one call, then split.
-            # Only valid for n_task_types=1; for multi-type falls through to
-            # per-type placement below so each type gets its initial tasks.
-            n_tasks = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
-            chosen = rng.sample(cells, self.cfg.n_agents + n_tasks)
-            agent_positions = tuple(chosen[:self.cfg.n_agents])
-            if self.cfg.n_task_types == 1:
-                task_cells = chosen[self.cfg.n_agents:]
-                all_task_positions = list(task_cells)
-                all_task_types = [0] * len(task_cells)
-            else:
-                # Multi-type: agents placed via old RNG, tasks placed per type
-                # using PER_TYPE_UNIQUE (types may share cells, matching runtime).
-                agent_set = set(agent_positions)
-                all_task_positions = []
-                all_task_types = []
-                for tau in range(self.cfg.n_task_types):
-                    count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
-                    cells_with_tau: set[Grid] = set()
-                    available = [c for c in cells if c not in agent_set and c not in cells_with_tau]
-                    to_spawn = min(count, len(available))
-                    for cell in rng.sample(available, to_spawn):
-                        all_task_positions.append(cell)
-                        all_task_types.append(tau)
         else:
-            # Multi-type: place agents first, then tasks per type using
+            # Place agents first, then tasks per type using
             # PER_TYPE_UNIQUE (types may share cells, matching runtime behavior).
             agent_positions = tuple(rng.sample(cells, self.cfg.n_agents))
             agent_set = set(agent_positions)
@@ -132,50 +95,32 @@ class StochasticEnv(BaseEnv):
     def spawn_and_despawn(self, state: State) -> State:
         """Despawn phase then spawn phase.
 
-        If spawn_at_round_end is True with per_type_seeds, each type k spawns
-        only when its team's last agent acts (per _per_type_last_agent). Without
-        per_type_seeds the original behaviour applies: all types spawn once when
-        the global last agent (n_agents-1) acts.
+        If spawn_at_round_end is True, only fires after the last agent in each
+        round (actor == n_agents - 1). Per-type RNGs (if set) guarantee each
+        type's sequence matches a standalone T=1 run regardless of when in the
+        round this fires.
         """
-        if not self.stoch.spawn_at_round_end:
-            return self._spawn_and_despawn_multi(state, active_types=None)
-
-        if self._per_type_last_agent is not None:
-            active_types = [k for k in range(self.cfg.n_task_types)
-                            if self._per_type_last_agent[k] == state.actor]
-            if not active_types:
-                return state
-            return self._spawn_and_despawn_multi(state, active_types=active_types)
-
-        if state.actor != self.cfg.n_agents - 1:
+        if self.stoch.spawn_at_round_end and state.actor != self.cfg.n_agents - 1:
             return state
-        return self._spawn_and_despawn_multi(state, active_types=None)
+        return self._spawn_and_despawn_multi(state)
 
-    def _spawn_and_despawn_multi(self, state: State, active_types: list[int] | None = None) -> State:
-        """Spawn/despawn for n_task_types > 1.
-
-        active_types: if set, only process these type indices (for per-type spawn timing).
-        """
+    def _spawn_and_despawn_multi(self, state: State) -> State:
+        """Spawn/despawn all task types."""
         positions = list(state.task_positions)
         assert state.task_types is not None, "task_types must be set"
         types = list(state.task_types)
-        active_set = set(active_types) if active_types is not None else None
 
-        # --- Despawn phase (per type when using isolated RNGs) ---
+        # --- Despawn phase ---
         if self.stoch.despawn_mode == DespawnMode.PROBABILITY:
             if self._type_rngs is not None:
-                # Draw despawn decision from each task's type RNG so team k's
-                # despawn sequence matches T=1 run k exactly.
                 keep = [
                     i for i in range(len(positions))
-                    if active_set is not None and types[i] not in active_set
-                    or self._type_rngs[types[i]].random() >= self.stoch.despawn_prob
+                    if self._type_rngs[types[i]].random() >= self.stoch.despawn_prob
                 ]
             else:
                 keep = [
                     i for i in range(len(positions))
-                    if active_set is not None and types[i] not in active_set
-                    or rng.random() >= self.stoch.despawn_prob
+                    if rng.random() >= self.stoch.despawn_prob
                 ]
             positions = [positions[i] for i in keep]
             types = [types[i] for i in keep]
@@ -197,8 +142,6 @@ class StochasticEnv(BaseEnv):
             cells_by_type[tau].add(pos)
 
         for tau in range(self.cfg.n_task_types):
-            if active_set is not None and tau not in active_set:
-                continue
             n_tau = n_tau_counts[tau]
             if n_tau >= self.cfg.max_tasks_per_type:
                 continue

@@ -65,8 +65,10 @@ class ValueTrainerBase(TrainerBase):
         # None → fall back to global rng (existing behaviour).
         if per_type_seeds is not None and env.cfg.task_assignments is not None:
             import random as _random
+            assert all(len(env.cfg.task_assignments[i]) == 1 for i in range(env.cfg.n_agents)), \
+                "per_type_seeds requires each agent to have exactly one task type"
             self._agent_rngs: list[_random.Random] | None = [
-                _random.Random(per_type_seeds[min(env.cfg.task_assignments[i])])
+                _random.Random(per_type_seeds[env.cfg.task_assignments[i][0]])
                 for i in range(env.cfg.n_agents)
             ]
         else:
@@ -86,7 +88,7 @@ class ValueTrainerBase(TrainerBase):
         # team k's discount chain. Only active when train_only_teammates is set.
         if self._teammate_sets is not None and env.cfg.task_assignments is not None:
             self._agent_team_idx: list[int] | None = [
-                min(env.cfg.task_assignments[i]) for i in range(env.cfg.n_agents)
+                env.cfg.task_assignments[i][0] for i in range(env.cfg.n_agents)
             ]
             self._prev_per_team: list[Any] = [None] * env.cfg.n_task_types
         else:
@@ -212,7 +214,6 @@ class ValueTrainerBase(TrainerBase):
         _trace_actor = state.actor
         teammate_indices = self._teammate_sets[state.actor] if self._teammate_sets is not None else None
 
-        # Fix 3: swap in this team's TD trace so stranger steps don't contaminate it
         _team_idx = self._agent_team_idx[state.actor] if self._agent_team_idx is not None else None
         if _team_idx is not None:
             self._prev = self._prev_per_team[_team_idx]
@@ -255,7 +256,6 @@ class ValueTrainerBase(TrainerBase):
         else:
             s_picked = s_moved
 
-        # Fix 3: save this team's TD trace back before moving on to next actor
         if _team_idx is not None:
             self._prev_per_team[_team_idx] = self._prev
 

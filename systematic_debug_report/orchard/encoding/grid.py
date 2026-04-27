@@ -288,7 +288,7 @@ class BlindTaskGridEncoder(GridEncoder):
       0 — My Tasks: 1.0 where any task of type τ ∈ G_i exists
       1 — Self Position: 1.0 at agent i's cell
       2 — Teammate Positions: count of teammates at each cell
-      3 — Actor Position: 1.0 at actor's cell
+      3 — Actor Position: 1.0 at actor's cell (0 when a stranger is acting)
     Scalars (3):
       0 — is_self_actor
       1 — is_teammate_actor
@@ -398,7 +398,7 @@ class BlindTaskGridEncoder(GridEncoder):
         # If agent IS the actor, is_teammate_actor = 0 (actor is not its own teammate)
         if agent_idx == state.actor:
             is_teammate_actor = 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
 
         # Ch3: teammate-actor position only (0 when a stranger is acting)
@@ -470,9 +470,10 @@ class BlindTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -510,7 +511,8 @@ class BlindTaskGridEncoder(GridEncoder):
         ch3_visible[state.actor] = True
         grids[ch3_visible, 3, actor_pos.row, actor_pos.col] = 1.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -585,7 +587,8 @@ class BlindTaskGridEncoder(GridEncoder):
         scalars[actor, :, 1] = 0.0
         pick_phase_mask = torch.tensor([s.pick_phase for s in after_states], dtype=torch.bool)
         if pick_phase_mask.any():
-            scalars[:, pick_phase_mask, 2] = 1.0
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
 
         return grids, scalars
 
@@ -731,7 +734,7 @@ class FilteredTaskGridEncoder(GridEncoder):
         # Scalars
         is_actor = 1.0 if agent_idx == state.actor else 0.0
         is_teammate_actor = 1.0 if (state.actor in teammates_of_i and agent_idx != state.actor) else 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
 
         return EncoderOutput(grid=grid, scalar=scalar)
@@ -807,9 +810,10 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -853,7 +857,8 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars[:, 1] = self._teammate_matrix[:, state.actor]
         scalars[state.actor, 1] = 0.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -950,7 +955,8 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars[:] = scalars_base.unsqueeze(1)
         pick_phase_mask = torch.tensor([s_after.pick_phase for s_after in after_states], dtype=torch.bool)
         if pick_phase_mask.any():
-            scalars[:, pick_phase_mask, 2] = 1.0
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
         return grids, scalars
 
 
@@ -1049,7 +1055,7 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         # Scalars
         is_actor = 1.0 if agent_idx == state.actor else 0.0
         is_teammate_actor = 1.0 if (state.actor in teammates_of_i and agent_idx != state.actor) else 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
 
         return EncoderOutput(grid=grid, scalar=scalar)
@@ -1122,9 +1128,10 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -1166,7 +1173,8 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars[:, 1] = self._teammate_matrix[:, state.actor]
         scalars[state.actor, 1] = 0.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -1247,8 +1255,9 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars[actor, :, 0] = 1.0
         scalars[:, :, 1] = actor_is_teammate.unsqueeze(1)
         scalars[actor, :, 1] = 0.0
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[:, k, 2] = 1.0
+        pick_phase_mask = torch.tensor([s_after.pick_phase for s_after in after_states], dtype=torch.bool)
+        if pick_phase_mask.any():
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
 
         return grids, scalars
