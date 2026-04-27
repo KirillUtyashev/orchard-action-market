@@ -37,6 +37,7 @@ class GpuTrainer(ValueTrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         per_type_seeds: tuple[int, ...] | None = None,
+        simulate_stranger_gap: int = 0,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
@@ -44,6 +45,7 @@ class GpuTrainer(ValueTrainerBase):
             total_steps=total_steps, heuristic=heuristic, timer=timer,
             train_only_teammates=train_only_teammates,
             per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=simulate_stranger_gap,
         )
         self._bt = bt
 

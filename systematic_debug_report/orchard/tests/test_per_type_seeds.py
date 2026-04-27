@@ -22,7 +22,8 @@ from orchard.trainer import create_trainer
 # ---------------------------------------------------------------------------
 # Minimal config factory
 # ---------------------------------------------------------------------------
-def _make_cfg(n_task_types: int, per_type_seeds: list[int] | None, base_seed: int = 1234, total_steps: int = 50):
+def _make_cfg(n_task_types: int, per_type_seeds: list[int] | None, base_seed: int = 1234, total_steps: int = 50,
+              pick_mode: str = "forced", simulate_stranger_gap: int = 0):
     n_agents = 2 * n_task_types
     task_assignments = [[k] for k in range(n_task_types) for _ in range(2)]
     raw = {
@@ -35,7 +36,7 @@ def _make_cfg(n_task_types: int, per_type_seeds: list[int] | None, base_seed: in
             "n_task_types": n_task_types,
             "r_low": -1.0,
             "task_assignments": task_assignments,
-            "pick_mode": "forced",
+            "pick_mode": pick_mode,
             "max_tasks_per_type": 9,
             "stochastic": {
                 "spawn_prob": 0.08,
@@ -83,6 +84,7 @@ def _make_cfg(n_task_types: int, per_type_seeds: list[int] | None, base_seed: in
             },
             "warmup_steps": 0,
             "train_only_teammates": True,
+            "simulate_stranger_gap": simulate_stranger_gap,
         },
         "eval": {"eval_steps": 100, "n_test_states": 5, "checkpoint_freq": 0},
         "logging": {
@@ -146,25 +148,27 @@ def _tensor_dict_equal(a: dict, b: dict) -> bool:
 def test_team_equivalence_T1_vs_T2():
     """Team k in T=2 has bitwise identical weights to T=1 run k after N team-steps.
 
-    T=2 has 4 agents so a team acts every other 2 env-steps. To give each team
-    the same number of team-steps as T=1 (50), T=2 must run for 2*50 = 100 total
-    env-steps. T=2 networks 2,3 start from different torch-RNG inits than T=1 run 1;
-    we override them with T=1's init weights so the comparison is fair.
+    T=2 has 4 agents (2 per team) so a team acts every other 2 env-steps.
+    To give each team the same number of team-steps as T=1 (50), T=2 must run
+    for 2*50 = 100 total env-steps.
+
+    T=1 uses simulate_stranger_gap=2 (= n_total_T2 - n_own_team = 4-2) so the
+    gamma accumulation between rounds matches T=2 exactly.
     """
     seeds = [1000, 1001]
     base_steps = 50
+    # In T=2: 4 total agents, 2 per team → 2 stranger agents per team
+    n_strangers = 2
 
-    # Run T=1 twice, each with its own per_type_seeds
-    cfg_t1_run0 = _make_cfg(n_task_types=1, per_type_seeds=[seeds[0]], total_steps=base_steps)
-    cfg_t1_run1 = _make_cfg(n_task_types=1, per_type_seeds=[seeds[1]], total_steps=base_steps)
+    # Run T=1 twice with simulate_stranger_gap so gamma accumulation matches T=2
+    cfg_t1_run0 = _make_cfg(n_task_types=1, per_type_seeds=[seeds[0]], total_steps=base_steps,
+                            simulate_stranger_gap=n_strangers)
+    cfg_t1_run1 = _make_cfg(n_task_types=1, per_type_seeds=[seeds[1]], total_steps=base_steps,
+                            simulate_stranger_gap=n_strangers)
     w_t1_run0 = _run(cfg_t1_run0)  # 2 networks (agents 0,1)
     w_t1_run1 = _run(cfg_t1_run1)  # 2 networks
 
     # Run T=2 for 2*base_steps so each team gets base_steps team-steps.
-    # (In T=2 with 4 agents, a given team acts every other 2 env-steps.)
-    # Networks 0,1 in T=2 share init with T=1 run 0 (same torch seed, created first).
-    # Networks 2,3 differ because torch RNG has advanced; override with T=1 run 0's init
-    # (valid since both T=1 runs use the same base_seed → identical initial weights).
     cfg_t2 = _make_cfg(n_task_types=2, per_type_seeds=seeds, total_steps=2 * base_steps)
     init_t1 = _get_init_weights(cfg_t1_run0)  # same as run1 init (both use base_seed=1234)
     w_t2 = _run(cfg_t2, init_weights=init_t1 + init_t1)  # all 4 networks start from same init
@@ -196,15 +200,16 @@ def _run_equivalence_test(use_gpu: bool, pick_mode: PickMode):
     """Helper to run the equivalence test with specific GPU and PickMode settings."""
     seeds = [1000, 1001]
     base_steps = 50
+    # In T=2: 4 total agents, 2 per team → 2 stranger agents
+    n_strangers = 2
 
-    def _tweak(c):
-        """Safely modify the frozen dataclasses returned by _make_cfg."""
+    def _tweak(c, sim_gap: int = 0):
         new_env = dataclasses.replace(c.env, pick_mode=pick_mode)
-        new_train = dataclasses.replace(c.train, use_gpu=use_gpu)
+        new_train = dataclasses.replace(c.train, use_gpu=use_gpu, simulate_stranger_gap=sim_gap)
         return dataclasses.replace(c, env=new_env, train=new_train)
 
-    cfg_t1_run0 = _tweak(_make_cfg(n_task_types=1, per_type_seeds=[seeds[0]], total_steps=base_steps))
-    cfg_t1_run1 = _tweak(_make_cfg(n_task_types=1, per_type_seeds=[seeds[1]], total_steps=base_steps))
+    cfg_t1_run0 = _tweak(_make_cfg(n_task_types=1, per_type_seeds=[seeds[0]], total_steps=base_steps), n_strangers)
+    cfg_t1_run1 = _tweak(_make_cfg(n_task_types=1, per_type_seeds=[seeds[1]], total_steps=base_steps), n_strangers)
     w_t1_run0 = _run(cfg_t1_run0)
     w_t1_run1 = _run(cfg_t1_run1)
 

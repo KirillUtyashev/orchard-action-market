@@ -158,6 +158,7 @@ class EnvConfig:
     pick_mode: PickMode = PickMode.FORCED
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
+    allow_cross_type_picks: bool = True
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,11 @@ class TrainConfig:
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0
     train_only_teammates: bool = False
+    simulate_stranger_gap: int = 0
+    # simulate_stranger_gap: for T=1 ≡ T=M verification with new dec gamma accumulation.
+    # Set to n_total_agents - n_own_team_agents so T=1 artificially accumulates
+    # the same gamma that would build up from stranger move-steps in T=M.
+    # Only meaningful when train_only_teammates=True. See ValueTrainerBase.
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ CpuValueTrainer and GpuValueTrainer override only:
 from __future__ import annotations
 
 import csv as _csv
+import dataclasses
 from abc import abstractmethod
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ class ValueTrainerBase(TrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         per_type_seeds: tuple[int, ...] | None = None,
+        simulate_stranger_gap: int = 0,
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -87,13 +89,46 @@ class ValueTrainerBase(TrainerBase):
         # Per-team TD trace: one _prev per team so stranger steps don't contaminate
         # team k's discount chain. Only active when train_only_teammates is set.
         if self._teammate_sets is not None and env.cfg.task_assignments is not None:
+            assert all(
+                len(env.cfg.task_assignments[i]) == 1 for i in range(env.cfg.n_agents)
+            ), "gamma_accum requires each agent to have exactly one task type"
             self._agent_team_idx: list[int] | None = [
                 env.cfg.task_assignments[i][0] for i in range(env.cfg.n_agents)
             ]
             self._prev_per_team: list[Any] = [None] * env.cfg.n_task_types
+            # Per-team accumulated discount factor.
+            # When team k's agent acts, eff_gamma = _gamma_accum[k] * gamma.
+            # After use, resets to gamma^simulate_stranger_gap (1.0 in T=M;
+            # gamma^n_strangers in T=1 to simulate stranger steps that don't exist).
+            # Every time any OTHER team's agent takes a move step,
+            # _gamma_accum[k] *= gamma for all k not in that team.
+            # This makes dec V_i = E[sum_t gamma^t r_i(t)] over ALL world steps,
+            # so sum_i V_i_dec ≈ V_cen.
+            #
+            # Assumption for T=1 ≡ T=M: simulate_stranger_gap must equal
+            # n_total_agents - n_own_team_agents (i.e. the number of stranger
+            # agent move-steps that occur between team k's consecutive turns in T=M).
+            # Pick steps use gamma=1 so they do not contribute to accumulation.
+            self._gamma_accum_per_team: list[float] | None = [1.0] * env.cfg.n_task_types
+            self._simulate_stranger_gap: int = simulate_stranger_gap
+            # How many agents belong to each team — used to detect round boundaries.
+            self._n_team_agents: list[int] = [
+                sum(1 for i in range(env.cfg.n_agents) if self._agent_team_idx[i] == k)
+                for k in range(env.cfg.n_task_types)
+            ]
+            # Steps taken by team k since its last round boundary (gap application).
+            # Assumption: teammates have CONSECUTIVE agent indices in round-robin order
+            # (i.e. task_assignments groups same-team agents together, e.g. [[0,0],[1,1]]).
+            # The gap fires after every n_team_agents consecutive team-k steps.
+            # If teammates were interleaved with strangers this count would be wrong.
+            self._team_step_count: list[int] = [0] * env.cfg.n_task_types
         else:
             self._agent_team_idx = None
             self._prev_per_team = None
+            self._gamma_accum_per_team = None
+            self._simulate_stranger_gap = 0
+            self._n_team_agents = None
+            self._team_step_count = None
 
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
@@ -116,6 +151,7 @@ class ValueTrainerBase(TrainerBase):
         self._dbg_was_greedy: bool = False
         self._dbg_best_val: float = 0.0
         self._dbg_td_delta_sq: float = 0.0
+        self._dbg_enc_was_cached: bool = False  # True = move enc from _cached_enc, False = fresh encode_all
 
     # ------------------------------------------------------------------
     # Auxiliary logging
@@ -130,7 +166,8 @@ class ValueTrainerBase(TrainerBase):
                "n_tasks_after", "task_positions_after", "task_types_after",
                "agent_positions", "agent_positions_indexed",
                "was_greedy", "best_val", "td_delta_sq",
-               "enc_grid_l2", "enc_scalar"]
+               "enc_grid_l2", "enc_scalar",
+               "enc_ch_l2", "enc_was_cached"]
         )
         self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
         self._trace_w = _csv.DictWriter(self._trace_f, fieldnames=fields)
@@ -191,6 +228,19 @@ class ValueTrainerBase(TrainerBase):
         except Exception:
             return float('nan')
 
+    def _enc_grid_per_ch_l2_for_actor(self, actor: int) -> str:
+        """Per-channel L2 norms for actor's grid, comma-separated."""
+        if self._move is None:
+            return ''
+        m = self._move
+        try:
+            g = m[actor].grid if isinstance(m, list) else m[0][actor]
+            if g is None:
+                return ''
+            return ','.join(f'{g[c].norm().item():.6f}' for c in range(g.shape[0]))
+        except Exception:
+            return ''
+
     def _enc_scalar_for_actor(self, actor: int) -> str:
         """Scalar encoding for actor from self._move as comma-separated string."""
         if self._move is None:
@@ -217,6 +267,25 @@ class ValueTrainerBase(TrainerBase):
         _team_idx = self._agent_team_idx[state.actor] if self._agent_team_idx is not None else None
         if _team_idx is not None:
             self._prev = self._prev_per_team[_team_idx]
+            # Compute effective gamma: accumulated stranger discount * own move step.
+            _eff_gamma = self._gamma_accum_per_team[_team_idx] * self._gamma
+            # Reset accumulator. The gap is only applied at the END of the team's
+            # round (after all n_team_agents have acted consecutively). Mid-round
+            # resets to 1.0 because no strangers acted between teammates.
+            self._team_step_count[_team_idx] += 1
+            if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
+                # End of team's round: load simulated stranger gap for T=1 testing,
+                # or 1.0 in T=M (strangers accumulate naturally via the loop below).
+                self._gamma_accum_per_team[_team_idx] = (
+                    self._gamma ** self._simulate_stranger_gap
+                    if self._simulate_stranger_gap > 0 else 1.0
+                )
+                self._team_step_count[_team_idx] = 0
+            else:
+                # Mid-round: teammates are about to act — no strangers in between.
+                self._gamma_accum_per_team[_team_idx] = 1.0
+        else:
+            _eff_gamma = self._gamma
 
         move_action = self.select_move(state, t)
         _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
@@ -230,7 +299,7 @@ class ValueTrainerBase(TrainerBase):
         on_task = s_moved.is_agent_on_task(s_moved.actor, _my_types)
         self._timer.stop()
 
-        self.train_move(s_moved, on_task, t, teammate_indices)
+        self.train_move(s_moved, on_task, t, teammate_indices, discount=_eff_gamma)
 
         _trace_pick_happened = False
         _trace_pick_type = -1
@@ -258,6 +327,12 @@ class ValueTrainerBase(TrainerBase):
 
         if _team_idx is not None:
             self._prev_per_team[_team_idx] = self._prev
+            # One move step just happened for team _team_idx.
+            # All other teams accumulate gamma for this step — their next TD
+            # update will account for this stranger step in the discount chain.
+            for _k in range(len(self._gamma_accum_per_team)):
+                if _k != _team_idx:
+                    self._gamma_accum_per_team[_k] *= self._gamma
 
         self._timer.start(TimerSection.ENV)
         _s_pre_spawn = s_picked
@@ -294,6 +369,8 @@ class ValueTrainerBase(TrainerBase):
                 "td_delta_sq": round(self._dbg_td_delta_sq, 10),
                 "enc_grid_l2": round(self._enc_grid_l2_for_actor(_trace_actor), 8),
                 "enc_scalar": self._enc_scalar_for_actor(_trace_actor),
+                "enc_ch_l2": self._enc_grid_per_ch_l2_for_actor(_trace_actor),
+                "enc_was_cached": self._dbg_enc_was_cached,
             }
             for i in range(self._n_agents):
                 _row[f"reward_{i}"] = _trace_pick_rewards[i] if i < len(_trace_pick_rewards) else 0.0
@@ -352,7 +429,11 @@ class ValueTrainerBase(TrainerBase):
                 after_states.append(s_after)
                 immediate_rewards.append(sum(rewards))
             elif phase2:
-                after_states.append(state)
+                # STAY exits pick phase: after-state has pick_phase=False.
+                # All pick phase actions (pick or stay) return to move phase next.
+                # Using pick_phase=True here would make Q(STAY) != Q(pick(stranger))
+                # under blind encoding, breaking T=1 ≡ T=M for choice pick.
+                after_states.append(dataclasses.replace(state, pick_phase=False))
                 immediate_rewards.append(0.0)
             else:
                 s = self._env.apply_action(state, a)
@@ -381,20 +462,28 @@ class ValueTrainerBase(TrainerBase):
     # Training
     # ------------------------------------------------------------------
     def train_move(self, s_moved: State, on_task: bool, t: int,
-                   teammate_indices: list[int] | None = None) -> None:
-        """Encode move after-state. TD update: prev_after →[r=0, γ=γ]→ move_after."""
+                   teammate_indices: list[int] | None = None,
+                   discount: float | None = None) -> None:
+        """Encode move after-state. TD update: prev_after →[r=0, γ=eff_γ]→ move_after.
+
+        discount: effective gamma for this step, accounting for accumulated stranger
+        discount from _gamma_accum_per_team. Defaults to self._gamma if not provided.
+        """
+        _gamma = discount if discount is not None else self._gamma
         self._timer.start(TimerSection.ENCODE)
         if self._cached_enc is not None:
             self._move = self._cached_enc
             self._cached_enc = None
+            self._dbg_enc_was_cached = True
         else:
             enc_state = s_moved.with_pick_phase() if on_task else s_moved
             self._move = self._encode_all(enc_state)
+            self._dbg_enc_was_cached = False
         self._timer.stop()
 
         if self._prev is not None:
             self._timer.start(TimerSection.TRAIN)
-            loss = self._td_step(self._prev, self._zero_rewards, self._gamma,
+            loss = self._td_step(self._prev, self._zero_rewards, _gamma,
                                  self._move, t, teammate_indices)
             n_trained = len(teammate_indices) if teammate_indices is not None else self._n_networks
             self._td_loss_accum += loss

@@ -167,6 +167,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         pick_mode=pick_mode,
         max_tasks_per_type=int(d.get("max_tasks_per_type", 3)),
         stochastic=stochastic_cfg,
+        allow_cross_type_picks=bool(d.get("allow_cross_type_picks", True)),
     )
 
 
@@ -312,6 +313,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         raise ValueError("train.warmup_steps>0 requires train.algorithm.name=actor_critic.")
 
     train_only_teammates = bool(d.get("train_only_teammates", False))
+    simulate_stranger_gap = int(d.get("simulate_stranger_gap", 0))
 
     return TrainConfig(
         total_steps=int(d["total_steps"]),
@@ -331,6 +333,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         stopping=stopping,
         warmup_steps=int(d.get("warmup_steps", 0)),
         train_only_teammates=train_only_teammates,
+        simulate_stranger_gap=simulate_stranger_gap,
     )
 
 
