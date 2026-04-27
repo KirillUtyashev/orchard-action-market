@@ -6,7 +6,7 @@ import torch
 
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
-from orchard.enums import AlgorithmName
+from orchard.enums import AlgorithmName, PickMode
 from orchard.model import create_actor_networks, create_networks
 from orchard.trainer.base import TrainerBase
 from orchard.trainer.timer import Timer
@@ -34,6 +34,10 @@ def create_trainer(
             for actor in actors:
                 actor.to(device)
             bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
+            actor_bt = None
+            if cfg.env.pick_mode == PickMode.FORCED:
+                from orchard.batched_actor_training import BatchedActorTrainer
+                actor_bt = BatchedActorTrainer(actors, device=device)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
             if device == "cuda":
                 alloc = torch.cuda.memory_allocated() / 1024**2
@@ -54,10 +58,15 @@ def create_trainer(
                 following_rates_cfg=cfg.train.following_rates,
                 influencer_cfg=cfg.train.influencer,
                 comm_only_teammates=cfg.train.comm_only_teammates,
+                actor_bt=actor_bt,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
+        actor_bt = None
+        if cfg.env.pick_mode == PickMode.FORCED:
+            from orchard.batched_actor_training import BatchedActorTrainer
+            actor_bt = BatchedActorTrainer(actors, device="cpu")
         print(f"ActorCriticCpuTrainer: {len(critics)} critics on CPU")
         return ActorCriticCpuTrainer(
             critic_networks=critics,
@@ -72,6 +81,7 @@ def create_trainer(
             following_rates_cfg=cfg.train.following_rates,
             influencer_cfg=cfg.train.influencer,
             comm_only_teammates=cfg.train.comm_only_teammates,
+            actor_bt=actor_bt,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
         )

@@ -146,17 +146,23 @@ def _run_actor_critic_case(
     return _latest_run_dir(output_dir)
 
 
-def _make_actor_critic_trainer(pick_mode: PickMode):
+def _make_actor_critic_trainer(
+    pick_mode: PickMode,
+    *,
+    n_task_types: int = 1,
+    task_assignments: tuple[tuple[int, ...], ...] | None = None,
+):
+    assignments = task_assignments or ((0,), (0,))
     env_cfg = EnvConfig(
         height=3,
         width=3,
-        n_agents=2,
+        n_agents=len(assignments),
         n_tasks=1,
         gamma=0.99,
         r_picker=1.0,
-        n_task_types=1,
+        n_task_types=n_task_types,
         r_low=0.0,
-        task_assignments=((0,), (0,)),
+        task_assignments=assignments,
         pick_mode=pick_mode,
         max_tasks_per_type=1,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
@@ -1346,6 +1352,109 @@ class TestActorCriticTrainingLoop:
         assert calls[1]["discount"] == pytest.approx(1.0)
         assert calls[1]["current"].pick_phase is False
         assert trainer._critic_prev_after.pick_phase is False
+
+    def test_forced_mode_defers_actor_updates_until_round_robin_wrap(self):
+        _, trainer = _make_actor_critic_trainer(PickMode.FORCED)
+        _install_identity_critic_spy(trainer)
+        _install_scripted_actions(trainer, move_action=Action.STAY)
+
+        assert trainer._actor_bt is not None
+        train_alphas: list[float] = []
+        original_train_batch_batched = trainer._actor_bt.train_batch_batched
+
+        def _spy_train_batch_batched(self, alpha: float, _orig=original_train_batch_batched):
+            train_alphas.append(float(alpha))
+            return _orig(alpha)
+
+        trainer._actor_bt.train_batch_batched = MethodType(
+            _spy_train_batch_batched,
+            trainer._actor_bt,
+        )
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=0,
+            task_types=(),
+        )
+
+        next_state = trainer.step(state, 0)
+        assert next_state.actor == 1
+        assert train_alphas == []
+        assert [len(actor_net.batch_states) for actor_net in trainer.actor_networks] == [1, 0]
+
+        next_state = trainer.step(next_state, 1)
+        assert next_state.actor == 0
+        assert len(train_alphas) == 1
+        assert all(len(actor_net.batch_states) == 0 for actor_net in trainer.actor_networks)
+
+    def test_forced_mode_flushes_partial_actor_cycle(self):
+        _, trainer = _make_actor_critic_trainer(PickMode.FORCED)
+        _install_identity_critic_spy(trainer)
+        _install_scripted_actions(trainer, move_action=Action.STAY)
+
+        assert trainer._actor_bt is not None
+        train_alphas: list[float] = []
+        original_train_batch_batched = trainer._actor_bt.train_batch_batched
+
+        def _spy_train_batch_batched(self, alpha: float, _orig=original_train_batch_batched):
+            train_alphas.append(float(alpha))
+            return _orig(alpha)
+
+        trainer._actor_bt.train_batch_batched = MethodType(
+            _spy_train_batch_batched,
+            trainer._actor_bt,
+        )
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=0,
+            task_types=(),
+        )
+
+        trainer.step(state, 0)
+        trainer.flush_pending_updates()
+
+        assert len(train_alphas) == 1
+        assert all(len(actor_net.batch_states) == 0 for actor_net in trainer.actor_networks)
+
+    @pytest.mark.parametrize("pick_mode", [PickMode.FORCED, PickMode.CHOICE])
+    def test_wrong_type_task_does_not_enter_pick_phase(self, pick_mode: PickMode):
+        env, trainer = _make_actor_critic_trainer(
+            pick_mode,
+            n_task_types=2,
+            task_assignments=((0,), (1,)),
+        )
+        spy = _install_identity_critic_spy(trainer)
+        _install_scripted_actions(trainer, move_action=Action.RIGHT)
+
+        sentinel_after = State(
+            agent_positions=(Grid(2, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=1,
+            task_types=(),
+        )
+        trainer._critic_prev_after = sentinel_after
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(Grid(0, 1),),
+            actor=0,
+            task_types=(1,),
+        )
+
+        next_state = trainer.step(state, 0)
+
+        calls = spy["td_calls"]
+        assert len(calls) == 1
+        assert calls[0]["prev"] == sentinel_after
+        assert calls[0]["rewards"] == (0.0, 0.0)
+        assert calls[0]["discount"] == pytest.approx(env.cfg.gamma)
+        assert calls[0]["current"].pick_phase is False
+        assert calls[0]["current"].task_positions == (Grid(0, 1),)
+        assert trainer._critic_prev_after.pick_phase is False
+        assert next_state.task_positions == (Grid(0, 1),)
 
     @pytest.mark.parametrize("pick_mode", ["forced", "choice"])
     def test_actor_critic_end_to_end_writes_runtime_artifacts(self, pick_mode: str):

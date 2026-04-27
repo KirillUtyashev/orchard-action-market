@@ -21,6 +21,7 @@ from orchard.actor_critic import (
     policy_index_to_action,
     sample_phase1_policy_eval_states,
 )
+from orchard.batched_actor_training import BatchedActorTrainer
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import (
     EncoderOutput,
@@ -95,6 +96,7 @@ class ActorCriticTrainerBase(TrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         comm_only_teammates: bool = False,
+        actor_bt: BatchedActorTrainer | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -108,6 +110,9 @@ class ActorCriticTrainerBase(TrainerBase):
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
         self._warmup_steps = max(0, int(warmup_steps))
+        self._defer_actor_updates = env.cfg.pick_mode == PickMode.FORCED
+        self._actor_bt = actor_bt
+        self._deferred_actor_t: int | None = None
         self._timer = timer or Timer()
         self._n_agents = env.cfg.n_agents
         self._decision_count = 0
@@ -220,6 +225,12 @@ class ActorCriticTrainerBase(TrainerBase):
         mask[actor_id] = 1.0
         return mask
 
+    def _actor_task_types(self, actor_id: int) -> frozenset[int] | None:
+        assignments = self._env.cfg.task_assignments
+        if assignments is None:
+            return None
+        return frozenset(assignments[actor_id])
+
     # ------------------------------------------------------------------
     # Abstract critic hooks
     # ------------------------------------------------------------------
@@ -269,6 +280,28 @@ class ActorCriticTrainerBase(TrainerBase):
         self._entropy_accum += float(actor_metrics["entropy_mean"]) * sample_count
         self._entropy_count += sample_count
 
+    def _train_actor_batch(self, actor_net: PolicyNetwork) -> None:
+        actor_metrics = actor_net.train_batch()
+        self._accumulate_actor_metrics(actor_metrics)
+
+    def _flush_deferred_actor_updates(self, t: int | None = None) -> None:
+        if not self._defer_actor_updates:
+            return
+        actor_t = t if t is not None else self._deferred_actor_t
+        if actor_t is None:
+            return
+        self._timer.start(TimerSection.TRAIN)
+        if self._actor_bt is not None:
+            actor_lr = compute_schedule_value(self._actor_lr_schedule, actor_t, self._total_steps)
+            actor_metrics = self._actor_bt.train_batch_batched(alpha=actor_lr)
+            self._accumulate_actor_metrics(actor_metrics)
+        else:
+            for actor_net in self._actor_networks_list:
+                if actor_net.batch_states:
+                    self._train_actor_batch(actor_net)
+        self._deferred_actor_t = None
+        self._timer.stop()
+
     def _handle_actor_experience(
         self,
         actor_net: PolicyNetwork,
@@ -284,12 +317,20 @@ class ActorCriticTrainerBase(TrainerBase):
         actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
         actor_net.set_lr(actor_lr)
         actor_net.add_experience(actor_state, legal_mask, action, advantage)
+        if self._defer_actor_updates:
+            self._deferred_actor_t = t
+            self._timer.stop()
+            return
         actor_metrics = actor_net.train_batch()
         self._timer.stop()
         self._accumulate_actor_metrics(actor_metrics)
 
     def _after_step(self, next_state: State, t: int) -> None:
-        del next_state, t
+        if self._defer_actor_updates and next_state.actor == 0:
+            self._flush_deferred_actor_updates(t)
+
+    def flush_pending_updates(self) -> None:
+        self._flush_deferred_actor_updates()
 
     def _serialize_pending_actor_batches(self) -> list[dict[str, object]]:
         serialized: list[dict[str, object]] = []
@@ -352,7 +393,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
         actor = state.actor
-        on_task = s_moved.is_agent_on_task(actor)
+        on_task = s_moved.is_agent_on_task(actor, self._actor_task_types(actor))
         self._timer.stop()
 
         if self._env.cfg.pick_mode == PickMode.CHOICE and on_task:
@@ -546,7 +587,10 @@ class ActorCriticTrainerBase(TrainerBase):
             return after_state, rewards
 
         s_moved = self._env.apply_action(state, action)
-        if s_moved.is_agent_on_task(s_moved.actor):
+        if s_moved.is_agent_on_task(
+            s_moved.actor,
+            self._actor_task_types(s_moved.actor),
+        ):
             return s_moved.with_pick_phase(), self._zero_rewards
         return s_moved, self._zero_rewards
 
@@ -992,6 +1036,8 @@ class ActorCriticTrainerBase(TrainerBase):
             net.load_state_dict(sd, strict=True)
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
+        if self._actor_bt is not None:
+            self._actor_bt.sync_from_networks()
         self._restore_pending_actor_batches(None)
 
         if self._following_states and ckpt.get("following_rates"):
@@ -1031,6 +1077,8 @@ class ActorCriticTrainerBase(TrainerBase):
             raise ValueError(f"No actor weights found in checkpoint. Keys: {list(ckpt.keys())}")
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
+        if self._actor_bt is not None:
+            self._actor_bt.sync_from_networks()
         return ckpt.get("step")
     # ------------------------------------------------------------------
     # Public properties
@@ -1099,6 +1147,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
         comm_only_teammates: bool = False,
+        actor_bt: BatchedActorTrainer | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -1115,6 +1164,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             following_rates_cfg=following_rates_cfg,
             influencer_cfg=influencer_cfg,
             comm_only_teammates=comm_only_teammates,
+            actor_bt=actor_bt,
             timer=timer,
             warmup_steps=warmup_steps,
         )
