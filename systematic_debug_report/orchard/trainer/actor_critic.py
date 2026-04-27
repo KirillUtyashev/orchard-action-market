@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+import csv as _csv
 import json
 from pathlib import Path
 from typing import Any
@@ -196,6 +197,11 @@ class ActorCriticTrainerBase(TrainerBase):
         self._alpha_state_log_freq: int = 0
         self._phase1_eval_states: list[State] | None = None
         self._phase2_eval_states: list[tuple[str, State]] | None = None
+        self._trace_f: Any = None
+        self._trace_w: Any = None
+        self._dbg_was_greedy: bool = False
+        self._dbg_best_val: float = 0.0
+        self._dbg_td_delta_sq: float = 0.0
 
     def _build_teammate_matrix(self) -> tuple[tuple[bool, ...], ...]:
         assignments = self._env.cfg.task_assignments or ()
@@ -388,6 +394,8 @@ class ActorCriticTrainerBase(TrainerBase):
 
         self._timer.start(TimerSection.ACTION)
         move_action, move_actor_state, move_probs, move_mask = self._sample_action(state)
+        move_probs_np = move_probs.detach().cpu().numpy() if isinstance(move_probs, torch.Tensor) else move_probs
+        self._dbg_was_greedy = int(move_action.value) == int(np.argmax(move_probs_np))
         self._timer.stop()
 
         self._timer.start(TimerSection.ENV)
@@ -395,6 +403,10 @@ class ActorCriticTrainerBase(TrainerBase):
         actor = state.actor
         on_task = s_moved.is_agent_on_task(actor, self._actor_task_types(actor))
         self._timer.stop()
+
+        trace_pick_happened = False
+        trace_pick_type = -1
+        trace_pick_rewards: tuple[float, ...] = tuple(0.0 for _ in range(self._n_agents))
 
         if self._env.cfg.pick_mode == PickMode.CHOICE and on_task:
             pick_state = s_moved.with_pick_phase()
@@ -417,6 +429,9 @@ class ActorCriticTrainerBase(TrainerBase):
                 s_moved,
                 pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
             )
+            trace_pick_happened = True
+            trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
+            trace_pick_rewards = pick_rewards
             self._timer.stop()
             self._train_decision(
                 state=pick_state,
@@ -428,8 +443,23 @@ class ActorCriticTrainerBase(TrainerBase):
                 probs=pick_probs,
             )
             self._timer.start(TimerSection.ENV)
-            next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+            pre_spawn_state = s_picked
+            post_spawn_state = self._env.spawn_and_despawn(s_picked)
+            next_state = self._env.advance_actor(post_spawn_state)
             self._timer.stop()
+            self._write_env_trace_row(
+                t=t,
+                actor=actor,
+                move_action=move_action,
+                on_task=on_task,
+                pick_happened=trace_pick_happened,
+                pick_task_type=trace_pick_type,
+                pick_rewards=trace_pick_rewards,
+                pre_spawn_state=pre_spawn_state,
+                post_spawn_state=post_spawn_state,
+                next_state=next_state,
+                move_actor_state=move_actor_state,
+            )
             self._after_step(next_state, t)
             return next_state
 
@@ -445,6 +475,9 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             self._timer.start(TimerSection.ENV)
             s_picked, rewards = self._env.resolve_pick(s_moved)
+            trace_pick_happened = True
+            trace_pick_type = self._picked_task_type(s_moved)
+            trace_pick_rewards = rewards
             self._timer.stop()
             self._train_critic_after_transition(s_picked, rewards, 1.0, t)
         else:
@@ -459,8 +492,23 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             s_picked = s_moved
         self._timer.start(TimerSection.ENV)
-        next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        pre_spawn_state = s_picked
+        post_spawn_state = self._env.spawn_and_despawn(s_picked)
+        next_state = self._env.advance_actor(post_spawn_state)
         self._timer.stop()
+        self._write_env_trace_row(
+            t=t,
+            actor=actor,
+            move_action=move_action,
+            on_task=on_task,
+            pick_happened=trace_pick_happened,
+            pick_task_type=trace_pick_type,
+            pick_rewards=trace_pick_rewards,
+            pre_spawn_state=pre_spawn_state,
+            post_spawn_state=post_spawn_state,
+            next_state=next_state,
+            move_actor_state=move_actor_state,
+        )
         self._after_step(next_state, t)
         return next_state
 
@@ -680,6 +728,7 @@ class ActorCriticTrainerBase(TrainerBase):
     ) -> None:
         if self._freeze_critic or t < self._warmup_steps:
             self._critic_prev_after = None
+            self._dbg_td_delta_sq = 0.0
             return
 
         self._timer.start(TimerSection.ENCODE)
@@ -697,7 +746,10 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             self._td_loss_accum += critic_loss
             self._td_loss_count += self._n_agents
+            self._dbg_td_delta_sq = critic_loss
             self._timer.stop()
+        else:
+            self._dbg_td_delta_sq = 0.0
 
         self._critic_prev_after = current_after
 
@@ -744,6 +796,7 @@ class ActorCriticTrainerBase(TrainerBase):
             discount,
         )
         selected_q_value = float(q_values[action_idx])
+        self._dbg_best_val = selected_q_value
         baseline_value = float(np.dot(probs, q_values))
         advantage = selected_q_value - baseline_value
         selected_rewards = rewards_by_action[action_idx]
@@ -873,6 +926,86 @@ class ActorCriticTrainerBase(TrainerBase):
                 row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
         return row
 
+    def _picked_task_type(self, state: State) -> int:
+        pos = state.agent_positions[state.actor]
+        actor_types = self._actor_task_types(state.actor)
+        for task_pos, task_type in zip(state.task_positions, state.task_types or ()):
+            if task_pos == pos and (actor_types is None or task_type in actor_types):
+                return int(task_type)
+        return -1
+
+    @staticmethod
+    def _enc_grid_l2_for_actor_state(actor_state: EncoderOutput) -> float:
+        try:
+            if actor_state.grid is None:
+                return float("nan")
+            return float(actor_state.grid.detach().norm().cpu().item())
+        except Exception:
+            return float("nan")
+
+    @staticmethod
+    def _enc_scalar_for_actor_state(actor_state: EncoderOutput) -> str:
+        try:
+            if actor_state.scalar is None:
+                return ""
+            values = actor_state.scalar.detach().cpu().flatten().tolist()
+            return ",".join(f"{float(x):.6f}" for x in values)
+        except Exception:
+            return ""
+
+    def _write_env_trace_row(
+        self,
+        *,
+        t: int,
+        actor: int,
+        move_action: Action,
+        on_task: bool,
+        pick_happened: bool,
+        pick_task_type: int,
+        pick_rewards: tuple[float, ...],
+        pre_spawn_state: State,
+        post_spawn_state: State,
+        next_state: State,
+        move_actor_state: EncoderOutput,
+    ) -> None:
+        if self._trace_w is None:
+            return
+
+        fmt_positions = lambda ps: ";".join(f"{p.row},{p.col}" for p in sorted(ps))
+        tasks_before = set(pre_spawn_state.task_positions)
+        tasks_after = set(post_spawn_state.task_positions)
+        post_pairs = sorted(
+            zip(post_spawn_state.task_positions, post_spawn_state.task_types or ()),
+            key=lambda item: (item[0].row, item[0].col, item[1]),
+        )
+        row: dict[str, float | int | str | bool] = {
+            "step": t,
+            "actor": actor,
+            "epsilon": 0.0,
+            "action": move_action.name,
+            "on_task": on_task,
+            "pick_happened": pick_happened,
+            "pick_task_type": pick_task_type,
+            "n_tasks_before_spawn": len(tasks_before),
+            "tasks_despawned": fmt_positions(tasks_before - tasks_after),
+            "tasks_spawned": fmt_positions(tasks_after - tasks_before),
+            "n_tasks_after": len(tasks_after),
+            "task_positions_after": ";".join(f"{p.row},{p.col}" for p, _ in post_pairs),
+            "task_types_after": ";".join(str(task_type) for _, task_type in post_pairs),
+            "agent_positions": fmt_positions(next_state.agent_positions),
+            "agent_positions_indexed": ";".join(f"{p.row},{p.col}" for p in next_state.agent_positions),
+            "was_greedy": self._dbg_was_greedy,
+            "best_val": round(self._dbg_best_val, 8),
+            "td_delta_sq": round(self._dbg_td_delta_sq, 10),
+            "enc_grid_l2": round(self._enc_grid_l2_for_actor_state(move_actor_state), 8),
+            "enc_scalar": self._enc_scalar_for_actor_state(move_actor_state),
+        }
+        for idx in range(self._n_agents):
+            row[f"reward_{idx}"] = pick_rewards[idx] if idx < len(pick_rewards) else 0.0
+        self._trace_w.writerow(row)
+        if self._trace_f is not None:
+            self._trace_f.flush()
+
     def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0, env_trace: bool = False) -> None:
         self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
@@ -899,6 +1032,20 @@ class ActorCriticTrainerBase(TrainerBase):
             )
         if alpha_state_log_freq > 0 and self._following_states:
             self._alpha_state_log = open(run_dir / "alpha_states.jsonl", "w")
+        if env_trace:
+            fields = (
+                ["step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type"]
+                + [f"reward_{i}" for i in range(self._n_agents)]
+                + ["n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
+                   "n_tasks_after", "task_positions_after", "task_types_after",
+                   "agent_positions", "agent_positions_indexed",
+                   "was_greedy", "best_val", "td_delta_sq",
+                   "enc_grid_l2", "enc_scalar"]
+            )
+            self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
+            self._trace_w = _csv.DictWriter(self._trace_f, fieldnames=fields)
+            self._trace_w.writeheader()
+            self._trace_f.flush()
 
     def _log_alpha_state(
         self,
@@ -976,6 +1123,13 @@ class ActorCriticTrainerBase(TrainerBase):
             logger.close()
         if self._influencer_logger is not None:
             self._influencer_logger.close()
+        if self._trace_f is not None:
+            self._trace_f.close()
+            self._trace_f = None
+            self._trace_w = None
+        if self._alpha_state_log is not None:
+            self._alpha_state_log.close()
+            self._alpha_state_log = None
 
     # ------------------------------------------------------------------
     # Checkpoints
@@ -1281,6 +1435,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         probs_legal = probs_t.index_select(0, legal_indices_t)
         action_pos = legal_indices.index(action_idx)
         selected_q_value = float(q_legal[action_pos].item())
+        self._dbg_best_val = selected_q_value
         baseline_value = float(torch.dot(probs_legal, q_legal).item())
         advantage = selected_q_value - baseline_value
 

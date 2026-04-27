@@ -1480,6 +1480,42 @@ class TestActorCriticTrainingLoop:
             details_row = _read_single_row(run_dir / "details.csv")
             assert "current_actor_lr" in details_row
 
+    def test_actor_critic_env_trace_writes_value_style_rows(self, monkeypatch):
+        if not hasattr(os, "sched_getaffinity"):
+            monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0}, raising=False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = _run_actor_critic_case(
+                pick_mode="forced",
+                output_dir=tmpdir,
+                extra_logging_blocks="""
+  env_trace: true
+""",
+            )
+
+            trace_path = run_dir / "env_trace.csv"
+            assert trace_path.exists()
+
+            with open(trace_path) as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            assert rows
+            assert reader.fieldnames == [
+                "step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type",
+                "reward_0", "reward_1",
+                "n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
+                "n_tasks_after", "task_positions_after", "task_types_after",
+                "agent_positions", "agent_positions_indexed",
+                "was_greedy", "best_val", "td_delta_sq",
+                "enc_grid_l2", "enc_scalar",
+            ]
+            first = rows[0]
+            assert first["step"] != ""
+            assert first["actor"] != ""
+            assert first["action"] in {"UP", "DOWN", "LEFT", "RIGHT", "STAY"}
+            assert first["n_tasks_after"] != ""
+            assert first["agent_positions_indexed"] != ""
+
     def test_actor_critic_timing_csv_reports_action_and_env_time(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = _run_actor_critic_case(
