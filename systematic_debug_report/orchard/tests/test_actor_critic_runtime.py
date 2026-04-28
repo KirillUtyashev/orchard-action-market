@@ -151,6 +151,7 @@ def _make_actor_critic_trainer(
     *,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
+    batch_forced_actor_updates: bool = True,
 ):
     assignments = task_assignments or ((0,), (0,))
     env_cfg = EnvConfig(
@@ -183,6 +184,7 @@ def _make_actor_critic_trainer(
         learning_type=LearningType.DECENTRALIZED,
         use_gpu=False,
         td_lambda=0.0,
+        batch_forced_actor_updates=batch_forced_actor_updates,
         heuristic=Heuristic.NEAREST_TASK,
         stopping=StoppingConfig(),
     )
@@ -1417,6 +1419,42 @@ class TestActorCriticTrainingLoop:
         trainer.flush_pending_updates()
 
         assert len(train_alphas) == 1
+        assert all(len(actor_net.batch_states) == 0 for actor_net in trainer.actor_networks)
+
+    def test_forced_mode_can_disable_batched_actor_updates_and_train_immediately(self):
+        _, trainer = _make_actor_critic_trainer(
+            PickMode.FORCED,
+            batch_forced_actor_updates=False,
+        )
+        _install_identity_critic_spy(trainer)
+        _install_scripted_actions(trainer, move_action=Action.STAY)
+
+        assert trainer._actor_bt is None
+        train_counts = [0 for _ in trainer.actor_networks]
+        for actor_id, actor_net in enumerate(trainer.actor_networks):
+            original_train_batch = actor_net.train_batch
+
+            def _spy_train_batch(_orig=original_train_batch, _actor_id=actor_id):
+                train_counts[_actor_id] += 1
+                return _orig()
+
+            actor_net.train_batch = _spy_train_batch
+
+        state = State(
+            agent_positions=(Grid(0, 0), Grid(2, 2)),
+            task_positions=(),
+            actor=0,
+            task_types=(),
+        )
+
+        next_state = trainer.step(state, 0)
+        assert next_state.actor == 1
+        assert train_counts == [1, 0]
+        assert all(len(actor_net.batch_states) == 0 for actor_net in trainer.actor_networks)
+
+        next_state = trainer.step(next_state, 1)
+        assert next_state.actor == 0
+        assert train_counts == [1, 1]
         assert all(len(actor_net.batch_states) == 0 for actor_net in trainer.actor_networks)
 
     @pytest.mark.parametrize("pick_mode", [PickMode.FORCED, PickMode.CHOICE])

@@ -7,7 +7,7 @@ import numpy as np
 from orchard.actor_critic.action_space import full_action_head_dim
 from orchard.actor_critic.policy_eval_states import serialize_state
 from orchard.datatypes import EnvConfig, State
-from orchard.enums import Action, make_pick_action
+from orchard.enums import Action, PickMode, make_pick_action
 
 
 def _probability_columns(probs, env_cfg: EnvConfig) -> dict[str, float]:
@@ -23,8 +23,9 @@ def _probability_columns(probs, env_cfg: EnvConfig) -> dict[str, float]:
         "prob_right": float(probs_arr[Action.RIGHT.value]),
         "prob_stay": float(probs_arr[Action.STAY.value]),
     }
-    for tau in range(env_cfg.n_task_types):
-        row[f"prob_pick_{tau}"] = float(probs_arr[make_pick_action(tau).value])
+    if env_cfg.pick_mode == PickMode.CHOICE:
+        for tau in range(env_cfg.n_task_types):
+            row[f"prob_pick_{tau}"] = float(probs_arr[make_pick_action(tau).value])
     return row
 
 

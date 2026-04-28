@@ -42,6 +42,7 @@ class TestConfigParsing:
         assert cfg.model.encoder == EncoderType.BLIND_TASK_CNN_GRID
         assert cfg.train.total_steps == 100
         assert cfg.train.comm_only_teammates is False
+        assert cfg.train.batch_forced_actor_updates is True
         
         os.unlink(path)
 
@@ -117,6 +118,7 @@ train:
         assert cfg.train.following_rates.enabled is True
         assert cfg.train.influencer.enabled is True
         assert cfg.train.comm_only_teammates is False
+        assert cfg.train.batch_forced_actor_updates is True
         assert cfg.train.following_rates.teammate_budget is None
         assert cfg.train.following_rates.non_teammate_budget is None
         assert cfg.actor_model is not None
@@ -166,11 +168,13 @@ class TestOverrides:
                 "env.pick_mode=choice",
                 "train.algorithm.name=actor_critic",
                 "train.comm_only_teammates=true",
+                "train.batch_forced_actor_updates=false",
             ],
         )
         assert cfg.train.total_steps == 999
         assert cfg.env.pick_mode == PickMode.CHOICE
         assert cfg.train.comm_only_teammates is True
+        assert cfg.train.batch_forced_actor_updates is False
         os.unlink(path)
 
 
@@ -233,6 +237,34 @@ train:
 """
         path = _write_yaml(yaml_str)
         with pytest.raises(ValueError, match="only supported for train.algorithm.name=actor_critic"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_actor_critic_batch_forced_actor_updates_parses(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  batch_forced_actor_updates: false
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.batch_forced_actor_updates is False
+        os.unlink(path)
+
+    def test_non_actor_critic_rejects_batch_forced_actor_updates(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  batch_forced_actor_updates: false
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="batch_forced_actor_updates is only supported"):
             load_config(path)
         os.unlink(path)
 

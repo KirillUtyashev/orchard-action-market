@@ -32,6 +32,24 @@ def _make_env_cfg(n_task_types: int = 3) -> EnvConfig:
     )
 
 
+def _make_forced_env_cfg(n_task_types: int = 3) -> EnvConfig:
+    cfg = _make_env_cfg(n_task_types=n_task_types)
+    return EnvConfig(
+        height=cfg.height,
+        width=cfg.width,
+        n_agents=cfg.n_agents,
+        n_tasks=cfg.n_tasks,
+        gamma=cfg.gamma,
+        r_picker=cfg.r_picker,
+        n_task_types=cfg.n_task_types,
+        r_low=cfg.r_low,
+        task_assignments=cfg.task_assignments,
+        pick_mode=PickMode.FORCED,
+        max_tasks_per_type=cfg.max_tasks_per_type,
+        stochastic=cfg.stochastic,
+    )
+
+
 def _make_model_cfg() -> ModelConfig:
     return ModelConfig(
         encoder=EncoderType.BLIND_TASK_CNN_GRID,
@@ -67,6 +85,11 @@ class TestActionHeadMapping:
 
         assert full_action_head_dim(cfg) == make_pick_action(cfg.n_task_types - 1).value + 1
 
+    def test_forced_head_dimension_contains_only_movement_actions(self):
+        cfg = _make_forced_env_cfg(n_task_types=3)
+
+        assert full_action_head_dim(cfg) == Action.STAY.value + 1
+
     def test_action_index_round_trip_matches_action_values(self):
         actions = [
             Action.UP,
@@ -92,6 +115,13 @@ class TestMasks:
         assert mask.shape == (full_action_head_dim(cfg),)
         assert mask[: Action.STAY.value + 1].tolist() == [True, True, True, True, True]
         assert mask[Action.PICK.value :].tolist() == [False, False, False]
+
+    def test_forced_phase1_mask_has_no_pick_slots(self):
+        cfg = _make_forced_env_cfg(n_task_types=3)
+        mask = build_phase1_legal_mask(_make_phase1_state(), cfg)
+
+        assert mask.shape == (Action.STAY.value + 1,)
+        assert mask.tolist() == [True, True, True, True, True]
 
     def test_phase2_mask_allows_stay_and_present_pick_types_only(self):
         cfg = _make_env_cfg(n_task_types=3)

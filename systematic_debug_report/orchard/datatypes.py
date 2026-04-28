@@ -216,6 +216,7 @@ class TrainConfig:
     use_gpu: bool = True
     td_lambda: float = 0.0
     comm_only_teammates: bool = False
+    batch_forced_actor_updates: bool = True
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0

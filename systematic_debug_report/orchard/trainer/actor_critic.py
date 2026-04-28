@@ -98,6 +98,7 @@ class ActorCriticTrainerBase(TrainerBase):
         influencer_cfg: InfluencerConfig,
         comm_only_teammates: bool = False,
         actor_bt: BatchedActorTrainer | None = None,
+        defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -111,7 +112,11 @@ class ActorCriticTrainerBase(TrainerBase):
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
         self._warmup_steps = max(0, int(warmup_steps))
-        self._defer_actor_updates = env.cfg.pick_mode == PickMode.FORCED
+        self._defer_actor_updates = (
+            env.cfg.pick_mode == PickMode.FORCED
+            if defer_actor_updates is None
+            else bool(defer_actor_updates)
+        )
         self._actor_bt = actor_bt
         self._deferred_actor_t: int | None = None
         self._timer = timer or Timer()
@@ -659,6 +664,14 @@ class ActorCriticTrainerBase(TrainerBase):
                     float(rewards[observer_id]) + float(discount) * float(after_values[observer_id])
                 )
             return total
+        if self._comm_only_teammates:
+            total = float(rewards[actor_id]) + float(discount) * float(after_values[actor_id])
+            for observer_id in range(self._n_agents):
+                if observer_id == actor_id:
+                    continue
+                if self._is_teammate_observer(observer_id, actor_id):
+                    total += float(rewards[observer_id]) + float(discount) * float(after_values[observer_id])
+            return total
         return float(sum(rewards) + float(discount) * sum(after_values))
 
     def _build_legal_action_outcomes(
@@ -1017,7 +1030,10 @@ class ActorCriticTrainerBase(TrainerBase):
             build_phase2_policy_prob_csv_fieldnames(self._env.cfg.n_task_types),
         )
         self._phase1_eval_states = sample_phase1_policy_eval_states(self._env.cfg)
-        self._phase2_eval_states = generate_phase2_policy_eval_states(self._env.cfg)
+        self._phase2_eval_states = (
+            [] if self._env.cfg.pick_mode == PickMode.FORCED
+            else generate_phase2_policy_eval_states(self._env.cfg)
+        )
 
         if self._following_rates_cfg.enabled:
             fieldnames = build_following_rate_csv_fieldnames(self._n_agents)
@@ -1302,6 +1318,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         influencer_cfg: InfluencerConfig,
         comm_only_teammates: bool = False,
         actor_bt: BatchedActorTrainer | None = None,
+        defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -1319,6 +1336,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             influencer_cfg=influencer_cfg,
             comm_only_teammates=comm_only_teammates,
             actor_bt=actor_bt,
+            defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=warmup_steps,
         )

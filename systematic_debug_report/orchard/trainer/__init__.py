@@ -35,7 +35,8 @@ def create_trainer(
                 actor.to(device)
             bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
             actor_bt = None
-            if cfg.env.pick_mode == PickMode.FORCED:
+            defer_actor_updates = cfg.env.pick_mode == PickMode.FORCED and cfg.train.batch_forced_actor_updates
+            if defer_actor_updates:
                 from orchard.batched_actor_training import BatchedActorTrainer
                 actor_bt = BatchedActorTrainer(actors, device=device)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
@@ -59,12 +60,14 @@ def create_trainer(
                 influencer_cfg=cfg.train.influencer,
                 comm_only_teammates=cfg.train.comm_only_teammates,
                 actor_bt=actor_bt,
+                defer_actor_updates=defer_actor_updates,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
         actor_bt = None
-        if cfg.env.pick_mode == PickMode.FORCED:
+        defer_actor_updates = cfg.env.pick_mode == PickMode.FORCED and cfg.train.batch_forced_actor_updates
+        if defer_actor_updates:
             from orchard.batched_actor_training import BatchedActorTrainer
             actor_bt = BatchedActorTrainer(actors, device="cpu")
         print(f"ActorCriticCpuTrainer: {len(critics)} critics on CPU")
@@ -82,6 +85,7 @@ def create_trainer(
             influencer_cfg=cfg.train.influencer,
             comm_only_teammates=cfg.train.comm_only_teammates,
             actor_bt=actor_bt,
+            defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
         )

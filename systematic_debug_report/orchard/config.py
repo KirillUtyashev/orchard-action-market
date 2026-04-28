@@ -230,6 +230,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     actor_lr_cfg = _parse_schedule(actor_lr_d, "train.actor_lr") if actor_lr_d else None
     freeze_critic = bool(d.get("freeze_critic", False))
     comm_only_teammates = bool(d.get("comm_only_teammates", False))
+    batch_forced_actor_updates = bool(d.get("batch_forced_actor_updates", True))
     use_gpu = bool(d.get("use_gpu", d.get("use_gpu_batched", True)))
 
     following_d = d.get("following_rates", {})
@@ -267,6 +268,8 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         raise ValueError("train.freeze_critic is only supported for train.algorithm.name=actor_critic.")
     elif comm_only_teammates:
         raise ValueError("train.comm_only_teammates is only supported for train.algorithm.name=actor_critic.")
+    elif "batch_forced_actor_updates" in d:
+        raise ValueError("train.batch_forced_actor_updates is only supported for train.algorithm.name=actor_critic.")
     if following_cfg.enabled:
         if algorithm_name != AlgorithmName.ACTOR_CRITIC:
             raise ValueError("train.following_rates.enabled=true requires train.algorithm.name=actor_critic.")
@@ -327,6 +330,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         use_gpu=use_gpu,
         td_lambda=float(d.get("td_lambda", 0.0)),
         comm_only_teammates=comm_only_teammates,
+        batch_forced_actor_updates=batch_forced_actor_updates,
         heuristic=heuristic,
         stopping=stopping,
         warmup_steps=int(d.get("warmup_steps", 0)),
