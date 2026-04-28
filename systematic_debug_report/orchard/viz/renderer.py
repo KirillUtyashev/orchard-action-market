@@ -140,6 +140,7 @@ def _render_grid_svg_elements(
     use_type_colors: bool,
     x0: float,
     y0: float,
+    spawn_areas: list | None = None,
 ) -> list[str]:
     """Return SVG element strings for a single grid (no outer <svg> tag)."""
     parts: list[str] = []
@@ -171,6 +172,27 @@ def _render_grid_svg_elements(
                 f'rx="3" fill="{_EMPTY_BG_HEX}" stroke="{stroke}" stroke-width="{sw}"/>'
             )
 
+    # --- Spawn area borders (drawn over cells, under tasks/agents) ---
+    if spawn_areas is not None:
+        for tau, area_cells in enumerate(spawn_areas):
+            if not area_cells:
+                continue
+            tc = _task_hex(tau, n_task_types)
+            rows = [c.row for c in area_cells]
+            cols = [c.col for c in area_cells]
+            r0, r1 = min(rows), max(rows)
+            c0_, c1_ = min(cols), max(cols)
+            inset = 2.0
+            rx = x0 + c0_ * CELL + inset
+            ry = y0 + r0 * CELL + inset
+            rw = (c1_ - c0_ + 1) * CELL - 2 * inset
+            rh = (r1 - r0 + 1) * CELL - 2 * inset
+            parts.append(
+                f'<rect x="{rx:.1f}" y="{ry:.1f}" width="{rw:.1f}" height="{rh:.1f}" '
+                f'fill="none" stroke="{tc}" stroke-width="2.5" stroke-dasharray="8 4" '
+                f'rx="3" opacity="0.75" pointer-events="none"/>'
+            )
+
     # --- Tasks ---
     sq = CELL * 0.22
     for (r, c), types_list in task_map.items():
@@ -198,16 +220,17 @@ def _render_grid_svg_elements(
                     )
                 parts.append("</g>")
         else:
-            # Count badge
-            br = sq * 0.9
-            bx = cx + CELL - br - 4
-            by = cy + br + 4
+            # Count badge — square to match the individual task squares
+            badge = sq * 1.6
+            bx = cx + CELL - badge - 3
+            by = cy + 3
             popup = _attr_json({"types": types_list})
             parts.append(
                 f'<g data-popup-type="tasks" data-popup-data="{popup}" style="cursor:pointer">'
-                f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{br:.1f}" '
-                f'fill="#555" stroke="white" stroke-width="1"/>'
-                f'<text x="{bx:.1f}" y="{by:.1f}" text-anchor="middle" dominant-baseline="central" '
+                f'<rect x="{bx:.1f}" y="{by:.1f}" width="{badge:.1f}" height="{badge:.1f}" '
+                f'rx="3" fill="#555" stroke="white" stroke-width="1"/>'
+                f'<text x="{bx + badge/2:.1f}" y="{by + badge/2:.1f}" '
+                f'text-anchor="middle" dominant-baseline="central" '
                 f'font-size="9" font-weight="bold" fill="white" pointer-events="none">'
                 f'{len(types_list)}</text>'
                 f'</g>'
@@ -314,6 +337,7 @@ def render_frame_svg(
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
     picked_cell: tuple[int, int] | None = None,
     picked_correct: bool | None = None,
+    spawn_areas: list | None = None,
 ) -> str:
     """Render one or two grids as an inline SVG string."""
     use_type_colors = use_type_colors_for_agents(task_assignments, n_task_types)
@@ -338,7 +362,7 @@ def render_frame_svg(
         )
         parts.extend(_render_grid_svg_elements(
             state, height, width, actor, n_task_types, task_assignments,
-            picked_cell, picked_correct, use_type_colors, x0, y0,
+            picked_cell, picked_correct, use_type_colors, x0, y0, spawn_areas,
         ))
         parts.append("</svg>")
         return "\n".join(parts)
@@ -368,11 +392,11 @@ def render_frame_svg(
     )
     parts.extend(_render_grid_svg_elements(
         state, height, width, actor, n_task_types, task_assignments,
-        None, None, use_type_colors, x0_l, y0,
+        None, None, use_type_colors, x0_l, y0, spawn_areas,
     ))
     parts.extend(_render_grid_svg_elements(
         state_after, height, width, actor, n_task_types, task_assignments,
-        picked_cell, picked_correct, use_type_colors, x0_r, y0,
+        picked_cell, picked_correct, use_type_colors, x0_r, y0, spawn_areas,
     ))
     parts.append("</svg>")
     return "\n".join(parts)

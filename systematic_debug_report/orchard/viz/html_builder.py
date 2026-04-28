@@ -69,13 +69,23 @@ def _build_frame_info_html(
         g = task_assignments[frame.actor]
         parts.append(f'<span style="color:#888">G<sub>{frame.actor}</sub> = {set(g)}</span>')
 
+    team_r = sum(frame.rewards)
     if any(r != 0.0 for r in frame.rewards):
         r_parts = []
         for i, r in enumerate(frame.rewards):
             c = _agent_css_color(i, task_assignments, n_task_types, use_type_colors)
             sign = "+" if r > 0 else ""
             r_parts.append(f'<span style="color:{c}">{sign}{r:.2f}</span>')
-        parts.append(f'r<sub>{t1}</sub> = [{", ".join(r_parts)}]')
+        team_sign = "+" if team_r > 0 else ""
+        team_color = "#2ca02c" if team_r > 0 else ("#d62728" if team_r < 0 else "#888")
+        parts.append(
+            f'<details style="display:inline">'
+            f'<summary style="cursor:pointer;display:inline">'
+            f'r<sub>{t1}</sub> = <span style="color:{team_color}">{team_sign}{team_r:.2f}</span>'
+            f'</summary>'
+            f'<span style="color:#888"> [{", ".join(r_parts)}]</span>'
+            f'</details>'
+        )
         if frame.picked_task_type is not None:
             if frame.picked_correct:
                 parts.append(
@@ -99,9 +109,33 @@ def _build_frame_info_html(
     else:
         parts.append('<span style="color:#888">→ Next: env responds (spawn/despawn + advance actor)</span>')
 
+    # Build per-agent picks detail (shown inside the collapsible Team RPS)
+    per_agent_detail = ""
+    if frame.agent_picks:
+        n_agents = len(frame.rewards)
+        pick_parts = []
+        for i in range(n_agents):
+            c = _agent_css_color(i, task_assignments, n_task_types, use_type_colors)
+            cnt = frame.agent_picks.get(i, 0)
+            pps = frame.agent_picks_per_step(i)
+            pick_parts.append(f'<span style="color:{c}">A{i}: {cnt} ({pps:.4f}/step)</span>')
+        per_agent_detail = (
+            f'<div style="margin-top:4px;padding-left:8px;line-height:1.8">'
+            + " &nbsp; ".join(pick_parts)
+            + "</div>"
+        )
+
+    rps_html = (
+        f'<details style="display:inline">'
+        f'<summary style="cursor:pointer;display:inline;color:#2ca02c">'
+        f'Team RPS: {frame.team_reward_per_step:.4f}</summary>'
+        f'{per_agent_detail}'
+        f'</details>'
+    )
+
     stats_parts = [
         f'Tasks: <span style="color:#d62728">{frame.tasks_on_grid}</span>',
-        f'Team RPS: <span style="color:#2ca02c">{frame.team_reward_per_step:.4f}</span>',
+        rps_html,
         f'Correct: <span style="color:#2ca02c">{frame.total_correct_picks}</span>'
         f' Wrong: <span style="color:#d62728">{frame.total_wrong_picks}</span>',
     ]
@@ -113,27 +147,6 @@ def _build_frame_info_html(
             type_counts[tt] = type_counts.get(tt, 0) + 1
         type_str = " ".join(f'τ{k}:{v}' for k, v in sorted(type_counts.items()))
         parts.append(f'Per-type: {type_str}')
-
-    if frame.agent_picks:
-        n_agents = len(frame.rewards)
-        pick_parts = []
-        for i in range(n_agents):
-            c = _agent_css_color(i, task_assignments, n_task_types, use_type_colors)
-            cnt = frame.agent_picks.get(i, 0)
-            pps = frame.agent_picks_per_step(i)
-            pick_parts.append(f'<span style="color:{c}">A{i}: {cnt} ({pps:.4f}/step)</span>')
-        parts.append(f'Agent picks: {" &nbsp; ".join(pick_parts)}')
-
-    pos_parts = []
-    for i, p in enumerate(frame.state.agent_positions):
-        c = _agent_css_color(i, task_assignments, n_task_types, use_type_colors)
-        label = f"A{i}({p.row},{p.col})"
-        if i == frame.actor:
-            label += " [actor]"
-        pos_parts.append(
-            f'<span style="color:{c};font-weight:{"bold" if i == frame.actor else "normal"}">{label}</span>'
-        )
-    parts.append(f'Positions: {" &nbsp; ".join(pos_parts)}')
 
     if frame.decisions:
         has_agent_breakdown = any(d.agent_q_values is not None for d in frame.decisions)
@@ -187,31 +200,49 @@ def _build_legend_html(
         for i, g in enumerate(task_assignments[:n_agents]):
             type_to_agents.setdefault(g[0], []).append(i)
 
-    rows: list[str] = []
+    pills: list[str] = []
     for tau in range(n_task_types):
         hex_c = TASK_TYPE_HEX[tau % len(TASK_TYPE_HEX)]
         swatch = (
-            f'<span style="display:inline-block;width:14px;height:14px;'
-            f'background:{hex_c};border-radius:3px;flex-shrink:0"></span>'
+            f'<span style="display:inline-block;width:12px;height:12px;'
+            f'background:{hex_c};border-radius:2px;flex-shrink:0;vertical-align:middle"></span>'
         )
-        label = f"Type {tau}"
+        summary_content = (
+            f'<summary style="cursor:pointer;list-style:none;display:inline-flex;'
+            f'align-items:center;gap:4px;font-size:11px;color:#ccc;'
+            f'padding:3px 7px;background:#2a2a4a;border:1px solid #444;'
+            f'border-radius:4px;user-select:none">'
+            f'{swatch} Type {tau}</summary>'
+        )
         if tau in type_to_agents:
             ag = type_to_agents[tau]
             if len(ag) > 4:
-                label += f" — A{ag[0]}–A{ag[-1]}"
+                agents_str = f"A{ag[0]}–A{ag[-1]}"
             else:
-                label += " — " + ", ".join(f"A{a}" for a in ag)
-        rows.append(
-            f'<span style="display:inline-flex;align-items:center;gap:5px;'
-            f'font-size:11px;color:#ccc;margin:2px 4px">{swatch}{label}</span>'
-        )
+                agents_str = ", ".join(f"A{a}" for a in ag)
+            detail_content = (
+                f'<div style="position:absolute;z-index:10;font-size:10px;color:#ccc;'
+                f'padding:5px 8px;background:#1a1a2e;border:1px solid #555;'
+                f'border-radius:4px;margin-top:2px;white-space:nowrap">{agents_str}</div>'
+            )
+            pill = (
+                f'<details style="display:inline-block;position:relative;margin:2px 3px">'
+                f'{summary_content}{detail_content}</details>'
+            )
+        else:
+            pill = (
+                f'<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;'
+                f'color:#ccc;padding:3px 7px;background:#2a2a4a;border:1px solid #444;'
+                f'border-radius:4px;margin:2px 3px">{swatch} Type {tau}</span>'
+            )
+        pills.append(pill)
 
-    items = "".join(rows)
+    items = "".join(pills)
     return (
         f'<div style="background:#22223a;border:1px solid #333;border-radius:8px;'
-        f'padding:10px 14px;margin-top:12px;max-width:90vw">'
-        f'<div style="font-size:11px;color:#888;font-weight:bold;margin-bottom:6px">Task Types</div>'
-        f'<div style="display:flex;flex-wrap:wrap">{items}</div>'
+        f'padding:8px 12px;margin-top:12px;width:min(90vw,700px);overflow-x:hidden">'
+        f'<div style="font-size:10px;color:#888;font-weight:bold;margin-bottom:5px">Task Types</div>'
+        f'<div style="display:flex;flex-wrap:wrap;gap:3px">{items}</div>'
         f'</div>'
     )
 

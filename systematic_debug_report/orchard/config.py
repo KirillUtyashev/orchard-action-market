@@ -152,6 +152,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
         per_type_seeds=tuple(int(s) for s in sd["per_type_seeds"]) if sd.get("per_type_seeds") else None,
+        spawn_area_size=int(sd["spawn_area_size"]) if sd.get("spawn_area_size") else None,
     )
 
     return EnvConfig(

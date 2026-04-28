@@ -223,6 +223,7 @@ def render_all_frames(
     show_after_states: bool,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
+    spawn_areas: list | None = None,
 ) -> list[str]:
     """Render all frames to inline SVG strings."""
     svgs: list[str] = []
@@ -253,6 +254,7 @@ def render_all_frames(
             task_assignments=task_assignments,
             picked_cell=picked_cell,
             picked_correct=picked_correct,
+            spawn_areas=spawn_areas,
         )
         svgs.append(svg)
     print()
@@ -465,19 +467,25 @@ def main() -> None:
         print("Done (--no-html: skipped rendering and HTML).")
         return
 
+    # Extract per-type spawn areas from env if available (StochasticEnv with spawn_area_size)
+    spawn_areas = getattr(env, "_spawn_area_cells", None)
+
     # --- Render SVGs ---
     print("Rendering primary frames...")
     t0 = time.time()
     frame_svgs = render_all_frames(frames, args.show_after_states,
-                                   n_task_types=n_task_types, task_assignments=task_assignments)
+                                   n_task_types=n_task_types, task_assignments=task_assignments,
+                                   spawn_areas=spawn_areas)
     print(f"  Rendered in {time.time() - t0:.1f}s")
 
     compare_svgs: list[str] | None = None
     if compare_frames is not None:
+        compare_spawn_areas = getattr(env_compare, "_spawn_area_cells", None)
         print("Rendering compare frames...")
         t0 = time.time()
         compare_svgs = render_all_frames(compare_frames, args.show_after_states,
-                                         n_task_types=n_task_types, task_assignments=task_assignments)
+                                         n_task_types=n_task_types, task_assignments=task_assignments,
+                                         spawn_areas=compare_spawn_areas)
         print(f"  Rendered in {time.time() - t0:.1f}s")
 
     # --- Build HTML ---

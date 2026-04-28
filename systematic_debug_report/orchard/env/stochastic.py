@@ -36,6 +36,34 @@ class StochasticEnv(BaseEnv):
         else:
             self._type_rngs = None
 
+        # Fixed spawn areas: one square region per task type, placed once at construction.
+        if cfg.stochastic.spawn_area_size is not None:
+            size = cfg.stochastic.spawn_area_size
+            assert size <= cfg.height and size <= cfg.width, (
+                f"spawn_area_size={size} exceeds grid ({cfg.height}x{cfg.width})"
+            )
+            valid_corners = [
+                (r, c)
+                for r in range(cfg.height - size + 1)
+                for c in range(cfg.width - size + 1)
+            ]
+            self._spawn_area_cells: list[list[Grid]] | None = []
+            for tau in range(cfg.n_task_types):
+                _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
+                r0, c0 = _rng.choice(valid_corners)
+                self._spawn_area_cells.append([
+                    Grid(r0 + dr, c0 + dc)
+                    for dr in range(size)
+                    for dc in range(size)
+                ])
+        else:
+            self._spawn_area_cells = None
+
+    def _spawn_cells_for_type(self, tau: int) -> list[Grid]:
+        if self._spawn_area_cells is None:
+            return self._all_cells
+        return self._spawn_area_cells[tau]
+
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
         cells = [
@@ -59,12 +87,23 @@ class StochasticEnv(BaseEnv):
                     if tau in set(self.cfg.task_assignments[i])
                 ]
                 n_team = len(team_agent_indices)
-                chosen = trng.sample(cells, n_team + n_tasks)
-                for idx, agent_i in enumerate(team_agent_indices):
-                    agent_positions_by_idx[agent_i] = chosen[idx]
-                for cell in chosen[n_team:]:
-                    all_task_positions.append(cell)
-                    all_task_types.append(tau)
+                spawn_cells = self._spawn_cells_for_type(tau)
+                if spawn_cells is self._all_cells:
+                    chosen = trng.sample(cells, n_team + n_tasks)
+                    for idx, agent_i in enumerate(team_agent_indices):
+                        agent_positions_by_idx[agent_i] = chosen[idx]
+                    for cell in chosen[n_team:]:
+                        all_task_positions.append(cell)
+                        all_task_types.append(tau)
+                else:
+                    chosen_agents = trng.sample(cells, n_team)
+                    for idx, agent_i in enumerate(team_agent_indices):
+                        agent_positions_by_idx[agent_i] = chosen_agents[idx]
+                    agent_set_tau = set(chosen_agents)
+                    available = [c for c in spawn_cells if c not in agent_set_tau]
+                    for cell in trng.sample(available, min(n_tasks, len(available))):
+                        all_task_positions.append(cell)
+                        all_task_types.append(tau)
             agent_positions = tuple(
                 agent_positions_by_idx[i] for i in range(self.cfg.n_agents)
             )
@@ -78,7 +117,7 @@ class StochasticEnv(BaseEnv):
             for tau in range(self.cfg.n_task_types):
                 count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
                 cells_with_tau = {p for p, t in zip(all_task_positions, all_task_types) if t == tau}
-                available = [c for c in cells if c not in agent_set and c not in cells_with_tau]
+                available = [c for c in self._spawn_cells_for_type(tau) if c not in agent_set and c not in cells_with_tau]
                 to_spawn = min(count, len(available))
                 for cell in rng.sample(available, to_spawn):
                     all_task_positions.append(cell)
@@ -146,15 +185,16 @@ class StochasticEnv(BaseEnv):
             if n_tau >= self.cfg.max_tasks_per_type:
                 continue
 
+            candidate_cells = self._spawn_cells_for_type(tau)
             if tsm == TaskSpawnMode.GLOBAL_UNIQUE:
                 task_set = set(positions)
                 empty_cells = [
-                    c for c in self._all_cells
+                    c for c in candidate_cells
                     if c not in task_set and (not block_agents or c not in agent_set)
                 ]
             else:
                 empty_cells = [
-                    c for c in self._all_cells
+                    c for c in candidate_cells
                     if c not in cells_by_type[tau] and (not block_agents or c not in agent_set)
                 ]
 
