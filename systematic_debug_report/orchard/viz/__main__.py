@@ -223,7 +223,7 @@ def render_all_frames(
     show_after_states: bool,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
-    spawn_areas: list | None = None,
+    spawn_area_snapshots: list | None = None,
 ) -> list[str]:
     """Render all frames to inline SVG strings."""
     svgs: list[str] = []
@@ -238,6 +238,8 @@ def render_all_frames(
             pos = frame.state.agent_positions[frame.actor]
             picked_cell = (pos.row, pos.col)
             picked_correct = frame.picked_correct
+
+        spawn_areas = spawn_area_snapshots[i] if spawn_area_snapshots is not None else None
 
         svg = render_frame_svg(
             state=frame.state,
@@ -363,16 +365,22 @@ def main() -> None:
 
     policy_fn = make_policy_fn(policy_name, networks, env,
                                actor_networks=actor_networks)
-    frames = generate_frames(
-        start_state=init_state,
-        policy_fn=policy_fn,
-        env=env,
-        n_steps=args.steps,
-        policy_name=policy_name,
-        networks=networks,
-        include_decisions=args.decisions,
-        include_values=args.values,
-    )
+    spawn_area_snapshots: list = []
+    env.set_eval_mode(True)
+    try:
+        frames = generate_frames(
+            start_state=init_state,
+            policy_fn=policy_fn,
+            env=env,
+            n_steps=args.steps,
+            policy_name=policy_name,
+            networks=networks,
+            include_decisions=args.decisions,
+            include_values=args.values,
+            spawn_area_snapshots=spawn_area_snapshots,
+        )
+    finally:
+        env.set_eval_mode(False)
     print(f"  Generated {len(frames)} transitions ({args.steps} decisions) in {time.time() - t0:.1f}s")
 
     # --- Generate compare rollout (if requested) ---
@@ -400,16 +408,22 @@ def main() -> None:
         compare_actor_networks = actor_networks if compare_name == "learned" else None
         compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
                                     actor_networks=compare_actor_networks)
-        compare_frames = generate_frames(
-            start_state=init_state,
-            policy_fn=compare_fn,
-            env=env_compare,
-            n_steps=args.steps,
-            policy_name=compare_name,
-            networks=compare_networks,
-            include_decisions=False,
-            include_values=False,
-        )
+        compare_spawn_snapshots: list = []
+        env_compare.set_eval_mode(True)
+        try:
+            compare_frames = generate_frames(
+                start_state=init_state,
+                policy_fn=compare_fn,
+                env=env_compare,
+                n_steps=args.steps,
+                policy_name=compare_name,
+                networks=compare_networks,
+                include_decisions=False,
+                include_values=False,
+                spawn_area_snapshots=compare_spawn_snapshots,
+            )
+        finally:
+            env_compare.set_eval_mode(False)
         print(f"  Generated {len(compare_frames)} compare transitions")
 
     # --- Stats summary (always printed) ---
@@ -467,25 +481,24 @@ def main() -> None:
         print("Done (--no-html: skipped rendering and HTML).")
         return
 
-    # Extract per-type spawn areas from env if available (StochasticEnv with spawn_area_size)
-    spawn_areas = getattr(env, "_spawn_area_cells", None)
-
     # --- Render SVGs ---
+    # spawn_area_snapshots is per-frame (moves with zone relocations during eval rollout)
+    has_spawn_areas = bool(spawn_area_snapshots) and spawn_area_snapshots[0] is not None
     print("Rendering primary frames...")
     t0 = time.time()
     frame_svgs = render_all_frames(frames, args.show_after_states,
                                    n_task_types=n_task_types, task_assignments=task_assignments,
-                                   spawn_areas=spawn_areas)
+                                   spawn_area_snapshots=spawn_area_snapshots if has_spawn_areas else None)
     print(f"  Rendered in {time.time() - t0:.1f}s")
 
     compare_svgs: list[str] | None = None
     if compare_frames is not None:
-        compare_spawn_areas = getattr(env_compare, "_spawn_area_cells", None)
+        has_compare_spawn = bool(compare_spawn_snapshots) and compare_spawn_snapshots[0] is not None
         print("Rendering compare frames...")
         t0 = time.time()
         compare_svgs = render_all_frames(compare_frames, args.show_after_states,
                                          n_task_types=n_task_types, task_assignments=task_assignments,
-                                         spawn_areas=compare_spawn_areas)
+                                         spawn_area_snapshots=compare_spawn_snapshots if has_compare_spawn else None)
         print(f"  Rendered in {time.time() - t0:.1f}s")
 
     # --- Build HTML ---

@@ -45,6 +45,8 @@ env:
                                    # each task type to a fixed NxN square region. Regions are
                                    # randomly placed once at env construction using per_type_seeds
                                    # (or global rng if per_type_seeds is not set).
+    spawn_zone_move_interval: 0    # rounds between zone relocations during training (0 = fixed forever)
+    eval_spawn_zone_move_interval: 0  # rounds between zone relocations during eval rollouts (0 = fixed)
 
 model:
   # Encoder: how the grid state is converted to neural network input

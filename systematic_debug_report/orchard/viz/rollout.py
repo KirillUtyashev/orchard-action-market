@@ -25,6 +25,7 @@ def generate_frames(
     networks: list[ValueNetwork] | None = None,
     include_decisions: bool = False,
     include_values: bool = False,
+    spawn_area_snapshots: list | None = None,
 ) -> list[Frame]:
     """Run a rollout and produce a Frame for every transition.
 
@@ -139,6 +140,12 @@ def generate_frames(
             agent_picks=dict(agent_pick_counts),
         )
         frames.append(frame)
+
+        if spawn_area_snapshots is not None:
+            raw = getattr(env, "_spawn_area_cells", None)
+            spawn_area_snapshots.append(
+                [list(cells) for cells in raw] if raw is not None else None
+            )
 
         state_index += 1
         transition_index += 1

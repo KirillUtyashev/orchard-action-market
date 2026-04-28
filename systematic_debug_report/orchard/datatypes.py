@@ -143,6 +143,8 @@ class StochasticConfig:
     spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
     per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
     spawn_area_size: int | None = None  # square side length for per-type spawn regions; None = whole grid
+    spawn_zone_move_interval: int = 0      # rounds between zone relocations during training; 0 = fixed forever
+    eval_spawn_zone_move_interval: int = 0  # rounds between zone relocations during eval; 0 = fixed
 
 
 @dataclass(frozen=True)

@@ -42,7 +42,7 @@ class StochasticEnv(BaseEnv):
             assert size <= cfg.height and size <= cfg.width, (
                 f"spawn_area_size={size} exceeds grid ({cfg.height}x{cfg.width})"
             )
-            valid_corners = [
+            self._valid_corners: list[tuple[int, int]] | None = [
                 (r, c)
                 for r in range(cfg.height - size + 1)
                 for c in range(cfg.width - size + 1)
@@ -50,19 +50,48 @@ class StochasticEnv(BaseEnv):
             self._spawn_area_cells: list[list[Grid]] | None = []
             for tau in range(cfg.n_task_types):
                 _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
-                r0, c0 = _rng.choice(valid_corners)
+                r0, c0 = _rng.choice(self._valid_corners)
                 self._spawn_area_cells.append([
                     Grid(r0 + dr, c0 + dc)
                     for dr in range(size)
                     for dc in range(size)
                 ])
         else:
+            self._valid_corners = None
             self._spawn_area_cells = None
+
+        self._rounds_elapsed: int = 0
+        self._eval_mode: bool = False
+        self._eval_rounds_elapsed: int = 0
+        self._saved_spawn_area_cells: list[list[Grid]] | None = None
 
     def _spawn_cells_for_type(self, tau: int) -> list[Grid]:
         if self._spawn_area_cells is None:
             return self._all_cells
         return self._spawn_area_cells[tau]
+
+    def set_eval_mode(self, eval_mode: bool) -> None:
+        if eval_mode:
+            self._saved_spawn_area_cells = (
+                [list(cells) for cells in self._spawn_area_cells]
+                if self._spawn_area_cells is not None else None
+            )
+            self._eval_rounds_elapsed = 0
+        else:
+            self._spawn_area_cells = self._saved_spawn_area_cells
+            self._saved_spawn_area_cells = None
+        self._eval_mode = eval_mode
+
+    def _relocate_spawn_areas(self) -> None:
+        size = self.stoch.spawn_area_size
+        for tau in range(self.cfg.n_task_types):
+            _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
+            r0, c0 = _rng.choice(self._valid_corners)
+            self._spawn_area_cells[tau] = [
+                Grid(r0 + dr, c0 + dc)
+                for dr in range(size)
+                for dc in range(size)
+            ]
 
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
@@ -139,6 +168,18 @@ class StochasticEnv(BaseEnv):
         type's sequence matches a standalone T=1 run regardless of when in the
         round this fires.
         """
+        if state.actor == self.cfg.n_agents - 1:
+            if self._eval_mode:
+                self._eval_rounds_elapsed += 1
+                interval = self.stoch.eval_spawn_zone_move_interval
+                rounds = self._eval_rounds_elapsed
+            else:
+                self._rounds_elapsed += 1
+                interval = self.stoch.spawn_zone_move_interval
+                rounds = self._rounds_elapsed
+            if self._spawn_area_cells is not None and interval > 0 and rounds % interval == 0:
+                self._relocate_spawn_areas()
+
         if self.stoch.spawn_at_round_end and state.actor != self.cfg.n_agents - 1:
             return state
         return self._spawn_and_despawn_multi(state)

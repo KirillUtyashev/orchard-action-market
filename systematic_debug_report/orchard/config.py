@@ -153,6 +153,8 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
         per_type_seeds=tuple(int(s) for s in sd["per_type_seeds"]) if sd.get("per_type_seeds") else None,
         spawn_area_size=int(sd["spawn_area_size"]) if sd.get("spawn_area_size") else None,
+        spawn_zone_move_interval=int(sd.get("spawn_zone_move_interval", 0)),
+        eval_spawn_zone_move_interval=int(sd.get("eval_spawn_zone_move_interval", 0)),
     )
 
     return EnvConfig(

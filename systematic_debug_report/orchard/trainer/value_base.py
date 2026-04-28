@@ -559,28 +559,32 @@ class ValueTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
         from orchard.eval import evaluate_policy_metrics
-        eval_start = env.init_state()
+        env.set_eval_mode(True)
+        try:
+            eval_start = env.init_state()
 
-        def greedy_policy(s: State) -> Action:
-            return self._greedy_action(s)
+            def greedy_policy(s: State) -> Action:
+                return self._greedy_action(s)
 
-        def baseline_policy(s: State) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic)
+            def baseline_policy(s: State) -> Action:
+                return heuristic_action(s, env.cfg, self._heuristic)
 
-        heuristic_name = self._heuristic.name.lower()
-        greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
-        baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
+            heuristic_name = self._heuristic.name.lower()
+            greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
+            baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
 
-        return {
-            "greedy_rps": greedy_metrics["rps"],
-            "greedy_team_rps": greedy_metrics["team_rps"],
-            "greedy_correct_pps": greedy_metrics["correct_pps"],
-            "greedy_wrong_pps": greedy_metrics["wrong_pps"],
-            f"{heuristic_name}_rps": baseline_metrics["rps"],
-            f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
-            f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-            f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
-        }
+            return {
+                "greedy_rps": greedy_metrics["rps"],
+                "greedy_team_rps": greedy_metrics["team_rps"],
+                "greedy_correct_pps": greedy_metrics["correct_pps"],
+                "greedy_wrong_pps": greedy_metrics["wrong_pps"],
+                f"{heuristic_name}_rps": baseline_metrics["rps"],
+                f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
+                f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
+                f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
+            }
+        finally:
+            env.set_eval_mode(False)
 
     # ------------------------------------------------------------------
     # Loss tracking

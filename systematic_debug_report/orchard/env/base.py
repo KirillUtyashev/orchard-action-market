@@ -14,6 +14,9 @@ class BaseEnv(ABC):
     def __init__(self, cfg: EnvConfig) -> None:
         self.cfg = cfg
 
+    def set_eval_mode(self, eval_mode: bool) -> None:
+        """Switch between training and eval zone-move behaviour. No-op by default."""
+
     @abstractmethod
     def init_state(self) -> State:
         ...
