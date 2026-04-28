@@ -64,22 +64,40 @@ class StochasticEnv(BaseEnv):
         self._eval_mode: bool = False
         self._eval_rounds_elapsed: int = 0
         self._saved_spawn_area_cells: list[list[Grid]] | None = None
+        self._saved_rng_state = None
+        self._saved_type_rng_states: list | None = None
 
     def _spawn_cells_for_type(self, tau: int) -> list[Grid]:
         if self._spawn_area_cells is None:
             return self._all_cells
         return self._spawn_area_cells[tau]
 
-    def set_eval_mode(self, eval_mode: bool) -> None:
+    def set_eval_mode(self, eval_mode: bool, seed: int | None = None) -> None:
         if eval_mode:
             self._saved_spawn_area_cells = (
                 [list(cells) for cells in self._spawn_area_cells]
                 if self._spawn_area_cells is not None else None
             )
+            self._saved_rng_state = rng.getstate()
+            self._saved_type_rng_states = (
+                [r.getstate() for r in self._type_rngs]
+                if self._type_rngs is not None else None
+            )
             self._eval_rounds_elapsed = 0
+            if seed is not None:
+                rng.seed(seed)
+                if self._type_rngs is not None:
+                    for i, r in enumerate(self._type_rngs):
+                        r.seed(seed + i + 1)
         else:
             self._spawn_area_cells = self._saved_spawn_area_cells
             self._saved_spawn_area_cells = None
+            rng.setstate(self._saved_rng_state)
+            if self._type_rngs is not None and self._saved_type_rng_states is not None:
+                for r, state in zip(self._type_rngs, self._saved_type_rng_states):
+                    r.setstate(state)
+            self._saved_rng_state = None
+            self._saved_type_rng_states = None
         self._eval_mode = eval_mode
 
     def _relocate_spawn_areas(self) -> None:
@@ -128,8 +146,11 @@ class StochasticEnv(BaseEnv):
                     chosen_agents = trng.sample(cells, n_team)
                     for idx, agent_i in enumerate(team_agent_indices):
                         agent_positions_by_idx[agent_i] = chosen_agents[idx]
-                    agent_set_tau = set(chosen_agents)
-                    available = [c for c in spawn_cells if c not in agent_set_tau]
+                    if self.stoch.spawn_on_agent_cells:
+                        available = list(spawn_cells)
+                    else:
+                        agent_set_tau = set(chosen_agents)
+                        available = [c for c in spawn_cells if c not in agent_set_tau]
                     for cell in trng.sample(available, min(n_tasks, len(available))):
                         all_task_positions.append(cell)
                         all_task_types.append(tau)
@@ -141,12 +162,16 @@ class StochasticEnv(BaseEnv):
             # PER_TYPE_UNIQUE (types may share cells, matching runtime behavior).
             agent_positions = tuple(rng.sample(cells, self.cfg.n_agents))
             agent_set = set(agent_positions)
+            block_agents_init = not self.stoch.spawn_on_agent_cells
             all_task_positions = []
             all_task_types = []
             for tau in range(self.cfg.n_task_types):
                 count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
                 cells_with_tau = {p for p, t in zip(all_task_positions, all_task_types) if t == tau}
-                available = [c for c in self._spawn_cells_for_type(tau) if c not in agent_set and c not in cells_with_tau]
+                available = [
+                    c for c in self._spawn_cells_for_type(tau)
+                    if (not block_agents_init or c not in agent_set) and c not in cells_with_tau
+                ]
                 to_spawn = min(count, len(available))
                 for cell in rng.sample(available, to_spawn):
                     all_task_positions.append(cell)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 import time
 from pathlib import Path
@@ -63,6 +64,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--show-after-states", action="store_true", help="Show s_t and s_{t+1} per transition")
     p.add_argument("--steps", type=int, default=200, help="Number of agent decisions (default: 200)")
     p.add_argument("--seed", type=int, default=None, help="Override config seed")
+    p.add_argument("--eval-seed", type=int, default=None, help="Reseed env RNGs at eval start (use same value in EvalConfig.eval_seed to match training)")
     p.add_argument("--fps", type=int, default=3, help="Autoplay FPS (default: 3)")
     p.add_argument("--output-dir", type=str, default="./viz_output", help="Output directory")
     p.add_argument("--decisions", action="store_true", help="Show Q-values for all actions (requires --checkpoint)")
@@ -78,7 +80,7 @@ def load_checkpoint(
     networks: list[ValueNetwork],
 ) -> tuple[int, dict]:
     """Load critic weights into networks. Returns (training step, raw ckpt dict)."""
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if "networks" in ckpt:
         state_dicts = ckpt["networks"]
     elif "critics" in ckpt:
@@ -139,17 +141,21 @@ def _greedy_action_batched(
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
+    _actor_types = (
+        frozenset(env.cfg.task_assignments[state.actor])
+        if env.cfg.task_assignments is not None else None
+    )
     for a in all_actions:
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
             after_states.append(s_after)
             immediate_rewards.append(sum(rewards))
         elif phase2:
-            after_states.append(state)
+            after_states.append(dataclasses.replace(state, pick_phase=False))
             immediate_rewards.append(0.0)
         else:
             s = env.apply_action(state, a)
-            if s.is_agent_on_task(s.actor):
+            if s.is_agent_on_task(s.actor, _actor_types):
                 after_states.append(s.with_pick_phase())
             else:
                 after_states.append(s)
@@ -157,16 +163,15 @@ def _greedy_action_batched(
 
     n_actions = len(after_states)
 
-    # Use encode_all_agents_for_actions to match GPU trainer encoding exactly.
-    # encode_batch_for_actions omits Ch5 (actor position) for the actor's own
-    # encoding, causing wrong critic inputs vs what was seen during training.
-    grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
-    # grids: (N, B, C, H, W), scalars: (N, B, S)
-
+    # Mirror CpuTrainer._compute_team_values exactly: encode per-agent using
+    # encode_batch_for_actions, with agent_idx=0 for centralized networks.
+    is_centralized = len(networks) == 1 and env.cfg.n_agents > 1
     team_values = [0.0] * n_actions
     with torch.no_grad():
         for i, net in enumerate(networks):
-            vals = net.forward_raw(grids[i], scalars[i])  # (B,)
+            agent_idx = 0 if is_centralized else i
+            batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
+            vals = net(batch_enc)
             for k in range(n_actions):
                 team_values[k] += vals[k].item()
 
@@ -356,9 +361,6 @@ def main() -> None:
     if task_assignments is not None:
         print(f"  Assignments: {task_assignments}")
 
-    # --- Generate initial state ---
-    init_state = env.init_state()
-
     # --- Generate primary rollout ---
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
     t0 = time.time()
@@ -366,7 +368,8 @@ def main() -> None:
     policy_fn = make_policy_fn(policy_name, networks, env,
                                actor_networks=actor_networks)
     spawn_area_snapshots: list = []
-    env.set_eval_mode(True)
+    env.set_eval_mode(True, seed=args.eval_seed)
+    init_state = env.init_state()
     try:
         frames = generate_frames(
             start_state=init_state,

@@ -743,7 +743,7 @@ class ActorCriticTrainerBase(TrainerBase):
     # Evaluation and logging
     # ------------------------------------------------------------------
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
-        env.set_eval_mode(True)
+        env.set_eval_mode(True, seed=eval_cfg.eval_seed)
         try:
             eval_start = env.init_state()
 

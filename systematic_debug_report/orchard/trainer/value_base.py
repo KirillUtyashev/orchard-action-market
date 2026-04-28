@@ -559,7 +559,7 @@ class ValueTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
         from orchard.eval import evaluate_policy_metrics
-        env.set_eval_mode(True)
+        env.set_eval_mode(True, seed=eval_cfg.eval_seed)
         try:
             eval_start = env.init_state()
 

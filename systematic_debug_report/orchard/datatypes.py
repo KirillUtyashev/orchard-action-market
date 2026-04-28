@@ -250,6 +250,7 @@ class EvalConfig:
     eval_steps: int = 1000
     n_test_states: int = 50
     checkpoint_freq: int = 0
+    eval_seed: int | None = None  # if set, reseeds env RNGs at start of each eval for reproducibility
 
 
 @dataclass(frozen=True)

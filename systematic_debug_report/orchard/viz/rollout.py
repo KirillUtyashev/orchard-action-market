@@ -78,8 +78,11 @@ def generate_frames(
         total_reward += transition.rewards[transition.s_t.actor]
         total_team_reward += sum(transition.rewards)
 
-        # Increment decision count on non-PICK transitions (actual agent choices)
-        if transition.action.is_move():
+        # Increment on move-phase steps only, matching training's n_steps denominator.
+        # Can't use action.is_move(): STAY (value<=4) is also returned during pick phase.
+        # s_t.pick_phase is not set on stored transitions (only used for policy queries).
+        # discount=gamma for move steps, discount=1.0 for pick steps — reliable discriminant.
+        if transition.discount < 1.0:
             decision_count += 1
 
         # --- Optional: decision introspection (only at decision points) ---
