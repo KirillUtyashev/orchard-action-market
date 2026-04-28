@@ -48,6 +48,7 @@ class ValueTrainerBase(TrainerBase):
         per_type_seeds: tuple[int, ...] | None = None,
         simulate_stranger_gap: int = 0,
         greedy_own_type_only: bool = False,
+        discount_method: str = "team_steps",
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -87,42 +88,46 @@ class ValueTrainerBase(TrainerBase):
         else:
             self._teammate_sets = None
 
+        self._discount_method: str = discount_method
+
+        if discount_method == "team_steps" and self._centralized:
+            raise ValueError("discount_method='team_steps' is not supported for centralized training")
+
         # Per-team TD trace: one _prev per team so stranger steps don't contaminate
         # team k's discount chain. Only active when train_only_teammates is set.
         if self._teammate_sets is not None and env.cfg.task_assignments is not None:
             assert all(
                 len(env.cfg.task_assignments[i]) == 1 for i in range(env.cfg.n_agents)
-            ), "gamma_accum requires each agent to have exactly one task type"
+            ), "per-team TD requires each agent to have exactly one task type"
             self._agent_team_idx: list[int] | None = [
                 env.cfg.task_assignments[i][0] for i in range(env.cfg.n_agents)
             ]
             self._prev_per_team: list[Any] = [None] * env.cfg.n_task_types
-            # Per-team accumulated discount factor.
-            # When team k's agent acts, eff_gamma = _gamma_accum[k] * gamma.
-            # After use, resets to gamma^simulate_stranger_gap (1.0 in T=M;
-            # gamma^n_strangers in T=1 to simulate stranger steps that don't exist).
-            # Every time any OTHER team's agent takes a move step,
-            # _gamma_accum[k] *= gamma for all k not in that team.
-            # This makes dec V_i = E[sum_t gamma^t r_i(t)] over ALL world steps,
-            # so sum_i V_i_dec ≈ V_cen.
-            #
-            # Assumption for T=1 ≡ T=M: simulate_stranger_gap must equal
-            # n_total_agents - n_own_team_agents (i.e. the number of stranger
-            # agent move-steps that occur between team k's consecutive turns in T=M).
-            # Pick steps use gamma=1 so they do not contribute to accumulation.
-            self._gamma_accum_per_team: list[float] | None = [1.0] * env.cfg.n_task_types
-            self._simulate_stranger_gap: int = simulate_stranger_gap
-            # How many agents belong to each team — used to detect round boundaries.
-            self._n_team_agents: list[int] = [
-                sum(1 for i in range(env.cfg.n_agents) if self._agent_team_idx[i] == k)
-                for k in range(env.cfg.n_task_types)
-            ]
-            # Steps taken by team k since its last round boundary (gap application).
-            # Assumption: teammates have CONSECUTIVE agent indices in round-robin order
-            # (i.e. task_assignments groups same-team agents together, e.g. [[0,0],[1,1]]).
-            # The gap fires after every n_team_agents consecutive team-k steps.
-            # If teammates were interleaved with strangers this count would be wrong.
-            self._team_step_count: list[int] = [0] * env.cfg.n_task_types
+            if discount_method in ("world_steps", "round_steps"):
+                self._n_team_agents: list[int] = [
+                    sum(1 for i in range(env.cfg.n_agents) if self._agent_team_idx[i] == k)
+                    for k in range(env.cfg.n_task_types)
+                ]
+                self._team_step_count: list[int] = [0] * env.cfg.n_task_types
+                if discount_method == "world_steps":
+                    # Per-team accumulated discount factor.
+                    # When team k's agent acts, eff_gamma = _gamma_accum[k] * gamma.
+                    # After use, resets to gamma^simulate_stranger_gap (1.0 in T=M;
+                    # gamma^n_strangers in T=1 to simulate stranger steps that don't exist).
+                    # Every time any OTHER team's agent takes a move step,
+                    # _gamma_accum[k] *= gamma for all k not in that team.
+                    # This makes dec V_i = E[sum_t gamma^t r_i(t)] over ALL world steps,
+                    # so sum_i V_i_dec ≈ V_cen.
+                    self._gamma_accum_per_team: list[float] | None = [1.0] * env.cfg.n_task_types
+                    self._simulate_stranger_gap: int = simulate_stranger_gap
+                else:  # round_steps: no stranger accumulation needed
+                    self._gamma_accum_per_team = None
+                    self._simulate_stranger_gap = 0
+            else:  # "team_steps": plain gamma per own-team step, no stranger accumulation
+                self._gamma_accum_per_team = None
+                self._simulate_stranger_gap = 0
+                self._n_team_agents = None
+                self._team_step_count = None
         else:
             self._agent_team_idx = None
             self._prev_per_team = None
@@ -130,6 +135,10 @@ class ValueTrainerBase(TrainerBase):
             self._simulate_stranger_gap = 0
             self._n_team_agents = None
             self._team_step_count = None
+
+        # Round boundary counter for centralized round_steps: tracks steps within
+        # the current global round (0 = start of new round → use gamma).
+        self._global_round_step_count: int = 0
 
         self._greedy_own_type_only = greedy_own_type_only
 
@@ -274,25 +283,43 @@ class ValueTrainerBase(TrainerBase):
         _team_idx = self._agent_team_idx[state.actor] if self._agent_team_idx is not None else None
         if _team_idx is not None:
             self._prev = self._prev_per_team[_team_idx]
-            # Compute effective gamma: accumulated stranger discount * own move step.
-            _eff_gamma = self._gamma_accum_per_team[_team_idx] * self._gamma
-            # Reset accumulator. The gap is only applied at the END of the team's
-            # round (after all n_team_agents have acted consecutively). Mid-round
-            # resets to 1.0 because no strangers acted between teammates.
-            self._team_step_count[_team_idx] += 1
-            if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
-                # End of team's round: load simulated stranger gap for T=1 testing,
-                # or 1.0 in T=M (strangers accumulate naturally via the loop below).
-                self._gamma_accum_per_team[_team_idx] = (
-                    self._gamma ** self._simulate_stranger_gap
-                    if self._simulate_stranger_gap > 0 else 1.0
-                )
-                self._team_step_count[_team_idx] = 0
-            else:
-                # Mid-round: teammates are about to act — no strangers in between.
-                self._gamma_accum_per_team[_team_idx] = 1.0
+            if self._discount_method == "world_steps":
+                # Compute effective gamma: accumulated stranger discount * own move step.
+                _eff_gamma = self._gamma_accum_per_team[_team_idx] * self._gamma
+                # Reset accumulator. The gap is only applied at the END of the team's
+                # round (after all n_team_agents have acted consecutively). Mid-round
+                # resets to 1.0 because no strangers acted between teammates.
+                self._team_step_count[_team_idx] += 1
+                if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
+                    # End of team's round: load simulated stranger gap for T=1 testing,
+                    # or 1.0 in T=M (strangers accumulate naturally via the loop below).
+                    self._gamma_accum_per_team[_team_idx] = (
+                        self._gamma ** self._simulate_stranger_gap
+                        if self._simulate_stranger_gap > 0 else 1.0
+                    )
+                    self._team_step_count[_team_idx] = 0
+                else:
+                    # Mid-round: teammates are about to act — no strangers in between.
+                    self._gamma_accum_per_team[_team_idx] = 1.0
+            elif self._discount_method == "round_steps":
+                # gamma at the start of team k's sub-round (first step after strangers
+                # finished); 1.0 for all subsequent steps within the sub-round.
+                _eff_gamma = self._gamma if self._team_step_count[_team_idx] == 0 else 1.0
+                self._team_step_count[_team_idx] += 1
+                if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
+                    self._team_step_count[_team_idx] = 0
+            else:  # "team_steps": plain gamma per own-team step, no stranger accumulation
+                _eff_gamma = self._gamma
         else:
-            _eff_gamma = self._gamma
+            if self._discount_method == "round_steps":
+                # Centralized round_steps: gamma at first step of each global round,
+                # 1.0 for all other steps within the round. Both cen and dec use this.
+                _eff_gamma = self._gamma if self._global_round_step_count == 0 else 1.0
+                self._global_round_step_count += 1
+                if self._global_round_step_count >= self._n_agents:
+                    self._global_round_step_count = 0
+            else:
+                _eff_gamma = self._gamma
 
         move_action = self.select_move(state, t)
         _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
@@ -334,12 +361,13 @@ class ValueTrainerBase(TrainerBase):
 
         if _team_idx is not None:
             self._prev_per_team[_team_idx] = self._prev
-            # One move step just happened for team _team_idx.
-            # All other teams accumulate gamma for this step — their next TD
-            # update will account for this stranger step in the discount chain.
-            for _k in range(len(self._gamma_accum_per_team)):
-                if _k != _team_idx:
-                    self._gamma_accum_per_team[_k] *= self._gamma
+            if self._discount_method == "world_steps":
+                # One move step just happened for team _team_idx.
+                # All other teams accumulate gamma for this step — their next TD
+                # update will account for this stranger step in the discount chain.
+                for _k in range(len(self._gamma_accum_per_team)):
+                    if _k != _team_idx:
+                        self._gamma_accum_per_team[_k] *= self._gamma
 
         self._timer.start(TimerSection.ENV)
         _s_pre_spawn = s_picked

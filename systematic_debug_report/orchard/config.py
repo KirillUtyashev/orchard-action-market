@@ -315,6 +315,9 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     train_only_teammates = bool(d.get("train_only_teammates", False))
     simulate_stranger_gap = int(d.get("simulate_stranger_gap", 0))
     greedy_own_type_only = bool(d.get("greedy_own_type_only", False))
+    discount_method = str(d.get("discount_method", "team_steps"))
+    if discount_method not in ("team_steps", "world_steps", "round_steps"):
+        raise ValueError(f"train.discount_method must be 'team_steps', 'world_steps', or 'round_steps', got {discount_method!r}")
 
     return TrainConfig(
         total_steps=int(d["total_steps"]),
@@ -336,6 +339,7 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         train_only_teammates=train_only_teammates,
         simulate_stranger_gap=simulate_stranger_gap,
         greedy_own_type_only=greedy_own_type_only,
+        discount_method=discount_method,
     )
 
 

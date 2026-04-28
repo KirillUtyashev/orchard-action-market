@@ -223,10 +223,14 @@ class TrainConfig:
     train_only_teammates: bool = False
     simulate_stranger_gap: int = 0
     greedy_own_type_only: bool = False
+    discount_method: str = "team_steps"
     # simulate_stranger_gap: for T=1 ≡ T=M verification with new dec gamma accumulation.
     # Set to n_total_agents - n_own_team_agents so T=1 artificially accumulates
     # the same gamma that would build up from stranger move-steps in T=M.
-    # Only meaningful when train_only_teammates=True. See ValueTrainerBase.
+    # Only meaningful when train_only_teammates=True and discount_method="world_steps".
+    #
+    # discount_method: "team_steps" = discount only by own team's move steps (pre-edf8909 behaviour);
+    #                  "world_steps" = accumulate gamma for stranger steps so sum_i V_dec ≈ V_cen.
 
 
 @dataclass(frozen=True)
