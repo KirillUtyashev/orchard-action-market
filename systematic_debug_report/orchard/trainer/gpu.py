@@ -38,6 +38,7 @@ class GpuTrainer(ValueTrainerBase):
         train_only_teammates: bool = False,
         per_type_seeds: tuple[int, ...] | None = None,
         simulate_stranger_gap: int = 0,
+        greedy_own_type_only: bool = False,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
@@ -46,6 +47,7 @@ class GpuTrainer(ValueTrainerBase):
             train_only_teammates=train_only_teammates,
             per_type_seeds=per_type_seeds,
             simulate_stranger_gap=simulate_stranger_gap,
+            greedy_own_type_only=greedy_own_type_only,
         )
         self._bt = bt
 
@@ -79,6 +81,7 @@ class GpuTrainer(ValueTrainerBase):
     # ------------------------------------------------------------------
     def _compute_team_values(
         self, state: State, after_states: list[State],
+        teammate_indices: list[int] | None = None,
     ) -> list[float]:
         from orchard.trainer.timer import TimerSection
         self._timer.start(TimerSection.ACTION_ENCODE)
@@ -89,6 +92,8 @@ class GpuTrainer(ValueTrainerBase):
         self._timer.stop()
         self._last_action_grids = grids      # (N, B, C, H, W) — kept for enc caching
         self._last_action_scalars = scalars  # (N, B, S)
+        if teammate_indices is not None:
+            return values[teammate_indices].sum(dim=0).tolist()
         return values.sum(dim=0).tolist()
 
     def _cache_selected_enc(self, best_idx: int) -> None:

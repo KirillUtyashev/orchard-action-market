@@ -58,11 +58,14 @@ class CpuTrainer(ValueTrainerBase):
     # ------------------------------------------------------------------
     def _compute_team_values(
         self, state: State, after_states: list[State],
+        teammate_indices: list[int] | None = None,
     ) -> list[float]:
         n_actions = len(after_states)
         team_values = [0.0] * n_actions
+        indices = teammate_indices if teammate_indices is not None else range(len(self._networks_list))
         with torch.no_grad():
-            for i, net in enumerate(self._networks_list):
+            for i in indices:
+                net = self._networks_list[i]
                 agent_idx = 0 if self._centralized else i
                 batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
                 vals = net(batch_enc)

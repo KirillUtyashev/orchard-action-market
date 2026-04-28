@@ -47,6 +47,7 @@ class ValueTrainerBase(TrainerBase):
         train_only_teammates: bool = False,
         per_type_seeds: tuple[int, ...] | None = None,
         simulate_stranger_gap: int = 0,
+        greedy_own_type_only: bool = False,
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -130,6 +131,8 @@ class ValueTrainerBase(TrainerBase):
             self._n_team_agents = None
             self._team_step_count = None
 
+        self._greedy_own_type_only = greedy_own_type_only
+
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
         self._move: Any = None
@@ -203,8 +206,12 @@ class ValueTrainerBase(TrainerBase):
     @abstractmethod
     def _compute_team_values(
         self, state: State, after_states: list[State],
+        teammate_indices: list[int] | None = None,
     ) -> list[float]:
-        """Compute sum_j V_j(after_state) for each candidate after-state."""
+        """Compute sum_j V_j(after_state) for each candidate after-state.
+
+        teammate_indices: if set, only sum over these agent indices.
+        """
         ...
 
     def _cache_selected_enc(self, best_idx: int) -> None:
@@ -444,7 +451,12 @@ class ValueTrainerBase(TrainerBase):
                 immediate_rewards.append(0.0)
         self._timer.stop()
 
-        team_values = self._compute_team_values(state, after_states)
+        _greedy_tm = (
+            self._teammate_sets[state.actor]
+            if self._greedy_own_type_only and self._teammate_sets is not None
+            else None
+        )
+        team_values = self._compute_team_values(state, after_states, _greedy_tm)
 
         best_idx = 0
         best_val = team_values[0] + immediate_rewards[0]
