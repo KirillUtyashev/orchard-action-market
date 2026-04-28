@@ -6,6 +6,7 @@ from abc import abstractmethod
 import csv as _csv
 import json
 from pathlib import Path
+import random as _random
 from typing import Any
 
 import numpy as np
@@ -124,6 +125,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._decision_count = 0
         self._zero_rewards = tuple(0.0 for _ in range(self._n_agents))
         self._critic_prev_after: Any = None
+        self._agent_action_rngs = self._build_agent_action_rngs()
 
         self._td_loss_accum = 0.0
         self._td_loss_count = 0
@@ -207,6 +209,35 @@ class ActorCriticTrainerBase(TrainerBase):
         self._dbg_was_greedy: bool = False
         self._dbg_best_val: float = 0.0
         self._dbg_td_delta_sq: float = 0.0
+
+    def _build_agent_action_rngs(self) -> list[_random.Random] | None:
+        stoch = self._env.cfg.stochastic
+        seeds = stoch.per_type_seeds if stoch is not None else None
+        assignments = self._env.cfg.task_assignments
+        if seeds is None or assignments is None:
+            return None
+        if not all(len(assignments[i]) == 1 for i in range(self._n_agents)):
+            raise ValueError("per_type_seeds requires each actor-critic agent to have exactly one task type")
+        return [
+            _random.Random(int(seeds[int(assignments[i][0])]))
+            for i in range(self._n_agents)
+        ]
+
+    def _sample_action_index_from_probs(self, actor_id: int, probs: np.ndarray | torch.Tensor) -> int:
+        agent_rngs = self._agent_action_rngs
+        if agent_rngs is None:
+            if isinstance(probs, torch.Tensor):
+                return int(torch.multinomial(probs, 1).item())
+            return int(np.random.choice(len(probs), p=probs))
+
+        probs_np = probs.detach().cpu().numpy() if isinstance(probs, torch.Tensor) else np.asarray(probs)
+        threshold = agent_rngs[actor_id].random()
+        cumulative = 0.0
+        for idx, prob in enumerate(probs_np):
+            cumulative += float(prob)
+            if threshold <= cumulative:
+                return idx
+        return int(len(probs_np) - 1)
 
     def _build_teammate_matrix(self) -> tuple[tuple[bool, ...], ...]:
         assignments = self._env.cfg.task_assignments or ()
@@ -545,8 +576,9 @@ class ActorCriticTrainerBase(TrainerBase):
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state)
-        action, probs = self._actor_networks_list[actor_id].sample_action(actor_state, legal_mask)
-        return action, actor_state, probs, legal_mask
+        probs = self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
+        action_idx = self._sample_action_index_from_probs(actor_id, probs)
+        return policy_index_to_action(action_idx), actor_state, probs, legal_mask
 
     def _greedy_action(self, state: State) -> Action:
         probs = self._actor_probabilities(state)
@@ -1417,7 +1449,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state)
         probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
-        action_idx = int(torch.multinomial(probs_t, 1).item())
+        action_idx = self._sample_action_index_from_probs(actor_id, probs_t)
         return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask
 
     def _train_decision(

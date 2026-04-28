@@ -152,6 +152,7 @@ def _make_actor_critic_trainer(
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
     batch_forced_actor_updates: bool = True,
+    per_type_seeds: tuple[int, ...] | None = None,
 ):
     assignments = task_assignments or ((0,), (0,))
     env_cfg = EnvConfig(
@@ -166,7 +167,12 @@ def _make_actor_critic_trainer(
         task_assignments=assignments,
         pick_mode=pick_mode,
         max_tasks_per_type=1,
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        stochastic=StochasticConfig(
+            spawn_prob=0.0,
+            despawn_mode=None,
+            despawn_prob=0.0,
+            per_type_seeds=per_type_seeds,
+        ),
     )
     model_cfg = ModelConfig(
         encoder=EncoderType.BLIND_TASK_CNN_GRID,
@@ -527,6 +533,42 @@ def _install_two_actor_choice_cycle_actions(
 
 
 class TestActorCriticTrainingLoop:
+    def test_actor_critic_action_sampling_uses_per_type_rngs(self):
+        _, source_trainer = _make_actor_critic_trainer(
+            PickMode.FORCED,
+            n_task_types=2,
+            task_assignments=((0,), (0,), (1,), (1,)),
+            per_type_seeds=(1000, 1001),
+        )
+        _, isolated_trainer = _make_actor_critic_trainer(
+            PickMode.FORCED,
+            n_task_types=1,
+            task_assignments=((0,), (0,)),
+            per_type_seeds=(1001,),
+        )
+
+        probs = np.asarray([0.05, 0.15, 0.2, 0.25, 0.35], dtype=float)
+
+        source_agent_2 = [
+            source_trainer._sample_action_index_from_probs(2, probs)
+            for _ in range(12)
+        ]
+        isolated_agent_0 = [
+            isolated_trainer._sample_action_index_from_probs(0, probs)
+            for _ in range(12)
+        ]
+        source_agent_3 = [
+            source_trainer._sample_action_index_from_probs(3, probs)
+            for _ in range(12)
+        ]
+        isolated_agent_1 = [
+            isolated_trainer._sample_action_index_from_probs(1, probs)
+            for _ in range(12)
+        ]
+
+        assert source_agent_2 == isolated_agent_0
+        assert source_agent_3 == isolated_agent_1
+
     def test_batched_actor_trainer_matches_delayed_sequential_update(self):
         torch.manual_seed(17)
 
