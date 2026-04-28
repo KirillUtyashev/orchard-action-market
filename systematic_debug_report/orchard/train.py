@@ -198,9 +198,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
 
             for idx, net in enumerate(trainer.critic_networks):
                 for name, val in net.get_weight_norms().items():
-                    detail_row[f"critic_weight_norm_agent_{idx}_{name}"] = round(val, 6)
+                    detail_row[f"critic_weight_norm_agent_{idx}_{name}"] = round(val, 11)
                 for name, val in net.get_grad_norms().items():
-                    detail_row[f"critic_grad_norm_agent_{idx}_{name}"] = round(val, 6)
+                    detail_row[f"critic_grad_norm_agent_{idx}_{name}"] = round(val, 11)
 
             if td_loss_value is None:
                 td_loss_value = round(trainer.get_td_loss(), 8)

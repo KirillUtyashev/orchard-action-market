@@ -209,6 +209,9 @@ class ActorCriticTrainerBase(TrainerBase):
         self._dbg_was_greedy: bool = False
         self._dbg_best_val: float = 0.0
         self._dbg_td_delta_sq: float = 0.0
+        self._dbg_actor_selected_q: float = 0.0
+        self._dbg_actor_baseline: float = 0.0
+        self._dbg_actor_advantage: float = 0.0
 
     def _build_agent_action_rngs(self) -> list[_random.Random] | None:
         stoch = self._env.cfg.stochastic
@@ -844,6 +847,9 @@ class ActorCriticTrainerBase(TrainerBase):
         self._dbg_best_val = selected_q_value
         baseline_value = float(np.dot(probs, q_values))
         advantage = selected_q_value - baseline_value
+        self._dbg_actor_selected_q = selected_q_value
+        self._dbg_actor_baseline = baseline_value
+        self._dbg_actor_advantage = advantage
         selected_rewards = rewards_by_action[action_idx]
         selected_after_values = after_values_by_action[action_idx]
         if self._following_states:
@@ -966,9 +972,9 @@ class ActorCriticTrainerBase(TrainerBase):
         }
         for idx, actor_net in enumerate(self._actor_networks_list):
             for name, val in actor_net.get_weight_norms().items():
-                row[f"actor_weight_norm_agent_{idx}_{name}"] = round(val, 6)
+                row[f"actor_weight_norm_agent_{idx}_{name}"] = round(val, 11)
             for name, val in actor_net.get_grad_norms().items():
-                row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
+                row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 11)
         return row
 
     def _picked_task_type(self, state: State) -> int:
@@ -1041,6 +1047,9 @@ class ActorCriticTrainerBase(TrainerBase):
             "agent_positions_indexed": ";".join(f"{p.row},{p.col}" for p in next_state.agent_positions),
             "was_greedy": self._dbg_was_greedy,
             "best_val": round(self._dbg_best_val, 8),
+            "actor_selected_q": round(self._dbg_actor_selected_q, 8),
+            "actor_baseline": round(self._dbg_actor_baseline, 8),
+            "actor_advantage": round(self._dbg_actor_advantage, 8),
             "td_delta_sq": round(self._dbg_td_delta_sq, 10),
             "enc_grid_l2": round(self._enc_grid_l2_for_actor_state(move_actor_state), 8),
             "enc_scalar": self._enc_scalar_for_actor_state(move_actor_state),
@@ -1088,6 +1097,7 @@ class ActorCriticTrainerBase(TrainerBase):
                    "n_tasks_after", "task_positions_after", "task_types_after",
                    "agent_positions", "agent_positions_indexed",
                    "was_greedy", "best_val", "td_delta_sq",
+                   "actor_selected_q", "actor_baseline", "actor_advantage",
                    "enc_grid_l2", "enc_scalar"]
             )
             self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
@@ -1488,6 +1498,9 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         self._dbg_best_val = selected_q_value
         baseline_value = float(torch.dot(probs_legal, q_legal).item())
         advantage = selected_q_value - baseline_value
+        self._dbg_actor_selected_q = selected_q_value
+        self._dbg_actor_baseline = baseline_value
+        self._dbg_actor_advantage = advantage
 
         selected_rewards = rewards_list[action_pos]
         selected_after_values_t = after_values_t[action_pos]

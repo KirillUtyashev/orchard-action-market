@@ -1587,6 +1587,7 @@ class TestActorCriticTrainingLoop:
                 "n_tasks_after", "task_positions_after", "task_types_after",
                 "agent_positions", "agent_positions_indexed",
                 "was_greedy", "best_val", "td_delta_sq",
+                "actor_selected_q", "actor_baseline", "actor_advantage",
                 "enc_grid_l2", "enc_scalar",
             ]
             first = rows[0]
