@@ -31,7 +31,7 @@ from orchard.enums import Action, Heuristic, PickMode, num_actions
 from orchard.viz.export import write_summary_json, write_trajectory_csv
 from orchard.viz.frame import Frame
 from orchard.viz.html_builder import build_html
-from orchard.viz.renderer import render_frame_png
+from orchard.viz.renderer import render_frame_svg
 from orchard.viz.rollout import generate_frames
 
 
@@ -221,27 +221,24 @@ def make_policy_fn(
 def render_all_frames(
     frames: list[Frame],
     show_after_states: bool,
-    dpi: int,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
-) -> list[bytes]:
-    """Render all frames to PNG bytes."""
-    pngs: list[bytes] = []
+) -> list[str]:
+    """Render all frames to inline SVG strings."""
+    svgs: list[str] = []
     total = len(frames)
     for i, frame in enumerate(frames):
         if (i + 1) % 50 == 0 or i == 0 or i == total - 1:
             print(f"  Rendering frame {i + 1}/{total}...", end="\r")
 
-        # Determine picked cell for pick highlight
         picked_cell = None
         picked_correct = None
         if frame.picked and frame.picked_task_type is not None:
-            # The pick happened at the actor's position in s_t
             pos = frame.state.agent_positions[frame.actor]
             picked_cell = (pos.row, pos.col)
             picked_correct = frame.picked_correct
 
-        png = render_frame_png(
+        svg = render_frame_svg(
             state=frame.state,
             state_after=frame.state_after if show_after_states else None,
             height=frame.height,
@@ -252,15 +249,14 @@ def render_all_frames(
             rewards=frame.rewards,
             discount=frame.discount,
             show_after_state=show_after_states,
-            dpi=dpi,
             n_task_types=n_task_types,
             task_assignments=task_assignments,
             picked_cell=picked_cell,
             picked_correct=picked_correct,
         )
-        pngs.append(png)
+        svgs.append(svg)
     print()
-    return pngs
+    return svgs
 
 
 def _load_config_or_metadata(path: str):
@@ -469,19 +465,19 @@ def main() -> None:
         print("Done (--no-html: skipped rendering and HTML).")
         return
 
-    # --- Render PNGs ---
+    # --- Render SVGs ---
     print("Rendering primary frames...")
     t0 = time.time()
-    frame_pngs = render_all_frames(frames, args.show_after_states, args.dpi,
-                                    n_task_types=n_task_types, task_assignments=task_assignments)
+    frame_svgs = render_all_frames(frames, args.show_after_states,
+                                   n_task_types=n_task_types, task_assignments=task_assignments)
     print(f"  Rendered in {time.time() - t0:.1f}s")
 
-    compare_pngs: list[bytes] | None = None
+    compare_svgs: list[str] | None = None
     if compare_frames is not None:
         print("Rendering compare frames...")
         t0 = time.time()
-        compare_pngs = render_all_frames(compare_frames, args.show_after_states, args.dpi,
-                                          n_task_types=n_task_types, task_assignments=task_assignments)
+        compare_svgs = render_all_frames(compare_frames, args.show_after_states,
+                                         n_task_types=n_task_types, task_assignments=task_assignments)
         print(f"  Rendered in {time.time() - t0:.1f}s")
 
     # --- Build HTML ---
@@ -490,11 +486,11 @@ def main() -> None:
     t0 = time.time()
     build_html(
         frames=frames,
-        frame_pngs=frame_pngs,
+        frame_svgs=frame_svgs,
         output_path=html_path,
         fps=args.fps,
         compare_frames=compare_frames,
-        compare_pngs=compare_pngs,
+        compare_svgs=compare_svgs,
         n_task_types=n_task_types,
         task_assignments=task_assignments,
         pick_mode=pick_mode,
