@@ -16,6 +16,7 @@ from orchard.enums import (
     LearningType,
     PickMode,
     Schedule,
+    SpawnZoneMode,
     StoppingCondition,
     TaskSpawnMode,
     WeightInit,
@@ -88,6 +89,11 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "none": DespawnMode.NONE,
         "probability": DespawnMode.PROBABILITY,
     },
+    "spawn_zone_mode": {
+        "none": SpawnZoneMode.NONE,
+        "random": SpawnZoneMode.RANDOM,
+        "edge_switch": SpawnZoneMode.EDGE_SWITCH,
+    },
     "task_spawn_mode": {
         "global_unique": TaskSpawnMode.GLOBAL_UNIQUE,
         "per_type_unique": TaskSpawnMode.PER_TYPE_UNIQUE,
@@ -153,8 +159,12 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
         per_type_seeds=tuple(int(s) for s in sd["per_type_seeds"]) if sd.get("per_type_seeds") else None,
         spawn_area_size=int(sd["spawn_area_size"]) if sd.get("spawn_area_size") else None,
-        spawn_zone_move_interval=int(sd.get("spawn_zone_move_interval", 0)),
-        eval_spawn_zone_move_interval=int(sd.get("eval_spawn_zone_move_interval", 0)),
+        spawn_zone_mode=_enum(sd.get("spawn_zone_mode", "none"), "spawn_zone_mode"),
+        spawn_zone_interval=int(sd.get("spawn_zone_interval", 0)),
+        spawn_flip_interval=int(sd.get("spawn_flip_interval", 0)),
+        eval_spawn_zone_mode=_enum(sd.get("eval_spawn_zone_mode", "none"), "spawn_zone_mode"),
+        eval_spawn_zone_interval=int(sd.get("eval_spawn_zone_interval", 0)),
+        eval_spawn_flip_interval=int(sd.get("eval_spawn_flip_interval", 0)),
     )
 
     return EnvConfig(

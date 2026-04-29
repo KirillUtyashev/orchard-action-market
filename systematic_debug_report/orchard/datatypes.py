@@ -17,6 +17,7 @@ from orchard.enums import (
     LearningType,
     PickMode,
     Schedule,
+    SpawnZoneMode,
     StoppingCondition,
     TaskSpawnMode,
     WeightInit,
@@ -143,8 +144,13 @@ class StochasticConfig:
     spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
     per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
     spawn_area_size: int | None = None  # square side length for per-type spawn regions; None = whole grid
-    spawn_zone_move_interval: int = 0      # rounds between zone relocations during training; 0 = fixed forever
-    eval_spawn_zone_move_interval: int = 0  # rounds between zone relocations during eval; 0 = fixed
+    spawn_zone_mode: SpawnZoneMode = SpawnZoneMode.NONE  # how zones move during training
+    spawn_zone_interval: int = 0   # rounds between zone moves in training (0 = no periodic move;
+                                   # edge_switch still places zones on border at construction)
+    spawn_flip_interval: int = 0   # rounds between antipodal flips during training (0 = disabled)
+    eval_spawn_zone_mode: SpawnZoneMode = SpawnZoneMode.NONE  # how zones move during eval
+    eval_spawn_zone_interval: int = 0  # rounds between zone moves in eval (same rules as training)
+    eval_spawn_flip_interval: int = 0  # rounds between antipodal flips during eval (0 = disabled)
 
 
 @dataclass(frozen=True)

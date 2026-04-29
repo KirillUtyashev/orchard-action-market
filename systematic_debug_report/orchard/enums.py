@@ -10,6 +10,14 @@ class DespawnMode(Enum):
     PROBABILITY = auto()
 
 
+class SpawnZoneMode(Enum):
+    NONE = auto()         # zones never move
+    RANDOM = auto()       # every interval rounds: each zone jumps to a random valid corner
+    EDGE_SWITCH = auto()  # every interval rounds: all zones reposition to the grid border,
+                          # evenly spread around the perimeter, randomly assigned to types.
+                          # interval=0 still places zones on the border at init/eval-start.
+
+
 class TaskSpawnMode(Enum):
     GLOBAL_UNIQUE = auto()   # at most 1 task of ANY type per cell (forced pick)
     PER_TYPE_UNIQUE = auto() # at most 1 task per TYPE per cell; types may coexist (choice pick)

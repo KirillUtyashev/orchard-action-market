@@ -33,6 +33,7 @@ from orchard.datatypes import (
     StochasticConfig,
 )
 from orchard.env import create_env
+from orchard.env.stochastic import edge_zone_positions
 from orchard.trainer import create_trainer
 
 
@@ -59,39 +60,6 @@ def _frozen_zones(stoch: StochasticConfig, env: EnvConfig) -> StochasticConfig:
     return dataclasses.replace(stoch, eval_spawn_zone_move_interval=0)
 
 
-def _edge_zone_positions(
-    height: int, width: int, size: int, n_zones: int
-) -> tuple[tuple[int, int], ...]:
-    """Compute n_zones spawn zone top-left corners that hug the grid edges,
-    spread as evenly as possible around the perimeter of valid corner positions.
-
-    Valid corner (r, c) means a size×size zone fits: r ∈ [0, height-size],
-    c ∈ [0, width-size].  We trace the outermost ring of these corners clockwise
-    and pick n_zones evenly-spaced points along that ring.
-
-    Examples (9×9 grid, size=3 → max_r=max_c=6):
-      n=1 → (0, 0)  top-left
-      n=2 → (0, 0), (6, 6)  diagonal corners
-      n=4 → (0,0), (0,6), (6,6), (6,0)  all four corners
-      n=8 → corners + edge midpoints
-    """
-    max_r = height - size
-    max_c = width - size
-
-    # Clockwise perimeter of valid corner positions starting from (0, 0)
-    perimeter: list[tuple[int, int]] = []
-    for c in range(0, max_c + 1):           # top edge: left → right
-        perimeter.append((0, c))
-    for r in range(1, max_r + 1):           # right edge: top → bottom
-        perimeter.append((r, max_c))
-    for c in range(max_c - 1, -1, -1):      # bottom edge: right → left
-        perimeter.append((max_r, c))
-    for r in range(max_r - 1, 0, -1):       # left edge: bottom → top
-        perimeter.append((r, 0))
-
-    n = len(perimeter)
-    return tuple(perimeter[round(i * n / n_zones) % n] for i in range(n_zones))
-
 
 def _edge_zones_center_agents(stoch: StochasticConfig, env: EnvConfig) -> StochasticConfig:
     return dataclasses.replace(stoch, eval_spawn_zone_move_interval=0)
@@ -106,7 +74,7 @@ def _edge_zones_center_agents_spawn_zones(
         raise ValueError(
             "edge_zones_center_agents requires spawn_area_size to be set in the training config"
         )
-    return _edge_zone_positions(env.height, env.width, size, env.n_task_types)
+    return edge_zone_positions(env.height, env.width, size, env.n_task_types)
 
 
 def _edge_zones_center_agents_init(state: State, env: EnvConfig) -> State:

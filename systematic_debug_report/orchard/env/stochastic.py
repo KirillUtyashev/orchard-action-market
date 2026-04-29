@@ -4,10 +4,39 @@ from __future__ import annotations
 
 import random as _random
 
-from orchard.enums import DespawnMode, PickMode, TaskSpawnMode
+from orchard.enums import DespawnMode, PickMode, SpawnZoneMode, TaskSpawnMode
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
+
+
+def edge_zone_positions(
+    height: int, width: int, size: int, n_zones: int
+) -> tuple[tuple[int, int], ...]:
+    """Compute n_zones spawn-zone top-left corners spread evenly around the grid perimeter.
+
+    Valid corner (r, c): a size×size zone fits, so r ∈ [0, height-size], c ∈ [0, width-size].
+    Corners are traced clockwise and n_zones evenly-spaced points are selected.
+
+    Examples (9×9 grid, size=3 → max_r=max_c=6):
+      n=1 → (0, 0)
+      n=2 → (0, 0), (6, 6)
+      n=4 → (0,0), (0,6), (6,6), (6,0)
+      n=8 → corners + edge midpoints
+    """
+    max_r = height - size
+    max_c = width - size
+    perimeter: list[tuple[int, int]] = []
+    for c in range(0, max_c + 1):
+        perimeter.append((0, c))
+    for r in range(1, max_r + 1):
+        perimeter.append((r, max_c))
+    for c in range(max_c - 1, -1, -1):
+        perimeter.append((max_r, c))
+    for r in range(max_r - 1, 0, -1):
+        perimeter.append((r, 0))
+    n = len(perimeter)
+    return tuple(perimeter[round(i * n / n_zones) % n] for i in range(n_zones))
 
 
 class StochasticEnv(BaseEnv):
@@ -23,8 +52,6 @@ class StochasticEnv(BaseEnv):
             for c in range(cfg.width)
         ]
         # Per-type RNG objects for exact T=1 vs T=M equivalence testing.
-        # Each type k uses _type_rngs[k] for init, despawn, spawn, AND epsilon-greedy
-        # (the trainer reads this same list). None → fall back to global rng.
         if cfg.stochastic.per_type_seeds is not None:
             assert len(cfg.stochastic.per_type_seeds) == cfg.n_task_types, (
                 f"per_type_seeds must have one entry per task type "
@@ -36,7 +63,6 @@ class StochasticEnv(BaseEnv):
         else:
             self._type_rngs = None
 
-        # Fixed spawn areas: one square region per task type, placed once at construction.
         if cfg.stochastic.spawn_area_size is not None:
             size = cfg.stochastic.spawn_area_size
             assert size <= cfg.height and size <= cfg.width, (
@@ -47,30 +73,79 @@ class StochasticEnv(BaseEnv):
                 for r in range(cfg.height - size + 1)
                 for c in range(cfg.width - size + 1)
             ]
-            self._spawn_area_cells: list[list[Grid]] | None = []
-            for tau in range(cfg.n_task_types):
-                _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
-                r0, c0 = _rng.choice(self._valid_corners)
-                self._spawn_area_cells.append([
-                    Grid(r0 + dr, c0 + dc)
-                    for dr in range(size)
-                    for dc in range(size)
-                ])
+            self._spawn_area_corners: list[tuple[int, int]] | None = [(0, 0)] * cfg.n_task_types
+            self._spawn_area_cells: list[list[Grid]] | None = [[] for _ in range(cfg.n_task_types)]
+
+            if cfg.stochastic.spawn_zone_mode == SpawnZoneMode.EDGE_SWITCH:
+                self._place_zones_on_edge()
+            else:
+                for tau in range(cfg.n_task_types):
+                    _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
+                    r0, c0 = _rng.choice(self._valid_corners)
+                    self._spawn_area_corners[tau] = (r0, c0)
+                    self._spawn_area_cells[tau] = self._cells_from_corner(r0, c0)
         else:
             self._valid_corners = None
+            self._spawn_area_corners = None
             self._spawn_area_cells = None
 
         self._rounds_elapsed: int = 0
         self._eval_mode: bool = False
         self._eval_rounds_elapsed: int = 0
+        self._saved_spawn_area_corners: list[tuple[int, int]] | None = None
         self._saved_spawn_area_cells: list[list[Grid]] | None = None
         self._saved_rng_state = None
         self._saved_type_rng_states: list | None = None
+
+    def _cells_from_corner(self, r0: int, c0: int) -> list[Grid]:
+        size = self.stoch.spawn_area_size
+        return [Grid(r0 + dr, c0 + dc) for dr in range(size) for dc in range(size)]
 
     def _spawn_cells_for_type(self, tau: int) -> list[Grid]:
         if self._spawn_area_cells is None:
             return self._all_cells
         return self._spawn_area_cells[tau]
+
+    def _place_zones_on_edge(self) -> None:
+        """Place all spawn zones on the grid border.
+
+        Zones are evenly spaced around the perimeter but rotated to a random starting
+        offset, then randomly assigned to task types. The random rotation means a single
+        zone lands at a genuinely random border position, not always (0,0).
+        """
+        size = self.stoch.spawn_area_size
+        n_types = self.cfg.n_task_types
+        H, W = self.cfg.height, self.cfg.width
+        max_r, max_c = H - size, W - size
+
+        perimeter: list[tuple[int, int]] = []
+        for c in range(0, max_c + 1):
+            perimeter.append((0, c))
+        for r in range(1, max_r + 1):
+            perimeter.append((r, max_c))
+        for c in range(max_c - 1, -1, -1):
+            perimeter.append((max_r, c))
+        for r in range(max_r - 1, 0, -1):
+            perimeter.append((r, 0))
+
+        n = len(perimeter)
+        offset = rng.randrange(n)
+        positions = [perimeter[(round(i * n / n_types) + offset) % n] for i in range(n_types)]
+        rng.shuffle(positions)
+
+        for tau, (r0, c0) in enumerate(positions):
+            self._spawn_area_corners[tau] = (r0, c0)
+            self._spawn_area_cells[tau] = self._cells_from_corner(r0, c0)
+
+    def _flip_spawn_areas(self) -> None:
+        """Flip each spawn zone to its antipodal position: (r,c) → (H-S-r, W-S-c)."""
+        size = self.stoch.spawn_area_size
+        H, W = self.cfg.height, self.cfg.width
+        for tau in range(self.cfg.n_task_types):
+            r0, c0 = self._spawn_area_corners[tau]
+            r1, c1 = H - size - r0, W - size - c0
+            self._spawn_area_corners[tau] = (r1, c1)
+            self._spawn_area_cells[tau] = self._cells_from_corner(r1, c1)
 
     def set_eval_mode(
         self,
@@ -79,6 +154,10 @@ class StochasticEnv(BaseEnv):
         fixed_spawn_zones: tuple[tuple[int, int], ...] | None = None,
     ) -> None:
         if eval_mode:
+            self._saved_spawn_area_corners = (
+                list(self._spawn_area_corners)
+                if self._spawn_area_corners is not None else None
+            )
             self._saved_spawn_area_cells = (
                 [list(cells) for cells in self._spawn_area_cells]
                 if self._spawn_area_cells is not None else None
@@ -94,13 +173,15 @@ class StochasticEnv(BaseEnv):
                 if self._type_rngs is not None:
                     for i, r in enumerate(self._type_rngs):
                         r.seed(seed + i + 1)
+            if self.stoch.eval_spawn_zone_mode == SpawnZoneMode.EDGE_SWITCH and self._spawn_area_cells is not None:
+                self._place_zones_on_edge()
             if fixed_spawn_zones is not None and self._spawn_area_cells is not None:
-                size = self.stoch.spawn_area_size
-                self._spawn_area_cells = [
-                    [Grid(r0 + dr, c0 + dc) for dr in range(size) for dc in range(size)]
-                    for r0, c0 in fixed_spawn_zones
-                ]
+                for tau, (r0, c0) in enumerate(fixed_spawn_zones):
+                    self._spawn_area_corners[tau] = (r0, c0)
+                    self._spawn_area_cells[tau] = self._cells_from_corner(r0, c0)
         else:
+            self._spawn_area_corners = self._saved_spawn_area_corners
+            self._saved_spawn_area_corners = None
             self._spawn_area_cells = self._saved_spawn_area_cells
             self._saved_spawn_area_cells = None
             rng.setstate(self._saved_rng_state)
@@ -112,15 +193,11 @@ class StochasticEnv(BaseEnv):
         self._eval_mode = eval_mode
 
     def _relocate_spawn_areas(self) -> None:
-        size = self.stoch.spawn_area_size
         for tau in range(self.cfg.n_task_types):
             _rng = self._type_rngs[tau] if self._type_rngs is not None else rng
             r0, c0 = _rng.choice(self._valid_corners)
-            self._spawn_area_cells[tau] = [
-                Grid(r0 + dr, c0 + dc)
-                for dr in range(size)
-                for dc in range(size)
-            ]
+            self._spawn_area_corners[tau] = (r0, c0)
+            self._spawn_area_cells[tau] = self._cells_from_corner(r0, c0)
 
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
@@ -207,14 +284,24 @@ class StochasticEnv(BaseEnv):
         if state.actor == self.cfg.n_agents - 1:
             if self._eval_mode:
                 self._eval_rounds_elapsed += 1
-                interval = self.stoch.eval_spawn_zone_move_interval
                 rounds = self._eval_rounds_elapsed
+                zone_mode = self.stoch.eval_spawn_zone_mode
+                zone_interval = self.stoch.eval_spawn_zone_interval
+                flip_interval = self.stoch.eval_spawn_flip_interval
             else:
                 self._rounds_elapsed += 1
-                interval = self.stoch.spawn_zone_move_interval
                 rounds = self._rounds_elapsed
-            if self._spawn_area_cells is not None and interval > 0 and rounds % interval == 0:
-                self._relocate_spawn_areas()
+                zone_mode = self.stoch.spawn_zone_mode
+                zone_interval = self.stoch.spawn_zone_interval
+                flip_interval = self.stoch.spawn_flip_interval
+
+            if self._spawn_area_cells is not None:
+                if zone_mode == SpawnZoneMode.EDGE_SWITCH and zone_interval > 0 and rounds % zone_interval == 0:
+                    self._place_zones_on_edge()
+                elif zone_mode == SpawnZoneMode.RANDOM and zone_interval > 0 and rounds % zone_interval == 0:
+                    self._relocate_spawn_areas()
+                elif flip_interval > 0 and rounds % flip_interval == 0:
+                    self._flip_spawn_areas()
 
         if self.stoch.spawn_at_round_end and state.actor != self.cfg.n_agents - 1:
             return state
