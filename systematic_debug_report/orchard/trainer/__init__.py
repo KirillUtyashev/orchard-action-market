@@ -116,6 +116,9 @@ def create_trainer(
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
             per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
+            greedy_own_type_only=cfg.train.greedy_own_type_only,
+            discount_method=cfg.train.discount_method,
         )
     else:
         per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
@@ -132,4 +135,7 @@ def create_trainer(
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
             per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
+            greedy_own_type_only=cfg.train.greedy_own_type_only,
+            discount_method=cfg.train.discount_method,
         )

@@ -238,3 +238,243 @@ class TestSpawnAtRoundEnd:
         )
         s_after = env.spawn_and_despawn(s)
         assert len(s_after.task_positions) == 0
+
+
+def _make_spawn_area_cfg(spawn_area_size: int, per_type_seeds=None) -> EnvConfig:
+    return EnvConfig(
+        height=9, width=9, n_agents=4, n_tasks=3, gamma=0.99, r_picker=1.0,
+        n_task_types=2, max_tasks_per_type=5,
+        task_assignments=((0,), (0,), (1,), (1,)),
+        stochastic=StochasticConfig(
+            spawn_prob=0.1, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.05,
+            per_type_seeds=per_type_seeds,
+            spawn_area_size=spawn_area_size,
+        ),
+    )
+
+
+class TestSpawnArea:
+    def test_areas_in_bounds(self):
+        """Each type's spawn area must fit entirely within the grid."""
+        env = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(10, 20)))
+        for tau, cells in enumerate(env._spawn_area_cells):
+            for cell in cells:
+                assert 0 <= cell.row < 9 and 0 <= cell.col < 9, \
+                    f"Type {tau} cell {cell} is outside 9x9 grid"
+            assert len(cells) == 9  # 3x3 = 9 cells
+
+    def test_area_is_square(self):
+        """Spawn area must be exactly size x size cells."""
+        size = 4
+        env = StochasticEnv(_make_spawn_area_cfg(size, per_type_seeds=(7, 8)))
+        for cells in env._spawn_area_cells:
+            rows = {c.row for c in cells}
+            cols = {c.col for c in cells}
+            assert len(rows) == size and len(cols) == size
+            assert len(cells) == size * size
+
+    def test_init_state_tasks_in_area(self):
+        """All tasks placed by init_state must be within their type's spawn area."""
+        set_all_seeds(0)
+        env = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(42, 99)))
+        area_sets = [set(cells) for cells in env._spawn_area_cells]
+        state = env.init_state()
+        for pos, tau in zip(state.task_positions, state.task_types):
+            assert pos in area_sets[tau], \
+                f"init_state placed type-{tau} task at {pos}, outside spawn area"
+
+    def test_runtime_spawn_tasks_in_area(self):
+        """No task should ever appear outside its type's spawn area after many steps."""
+        set_all_seeds(0)
+        env = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(1, 2)))
+        area_sets = [set(cells) for cells in env._spawn_area_cells]
+        state = env.init_state()
+        for _ in range(500):
+            state = env.spawn_and_despawn(state)
+            for pos, tau in zip(state.task_positions, state.task_types):
+                assert pos in area_sets[tau], \
+                    f"Runtime spawn placed type-{tau} task at {pos}, outside spawn area"
+
+    def test_deterministic_with_seeds(self):
+        """Same per_type_seeds must produce identical spawn areas."""
+        env_a = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(55, 66)))
+        env_b = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(55, 66)))
+        assert env_a._spawn_area_cells == env_b._spawn_area_cells
+
+    def test_different_seeds_likely_different_areas(self):
+        """Different seeds should produce different spawn area placements."""
+        env_a = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(1, 2)))
+        env_b = StochasticEnv(_make_spawn_area_cfg(3, per_type_seeds=(100, 200)))
+        # 9x9 grid, size=3: 7*7=49 valid corners — collision extremely unlikely
+        assert env_a._spawn_area_cells != env_b._spawn_area_cells
+
+    def test_global_rng_fallback(self):
+        """spawn_area_size works without per_type_seeds (falls back to global rng)."""
+        set_all_seeds(7)
+        cfg = EnvConfig(
+            height=9, width=9, n_agents=2, n_tasks=2, gamma=0.99, r_picker=1.0,
+            n_task_types=2, max_tasks_per_type=4,
+            task_assignments=((0,), (1,)),
+            stochastic=StochasticConfig(
+                spawn_prob=0.1, despawn_mode=DespawnMode.NONE, despawn_prob=0.0,
+                spawn_area_size=3,
+            ),
+        )
+        env = StochasticEnv(cfg)
+        assert env._spawn_area_cells is not None
+        assert len(env._spawn_area_cells) == 2
+        area_sets = [set(cells) for cells in env._spawn_area_cells]
+        state = env.init_state()
+        for pos, tau in zip(state.task_positions, state.task_types):
+            assert pos in area_sets[tau]
+
+    def test_size_exceeds_grid_raises(self):
+        """spawn_area_size larger than grid dimensions must raise AssertionError."""
+        cfg = EnvConfig(
+            height=5, width=5, n_agents=1, n_tasks=0, gamma=0.99, r_picker=1.0,
+            n_task_types=1, max_tasks_per_type=3,
+            task_assignments=((0,),),
+            stochastic=StochasticConfig(
+                spawn_prob=0.1, despawn_mode=DespawnMode.NONE, despawn_prob=0.0,
+                spawn_area_size=6,
+            ),
+        )
+        with pytest.raises(AssertionError):
+            StochasticEnv(cfg)
+
+    def test_none_disables_restriction(self):
+        """spawn_area_size=None must leave _spawn_area_cells as None (no restriction)."""
+        env = StochasticEnv(_make_spawn_cfg())
+        assert env._spawn_area_cells is None
+
+
+def _make_moving_zone_cfg(
+    move_interval: int = 0,
+    eval_move_interval: int = 0,
+    n_agents: int = 2,
+    per_type_seeds=None,
+) -> EnvConfig:
+    return EnvConfig(
+        height=9, width=9, n_agents=n_agents, n_tasks=2, gamma=0.99, r_picker=1.0,
+        n_task_types=2, max_tasks_per_type=4,
+        task_assignments=tuple((i % 2,) for i in range(n_agents)),
+        stochastic=StochasticConfig(
+            spawn_prob=0.05, despawn_mode=DespawnMode.NONE, despawn_prob=0.0,
+            per_type_seeds=per_type_seeds,
+            spawn_area_size=3,
+            spawn_zone_move_interval=move_interval,
+            eval_spawn_zone_move_interval=eval_move_interval,
+        ),
+    )
+
+
+def _run_rounds(env: StochasticEnv, n_rounds: int) -> None:
+    """Advance env by n_rounds by calling spawn_and_despawn with actor cycling 0..n_agents-1."""
+    state = env.init_state()
+    n_agents = env.cfg.n_agents
+    for _ in range(n_rounds * n_agents):
+        actor = state.actor
+        state = env.spawn_and_despawn(state)
+        # advance actor manually
+        from orchard.datatypes import State as _State
+        state = _State(
+            agent_positions=state.agent_positions,
+            task_positions=state.task_positions,
+            actor=(actor + 1) % n_agents,
+            task_types=state.task_types,
+        )
+
+
+class TestSpawnZoneMoving:
+    def test_zone_never_moves_when_interval_zero(self):
+        """interval=0 means zones never relocate."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=0, per_type_seeds=(1, 2)))
+        original = [list(cells) for cells in env._spawn_area_cells]
+        _run_rounds(env, 100)
+        assert env._spawn_area_cells == original
+
+    def test_zone_moves_at_correct_rounds(self):
+        """Zone must move exactly at multiples of interval rounds."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=3, per_type_seeds=(10, 20)))
+        original = [list(cells) for cells in env._spawn_area_cells]
+
+        _run_rounds(env, 2)
+        assert env._spawn_area_cells == original, "should not have moved after 2 rounds"
+
+        _run_rounds(env, 1)  # now at round 3
+        assert env._spawn_area_cells != original, "should have moved after 3 rounds"
+
+    def test_zone_moves_multiple_times(self):
+        """Zone relocates each time the interval is hit."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=2, per_type_seeds=(5, 6)))
+        positions = [tuple(env._spawn_area_cells[0])]
+        for _ in range(4):
+            _run_rounds(env, 2)
+            positions.append(tuple(env._spawn_area_cells[0]))
+        # should have 4 distinct snapshots after each move (very unlikely to repeat on 9x9 grid)
+        assert len(set(positions)) > 1
+
+    def test_new_zone_always_in_bounds(self):
+        """After relocation, all cells must remain within grid bounds."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=1, per_type_seeds=(7, 8)))
+        for _ in range(20):
+            _run_rounds(env, 1)
+            for cells in env._spawn_area_cells:
+                for cell in cells:
+                    assert 0 <= cell.row < 9 and 0 <= cell.col < 9
+
+    def test_rounds_elapsed_counter(self):
+        """_rounds_elapsed must equal the number of completed rounds."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=0))
+        _run_rounds(env, 5)
+        assert env._rounds_elapsed == 5
+
+    def test_eval_mode_uses_separate_counter(self):
+        """In eval mode, _eval_rounds_elapsed advances and training counter stays fixed."""
+        env = StochasticEnv(_make_moving_zone_cfg(move_interval=0))
+        _run_rounds(env, 3)
+        assert env._rounds_elapsed == 3
+
+        env.set_eval_mode(True)
+        _run_rounds(env, 2)
+        assert env._eval_rounds_elapsed == 2
+        assert env._rounds_elapsed == 3  # training counter frozen during eval
+
+    def test_eval_zones_restored_after_eval(self):
+        """Training zones must be exactly restored after eval mode ends."""
+        env = StochasticEnv(_make_moving_zone_cfg(
+            move_interval=0, eval_move_interval=1, per_type_seeds=(42, 43)
+        ))
+        training_zones = [list(cells) for cells in env._spawn_area_cells]
+
+        env.set_eval_mode(True)
+        _run_rounds(env, 5)  # eval zones move during eval
+        env.set_eval_mode(False)
+
+        assert env._spawn_area_cells == training_zones, \
+            "training zones must be restored after eval regardless of eval zone moves"
+
+    def test_eval_interval_independent_from_training(self):
+        """eval interval moves zones in eval; training interval moves zones in training."""
+        env = StochasticEnv(_make_moving_zone_cfg(
+            move_interval=10,          # training: moves every 10 rounds
+            eval_move_interval=1,      # eval: moves every 1 round
+            per_type_seeds=(99, 100)
+        ))
+        training_zones = [list(cells) for cells in env._spawn_area_cells]
+
+        # Run 3 training rounds — no training move (interval=10)
+        _run_rounds(env, 3)
+        assert env._spawn_area_cells == training_zones
+
+        # Run eval — zones move every round
+        env.set_eval_mode(True)
+        _run_rounds(env, 1)
+        eval_zones_after_1 = [list(cells) for cells in env._spawn_area_cells]
+        _run_rounds(env, 1)
+        eval_zones_after_2 = [list(cells) for cells in env._spawn_area_cells]
+        assert eval_zones_after_1 != eval_zones_after_2, "eval zones should move each round"
+        env.set_eval_mode(False)
+
+        # Training zones unaffected
+        assert env._spawn_area_cells == training_zones

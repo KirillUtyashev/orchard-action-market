@@ -142,6 +142,9 @@ class StochasticConfig:
     spawn_on_agent_cells: bool = False  # if True, agent positions don't block task spawning (removes inter-team spawn coupling)
     spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
     per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
+    spawn_area_size: int | None = None  # square side length for per-type spawn regions; None = whole grid
+    spawn_zone_move_interval: int = 0      # rounds between zone relocations during training; 0 = fixed forever
+    eval_spawn_zone_move_interval: int = 0  # rounds between zone relocations during eval; 0 = fixed
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,7 @@ class EnvConfig:
     pick_mode: PickMode = PickMode.FORCED
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
+    allow_cross_type_picks: bool = True
 
 
 @dataclass(frozen=True)
@@ -221,6 +225,16 @@ class TrainConfig:
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0
     train_only_teammates: bool = False
+    simulate_stranger_gap: int = 0
+    greedy_own_type_only: bool = False
+    discount_method: str = "team_steps"
+    # simulate_stranger_gap: for T=1 ≡ T=M verification with new dec gamma accumulation.
+    # Set to n_total_agents - n_own_team_agents so T=1 artificially accumulates
+    # the same gamma that would build up from stranger move-steps in T=M.
+    # Only meaningful when train_only_teammates=True and discount_method="world_steps".
+    #
+    # discount_method: "team_steps" = discount only by own team's move steps (pre-edf8909 behaviour);
+    #                  "world_steps" = accumulate gamma for stranger steps so sum_i V_dec ≈ V_cen.
 
 
 @dataclass(frozen=True)
@@ -237,6 +251,7 @@ class EvalConfig:
     eval_steps: int = 1000
     n_test_states: int = 50
     checkpoint_freq: int = 0
+    eval_seed: int | None = None  # if set, reseeds env RNGs at start of each eval for reproducibility
 
 
 @dataclass(frozen=True)
