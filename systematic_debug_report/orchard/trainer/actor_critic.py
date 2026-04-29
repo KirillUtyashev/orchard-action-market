@@ -94,6 +94,7 @@ class ActorCriticTrainerBase(TrainerBase):
         freeze_critic: bool,
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
+        comm_only_teammates: bool = False,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -124,23 +125,43 @@ class ActorCriticTrainerBase(TrainerBase):
 
         self._following_rates_cfg = following_rates_cfg
         self._influencer_cfg = influencer_cfg
+        self._comm_only_teammates = bool(comm_only_teammates)
+        self._teammate_matrix = self._build_teammate_matrix()
         self._following_states: list[FollowingRateAgentState] = []
         self._influencer: ExternalInfluencer | None = None
         if self._following_rates_cfg.enabled:
+            fixed_dual_budgets = self._following_rates_cfg.fixed and (
+                self._following_rates_cfg.teammate_budget is not None or
+                self._following_rates_cfg.non_teammate_budget is not None
+            )
+            follower_influencer_budget = (
+                float(self._following_rates_cfg.teammate_budget or 0.0) +
+                float(self._following_rates_cfg.non_teammate_budget or 0.0)
+                if fixed_dual_budgets
+                else self._following_rates_cfg.budget
+            )
             self._following_states = [
                 FollowingRateAgentState(
                     agent_id=agent_id,
                     agent_alphas=np.zeros(self._n_agents, dtype=float),
-                    budget=self._following_rates_cfg.budget,
+                    budget=(
+                        float(self._following_rates_cfg.teammate_budget or 0.0) +
+                        float(self._following_rates_cfg.non_teammate_budget or 0.0)
+                        if fixed_dual_budgets
+                        else self._following_rates_cfg.budget
+                    ),
                     following_rates=initial_following_rate_vector(
                         self._n_agents,
                         agent_id,
                         self._following_rates_cfg.budget,
                         influencer_enabled=self._influencer_cfg.enabled,
+                        teammate_mask=self._teammate_matrix[agent_id],
+                        teammate_budget=self._following_rates_cfg.teammate_budget,
+                        non_teammate_budget=self._following_rates_cfg.non_teammate_budget,
                     ),
                     following_rate_to_influencer=initial_following_rate_to_influencer(
                         self._n_agents,
-                        self._following_rates_cfg.budget,
+                        follower_influencer_budget,
                         influencer_enabled=self._influencer_cfg.enabled,
                     ),
                     rate_solver_name=self._following_rates_cfg.solver,
@@ -170,6 +191,34 @@ class ActorCriticTrainerBase(TrainerBase):
         self._alpha_state_log_freq: int = 0
         self._phase1_eval_states: list[State] | None = None
         self._phase2_eval_states: list[tuple[str, State]] | None = None
+
+    def _build_teammate_matrix(self) -> tuple[tuple[bool, ...], ...]:
+        assignments = self._env.cfg.task_assignments or ()
+        teammate_rows: list[tuple[bool, ...]] = []
+        for actor_id in range(self._n_agents):
+            actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
+            teammate_rows.append(tuple(
+                observer_id != actor_id
+                and bool(actor_types & set(assignments[observer_id]))
+                if observer_id < len(assignments) else False
+                for observer_id in range(self._n_agents)
+            ))
+        return tuple(teammate_rows)
+
+    def _is_teammate_observer(self, observer_id: int, actor_id: int) -> bool:
+        return bool(self._teammate_matrix[actor_id][observer_id])
+
+    def _teammate_mask_tensor(
+        self,
+        actor_id: int,
+        *,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        mask = torch.as_tensor(self._teammate_matrix[actor_id], dtype=dtype, device=device)
+        mask = mask.clone()
+        mask[actor_id] = 1.0
+        return mask
 
     # ------------------------------------------------------------------
     # Abstract critic hooks
@@ -694,27 +743,31 @@ class ActorCriticTrainerBase(TrainerBase):
     # Evaluation and logging
     # ------------------------------------------------------------------
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
-        eval_start = env.init_state()
+        env.set_eval_mode(True, seed=eval_cfg.eval_seed)
+        try:
+            eval_start = env.init_state()
 
-        def greedy_policy(s: State) -> Action:
-            return self._greedy_action(s)
+            def greedy_policy(s: State) -> Action:
+                return self._greedy_action(s)
 
-        def baseline_policy(s: State) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic)
+            def baseline_policy(s: State) -> Action:
+                return heuristic_action(s, env.cfg, self._heuristic)
 
-        heuristic_name = self._heuristic.name.lower()
-        greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
-        baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
-        return {
-            "greedy_rps": greedy_metrics["rps"],
-            "greedy_team_rps": greedy_metrics["team_rps"],
-            "greedy_correct_pps": greedy_metrics["correct_pps"],
-            "greedy_wrong_pps": greedy_metrics["wrong_pps"],
-            f"{heuristic_name}_rps": baseline_metrics["rps"],
-            f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
-            f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-            f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
-        }
+            heuristic_name = self._heuristic.name.lower()
+            greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
+            baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
+            return {
+                "greedy_rps": greedy_metrics["rps"],
+                "greedy_team_rps": greedy_metrics["team_rps"],
+                "greedy_correct_pps": greedy_metrics["correct_pps"],
+                "greedy_wrong_pps": greedy_metrics["wrong_pps"],
+                f"{heuristic_name}_rps": baseline_metrics["rps"],
+                f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
+                f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
+                f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
+            }
+        finally:
+            env.set_eval_mode(False)
 
     def get_td_loss(self) -> float:
         avg = self._td_loss_accum / max(self._td_loss_count, 1)
@@ -780,7 +833,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
         return row
 
-    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0, env_trace: bool = False) -> None:
         self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
             run_dir / "phase1_policy_probabilities.csv",
@@ -1049,6 +1102,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         freeze_critic: bool,
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
+        comm_only_teammates: bool = False,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -1064,6 +1118,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             freeze_critic=freeze_critic,
             following_rates_cfg=following_rates_cfg,
             influencer_cfg=influencer_cfg,
+            comm_only_teammates=comm_only_teammates,
             timer=timer,
             warmup_steps=warmup_steps,
         )
@@ -1105,12 +1160,21 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     ) -> torch.Tensor:
         returns_t = rewards_t + float(discount) * after_values_t
         if not self._following_states:
+            if self._comm_only_teammates:
+                weights = self._teammate_mask_tensor(
+                    actor_id,
+                    dtype=returns_t.dtype,
+                    device=returns_t.device,
+                )
+                return returns_t @ weights
             return returns_t.sum(dim=1)
 
         weights = torch.zeros(self._n_agents, dtype=returns_t.dtype, device=returns_t.device)
         weights[actor_id] = 1.0
         for observer_id in range(self._n_agents):
             if observer_id == actor_id:
+                continue
+            if self._comm_only_teammates and not self._is_teammate_observer(observer_id, actor_id):
                 continue
             weights[observer_id] = float(self._effective_observer_weight(observer_id, actor_id))
         return returns_t @ weights

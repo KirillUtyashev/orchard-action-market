@@ -37,10 +37,16 @@ env:
   stochastic:
     spawn_prob: 0.01               # probability per empty cell per type per turn
     despawn_prob: 0.0125           # probability each existing task despawns per turn
-    # despawn_mode: probability    # "probability" or "none" (default: probability)
-    # task_spawn_mode: null        # null=auto (forced→global_unique, choice→per_type_unique)
+    despawn_mode: probability      # "probability" or "none" (default: probability)
+    task_spawn_mode: null          # null=auto (forced→global_unique, choice→per_type_unique)
                                    # "global_unique": at most 1 task of ANY type per cell
                                    # "per_type_unique": at most 1 per type; types may coexist
+    spawn_area_size: null          # null = whole grid (default). Integer (e.g. 4) restricts
+                                   # each task type to a fixed NxN square region. Regions are
+                                   # randomly placed once at env construction using per_type_seeds
+                                   # (or global rng if per_type_seeds is not set).
+    spawn_zone_move_interval: 0    # rounds between zone relocations during training (0 = fixed forever)
+    eval_spawn_zone_move_interval: 0  # rounds between zone relocations during eval rollouts (0 = fixed)
 
 model:
   # Encoder: how the grid state is converted to neural network input

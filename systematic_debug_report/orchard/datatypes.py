@@ -44,9 +44,21 @@ class State:
     # None when n_task_types == 1 (legacy mode)
     pick_phase: bool = False  # True = agent is on task, pick not yet resolved
 
-    def is_agent_on_task(self, agent_idx: int) -> bool:
-        """Check if agent is on any task cell."""
-        return self.agent_positions[agent_idx] in self.task_positions
+    def is_agent_on_task(self, agent_idx: int, my_types: frozenset[int] | None = None) -> bool:
+        """Check if agent is on a task cell.
+
+        my_types: if provided, only counts tasks whose type is in this set.
+        None means any task type (legacy behaviour).
+        """
+        pos = self.agent_positions[agent_idx]
+        if pos not in self.task_positions:
+            return False
+        if my_types is None:
+            return True
+        for tp, tt in zip(self.task_positions, self.task_types or ()):
+            if tp == pos and tt in my_types:
+                return True
+        return False
 
     def task_type_at(self, pos: Grid) -> int | None:
         """Type of task at pos. None if no task there."""
@@ -127,6 +139,12 @@ class StochasticConfig:
     despawn_mode: DespawnMode
     despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
     task_spawn_mode: TaskSpawnMode | None = None  # None = auto-select based on pick_mode
+    spawn_on_agent_cells: bool = False  # if True, agent positions don't block task spawning (removes inter-team spawn coupling)
+    spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
+    per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
+    spawn_area_size: int | None = None  # square side length for per-type spawn regions; None = whole grid
+    spawn_zone_move_interval: int = 0      # rounds between zone relocations during training; 0 = fixed forever
+    eval_spawn_zone_move_interval: int = 0  # rounds between zone relocations during eval; 0 = fixed
 
 
 @dataclass(frozen=True)
@@ -143,6 +161,7 @@ class EnvConfig:
     pick_mode: PickMode = PickMode.FORCED
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
+    allow_cross_type_picks: bool = True
 
 
 @dataclass(frozen=True)
@@ -172,6 +191,8 @@ class AlgorithmConfig:
 class FollowingRatesConfig:
     enabled: bool = False
     budget: float = 0.0
+    teammate_budget: float | None = None
+    non_teammate_budget: float | None = None
     rho: float = 0.0
     reallocation_freq: int = 1
     solver: str = "closed_form"
@@ -198,10 +219,21 @@ class TrainConfig:
     learning_type: LearningType = LearningType.DECENTRALIZED
     use_gpu: bool = True
     td_lambda: float = 0.0
-    comm_weight: float = 0.0
+    comm_only_teammates: bool = False
     heuristic: Heuristic = Heuristic.NEAREST_TASK
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0
+    train_only_teammates: bool = False
+    simulate_stranger_gap: int = 0
+    greedy_own_type_only: bool = False
+    discount_method: str = "team_steps"
+    # simulate_stranger_gap: for T=1 ≡ T=M verification with new dec gamma accumulation.
+    # Set to n_total_agents - n_own_team_agents so T=1 artificially accumulates
+    # the same gamma that would build up from stranger move-steps in T=M.
+    # Only meaningful when train_only_teammates=True and discount_method="world_steps".
+    #
+    # discount_method: "team_steps" = discount only by own team's move steps (pre-edf8909 behaviour);
+    #                  "world_steps" = accumulate gamma for stranger steps so sum_i V_dec ≈ V_cen.
 
 
 @dataclass(frozen=True)
@@ -218,6 +250,7 @@ class EvalConfig:
     eval_steps: int = 1000
     n_test_states: int = 50
     checkpoint_freq: int = 0
+    eval_seed: int | None = None  # if set, reseeds env RNGs at start of each eval for reproducibility
 
 
 @dataclass(frozen=True)
@@ -227,6 +260,7 @@ class LoggingConfig:
     detail_csv_freq: int = 50000
     timing_csv_freq: int = 0
     alpha_state_log_freq: int = 0
+    env_trace: bool = False
 
 
 @dataclass(frozen=True)

@@ -43,6 +43,7 @@ from orchard.following_rates import get_supported_rate_solver_names, is_scipy_ra
 # ---------------------------------------------------------------------------
 _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
+        "cnn_grid": EncoderType.CNN_GRID,
         "blind_task_cnn_grid": EncoderType.BLIND_TASK_CNN_GRID,
         "filtered_task_cnn_grid": EncoderType.FILTERED_TASK_CNN_GRID,
         "position_aware_task_cnn_grid": EncoderType.POSITION_AWARE_TASK_CNN_GRID,
@@ -148,6 +149,12 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_mode=_enum(sd.get("despawn_mode", "probability"), "despawn_mode"),
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         task_spawn_mode=_enum(tsm_raw, "task_spawn_mode") if tsm_raw else None,
+        spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
+        spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
+        per_type_seeds=tuple(int(s) for s in sd["per_type_seeds"]) if sd.get("per_type_seeds") else None,
+        spawn_area_size=int(sd["spawn_area_size"]) if sd.get("spawn_area_size") else None,
+        spawn_zone_move_interval=int(sd.get("spawn_zone_move_interval", 0)),
+        eval_spawn_zone_move_interval=int(sd.get("eval_spawn_zone_move_interval", 0)),
     )
 
     return EnvConfig(
@@ -163,6 +170,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         pick_mode=pick_mode,
         max_tasks_per_type=int(d.get("max_tasks_per_type", 3)),
         stochastic=stochastic_cfg,
+        allow_cross_type_picks=bool(d.get("allow_cross_type_picks", True)),
     )
 
 
@@ -225,11 +233,23 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     actor_lr_d = d.get("actor_lr", algorithm_d.get("actor_lr"))
     actor_lr_cfg = _parse_schedule(actor_lr_d, "train.actor_lr") if actor_lr_d else None
     freeze_critic = bool(d.get("freeze_critic", False))
+    comm_only_teammates = bool(d.get("comm_only_teammates", False))
+    use_gpu = bool(d.get("use_gpu", d.get("use_gpu_batched", True)))
 
     following_d = d.get("following_rates", {})
     following_cfg = FollowingRatesConfig(
         enabled=bool(following_d.get("enabled", False)),
         budget=float(following_d.get("budget", 0.0)),
+        teammate_budget=(
+            float(following_d["teammate_budget"])
+            if "teammate_budget" in following_d and following_d.get("teammate_budget") is not None
+            else None
+        ),
+        non_teammate_budget=(
+            float(following_d["non_teammate_budget"])
+            if "non_teammate_budget" in following_d and following_d.get("non_teammate_budget") is not None
+            else None
+        ),
         rho=float(following_d.get("rho", 0.0)),
         reallocation_freq=int(following_d.get("reallocation_freq", 1)),
         solver=str(following_d.get("solver", "closed_form")),
@@ -245,15 +265,35 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     if algorithm_name == AlgorithmName.ACTOR_CRITIC:
         if d.get("learning_type", "decentralized").strip().lower() != "decentralized":
             raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
-        if float(d.get("comm_weight", 0.0)) != 0.0:
-            raise ValueError("train.comm_weight is only supported for train.algorithm.name=value.")
+        if comm_only_teammates and not use_gpu:
+            raise ValueError("train.comm_only_teammates=true is only supported for GPU actor-critic.")
     elif freeze_critic:
         raise ValueError("train.freeze_critic is only supported for train.algorithm.name=actor_critic.")
+    elif comm_only_teammates:
+        raise ValueError("train.comm_only_teammates is only supported for train.algorithm.name=actor_critic.")
     if following_cfg.enabled:
         if algorithm_name != AlgorithmName.ACTOR_CRITIC:
             raise ValueError("train.following_rates.enabled=true requires train.algorithm.name=actor_critic.")
-        if following_cfg.budget < 0.0:
-            raise ValueError("train.following_rates.budget must be >= 0.")
+        if following_cfg.fixed:
+            if following_cfg.teammate_budget is None or following_cfg.non_teammate_budget is None:
+                raise ValueError(
+                    "train.following_rates.fixed=true requires both "
+                    "train.following_rates.teammate_budget and "
+                    "train.following_rates.non_teammate_budget."
+                )
+            if following_cfg.teammate_budget < 0.0:
+                raise ValueError("train.following_rates.teammate_budget must be >= 0.")
+            if following_cfg.non_teammate_budget < 0.0:
+                raise ValueError("train.following_rates.non_teammate_budget must be >= 0.")
+        else:
+            if following_cfg.budget < 0.0:
+                raise ValueError("train.following_rates.budget must be >= 0.")
+            if following_cfg.teammate_budget is not None or following_cfg.non_teammate_budget is not None:
+                raise ValueError(
+                    "train.following_rates.teammate_budget and "
+                    "train.following_rates.non_teammate_budget are only supported when "
+                    "train.following_rates.fixed=true."
+                )
         if not (0.0 < following_cfg.rho <= 1.0):
             raise ValueError("train.following_rates.rho must be in (0, 1].")
         if following_cfg.reallocation_freq <= 0:
@@ -275,6 +315,13 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
     if warmup_steps > 0 and algorithm_name != AlgorithmName.ACTOR_CRITIC:
         raise ValueError("train.warmup_steps>0 requires train.algorithm.name=actor_critic.")
 
+    train_only_teammates = bool(d.get("train_only_teammates", False))
+    simulate_stranger_gap = int(d.get("simulate_stranger_gap", 0))
+    greedy_own_type_only = bool(d.get("greedy_own_type_only", False))
+    discount_method = str(d.get("discount_method", "team_steps"))
+    if discount_method not in ("team_steps", "world_steps", "round_steps"):
+        raise ValueError(f"train.discount_method must be 'team_steps', 'world_steps', or 'round_steps', got {discount_method!r}")
+
     return TrainConfig(
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
@@ -286,12 +333,16 @@ def _parse_train(d: dict[str, Any], n_task_types: int = 1) -> TrainConfig:
         following_rates=following_cfg,
         influencer=influencer_cfg,
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
-        use_gpu=bool(d.get("use_gpu", d.get("use_gpu_batched", True))),
+        use_gpu=use_gpu,
         td_lambda=float(d.get("td_lambda", 0.0)),
-        comm_weight=float(d.get("comm_weight", 0.0)),
+        comm_only_teammates=comm_only_teammates,
         heuristic=heuristic,
         stopping=stopping,
         warmup_steps=int(d.get("warmup_steps", 0)),
+        train_only_teammates=train_only_teammates,
+        simulate_stranger_gap=simulate_stranger_gap,
+        greedy_own_type_only=greedy_own_type_only,
+        discount_method=discount_method,
     )
 
 
@@ -310,6 +361,7 @@ def _parse_logging(d: dict[str, Any]) -> LoggingConfig:
         detail_csv_freq=int(d.get("detail_csv_freq", 50000)),
         timing_csv_freq=int(d.get("timing_csv_freq", 0)),
         alpha_state_log_freq=int(d.get("alpha_state_log_freq", 0)),
+        env_trace=bool(d.get("env_trace", False)),
     )
 
 

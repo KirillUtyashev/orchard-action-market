@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
 from orchard.enums import AlgorithmName
@@ -24,6 +23,7 @@ def create_trainer(
     """
     gpu_sync = cfg.train.use_gpu and torch.cuda.is_available()
     timer = Timer(enabled=cfg.logging.timing_csv_freq > 0, gpu_sync=gpu_sync)
+    from orchard.batched_training import BatchedTrainer
 
     if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC:
         critics = create_networks(cfg.model, cfg.env, cfg.train)
@@ -33,7 +33,7 @@ def create_trainer(
             device = "cuda" if torch.cuda.is_available() else "cpu"
             for actor in actors:
                 actor.to(device)
-            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device)
+            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
             if device == "cuda":
                 alloc = torch.cuda.memory_allocated() / 1024**2
@@ -53,6 +53,7 @@ def create_trainer(
                 freeze_critic=cfg.train.freeze_critic,
                 following_rates_cfg=cfg.train.following_rates,
                 influencer_cfg=cfg.train.influencer,
+                comm_only_teammates=cfg.train.comm_only_teammates,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
             )
@@ -70,6 +71,7 @@ def create_trainer(
             freeze_critic=cfg.train.freeze_critic,
             following_rates_cfg=cfg.train.following_rates,
             influencer_cfg=cfg.train.influencer,
+            comm_only_teammates=cfg.train.comm_only_teammates,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
         )
@@ -78,7 +80,7 @@ def create_trainer(
     if cfg.train.use_gpu:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         bt = BatchedTrainer(
-            networks, td_lambda=cfg.train.td_lambda, device=device,
+            networks, td_lambda=cfg.train.td_lambda, device=device, timer=timer,
         )
         print(f"GpuTrainer: {len(networks)} networks on {device}")
         if device == "cuda":
@@ -86,6 +88,7 @@ def create_trainer(
             total = torch.cuda.get_device_properties(0).total_memory / 1024**2
             print(f"  VRAM: {alloc:.0f}MB / {total:.0f}MB ({alloc/total*100:.1f}%)")
 
+        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.gpu import GpuTrainer
         return GpuTrainer(
             network_list=networks,
@@ -96,10 +99,15 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
+            per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
+            greedy_own_type_only=cfg.train.greedy_own_type_only,
+            discount_method=cfg.train.discount_method,
         )
     else:
+        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.cpu import CpuTrainer
         print(f"CpuTrainer: {len(networks)} networks on CPU")
         return CpuTrainer(
@@ -110,6 +118,10 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
+            per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
+            greedy_own_type_only=cfg.train.greedy_own_type_only,
+            discount_method=cfg.train.discount_method,
         )

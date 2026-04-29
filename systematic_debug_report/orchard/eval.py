@@ -43,7 +43,18 @@ def rollout_trajectory(
                 rewards=zero_rewards, discount=gamma,
             )
             if env.cfg.pick_mode == PickMode.FORCED:
-                tau = s_moved.task_type_at(s_moved.agent_positions[s_moved.actor])
+                actor = s_moved.actor
+                pos = s_moved.agent_positions[actor]
+                g_actor = set(env.cfg.task_assignments[actor]) if env.cfg.task_assignments else {0}
+                tau = next(
+                    (tt for tp, tt in zip(s_moved.task_positions, s_moved.task_types or [])
+                     if tp == pos and tt in g_actor),
+                    None,
+                )
+                if tau is None:
+                    # Only wrong-type tasks here: stay, no pick transition
+                    s = env.advance_actor(env.spawn_and_despawn(s_moved))
+                    continue
                 pick_action = make_pick_action(tau)
             else:
                 pick_action = policy_fn(s_moved.with_pick_phase())
@@ -87,7 +98,7 @@ def evaluate_policy_metrics(
         total_reward += t.rewards[actor]
         total_team_reward += sum(t.rewards)
 
-        if t.action.is_pick():
+        if t.action.is_pick() and any(r != 0.0 for r in t.rewards):
             tau = t.action.pick_type()
             g_actor = set(env.cfg.task_assignments[actor])
             if tau in g_actor:

@@ -11,8 +11,7 @@ rng: _stdlib_random.Random = _stdlib_random.Random()
 
 def set_all_seeds(seed: int) -> None:
     """Seed all RNGs. Call once at startup."""
-    global rng
-    rng = _stdlib_random.Random(seed)
+    rng.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
     _stdlib_random.seed(seed)

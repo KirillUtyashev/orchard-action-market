@@ -19,14 +19,20 @@ def get_all_actions(env_cfg: EnvConfig) -> list[Action]:
 def get_phase2_actions(state: State, env_cfg: EnvConfig) -> list[Action]:
     """Phase-2 actions after a move landed on a task cell.
 
-    Returns {STAY, pick(τ) for each τ present at actor's cell}.
-    Empty list if actor is not on any task cell.
+    When allow_cross_type_picks=True (default): offers STAY + pick for all task
+    types present at the cell.
+    When allow_cross_type_picks=False: restricts to own-type picks only, keeping
+    the action space identical to a T=1 run for equivalence testing.
     """
     actor_pos = state.agent_positions[state.actor]
     tasks_here = state.tasks_at(actor_pos)
     if not tasks_here:
         return []
-    types_here = sorted({tau for _, tau in tasks_here})
+    if not env_cfg.allow_cross_type_picks and env_cfg.task_assignments is not None:
+        actor_types = frozenset(env_cfg.task_assignments[state.actor])
+        types_here = sorted({tau for _, tau in tasks_here if tau in actor_types})
+    else:
+        types_here = sorted({tau for _, tau in tasks_here})
     actions: list[Action] = [Action.STAY]
     for tau in types_here:
         actions.append(make_pick_action(tau))

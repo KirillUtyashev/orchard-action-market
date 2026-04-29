@@ -1,6 +1,7 @@
 """Grid-based encoders for the orchard environment.
 
 Active encoders:
+  - CnnGridEncoder: dec O(1), 4 channels, 1 scalar — mirrors old BasicGridEncoder for comparison
   - CentralizedTaskGridEncoder: centralized, T+N+1 channels, N scalars
   - BlindTaskGridEncoder: dec O(1), 4 channels, 3 scalars
   - FilteredTaskGridEncoder: dec O(1), 6 channels, 3 scalars
@@ -12,6 +13,136 @@ import torch
 
 from orchard.encoding.base import GridEncoder
 from orchard.datatypes import EncoderOutput, Grid, State
+
+
+class CnnGridEncoder(GridEncoder):
+    """Mirrors old BasicGridEncoder: 4 channels, 1 scalar, uses task_positions as entities.
+
+    Grid (4 channels):
+      0 — task positions (1.0 per task, regardless of type)
+      1 — self position (1.0 at own cell)
+      2 — all other agents (1.0 per other agent; may sum >1 if overlapping)
+      3 — actor position (1.0 at actor's cell)
+    Scalar (1): is_self_actor (1.0 if agent_idx == state.actor, else 0.0)
+    """
+
+    def grid_channels(self) -> int:
+        return 4
+
+    def scalar_dim(self) -> int:
+        return 1
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grid = torch.zeros(4, h, w, dtype=torch.float32)
+
+        # Ch0: tasks
+        for tp in state.task_positions:
+            grid[0, tp.row, tp.col] += 1.0
+
+        # Ch1: self
+        r, c = state.agent_positions[agent_idx]
+        grid[1, r, c] = 1.0
+
+        # Ch2: all other agents
+        for i, pos in enumerate(state.agent_positions):
+            if i != agent_idx:
+                grid[2, pos.row, pos.col] += 1.0
+
+        # Ch3: actor
+        actor_pos = state.agent_positions[state.actor]
+        grid[3, actor_pos.row, actor_pos.col] = 1.0
+
+        is_actor = 1.0 if agent_idx == state.actor else 0.0
+        scalar = torch.tensor([is_actor], dtype=torch.float32)
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+    def encode_batch_for_actions(
+        self, state: State, agent_idx: int, after_states: list[State],
+    ) -> EncoderOutput:
+        """Batch encode after_states for action selection. Identical to N individual encode calls."""
+        n = len(after_states)
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grids = torch.zeros(n, 4, h, w, dtype=torch.float32)
+        scalars = torch.zeros(n, 1, dtype=torch.float32)
+
+        for k, s in enumerate(after_states):
+            # Ch0: tasks
+            for tp in s.task_positions:
+                grids[k, 0, tp.row, tp.col] += 1.0
+            # Ch1: self
+            r, c = s.agent_positions[agent_idx]
+            grids[k, 1, r, c] = 1.0
+            # Ch2: all other agents
+            for i, pos in enumerate(s.agent_positions):
+                if i != agent_idx:
+                    grids[k, 2, pos.row, pos.col] += 1.0
+            # Ch3: actor
+            actor_pos = s.agent_positions[s.actor]
+            grids[k, 3, actor_pos.row, actor_pos.col] = 1.0
+            # scalar
+            scalars[k, 0] = 1.0 if agent_idx == s.actor else 0.0
+
+        return EncoderOutput(grid=grids, scalar=scalars)
+
+    def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
+        N = self.env_cfg.n_agents
+        h, w = self.env_cfg.height, self.env_cfg.width
+        grids = torch.zeros(N, 4, h, w, dtype=torch.float32)
+
+        # Ch0: tasks — same for all agents
+        for tp in state.task_positions:
+            grids[:, 0, tp.row, tp.col] += 1.0
+
+        # Ch1: self positions
+        self_grids = torch.zeros(N, h, w, dtype=torch.float32)
+        for i, pos in enumerate(state.agent_positions):
+            self_grids[i, pos.row, pos.col] = 1.0
+        grids[:, 1] = self_grids
+
+        # Ch2: all other agents = total - self
+        total_agents = self_grids.sum(0)
+        grids[:, 2] = total_agents.unsqueeze(0) - self_grids
+
+        # Ch3: actor — same for all agents
+        actor_pos = state.agent_positions[state.actor]
+        grids[:, 3, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalars (N, 1): is_self_actor
+        scalars = torch.zeros(N, 1, dtype=torch.float32)
+        scalars[state.actor, 0] = 1.0
+
+        return grids, scalars
+
+    def encode_all_agents_for_actions(
+        self, state: State, after_states: list[State],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        N = self.env_cfg.n_agents
+        B = len(after_states)
+        h, w = self.env_cfg.height, self.env_cfg.width
+
+        grids = torch.zeros(N, B, 4, h, w, dtype=torch.float32)
+        scalars = torch.zeros(N, B, 1, dtype=torch.float32)
+
+        # Ch1 per-agent, per-action self positions; Ch2 = total - self
+        self_grids = torch.zeros(N, B, h, w, dtype=torch.float32)
+        for k, s in enumerate(after_states):
+            for i, pos in enumerate(s.agent_positions):
+                self_grids[i, k, pos.row, pos.col] = 1.0
+        grids[:, :, 1] = self_grids
+        total_agents = self_grids.sum(0)  # (B, H, W)
+        grids[:, :, 2] = total_agents.unsqueeze(0) - self_grids
+
+        # Ch0 (tasks), Ch3 (actor), scalars — per action, broadcast across agents
+        for k, s in enumerate(after_states):
+            for tp in s.task_positions:
+                grids[:, k, 0, tp.row, tp.col] += 1.0
+            actor_pos = s.agent_positions[s.actor]
+            grids[:, k, 3, actor_pos.row, actor_pos.col] = 1.0
+            scalars[s.actor, k, 0] = 1.0
+
+        return grids, scalars
+
 
 class CentralizedTaskGridEncoder(GridEncoder):
     """Centralized task-specialization encoding.
@@ -157,7 +288,7 @@ class BlindTaskGridEncoder(GridEncoder):
       0 — My Tasks: 1.0 where any task of type τ ∈ G_i exists
       1 — Self Position: 1.0 at agent i's cell
       2 — Teammate Positions: count of teammates at each cell
-      3 — Actor Position: 1.0 at actor's cell
+      3 — Actor Position: 1.0 at actor's cell (0 when a stranger is acting)
     Scalars (3):
       0 — is_self_actor
       1 — is_teammate_actor
@@ -204,11 +335,41 @@ class BlindTaskGridEncoder(GridEncoder):
             for j in self._teammates[i]:
                 self._teammate_matrix[i, j] = 1.0
 
+        self._agent_type_mask = torch.zeros(N, self._n_types, dtype=torch.bool)
+        for i, types_for_agent in enumerate(self._my_types):
+            if types_for_agent:
+                self._agent_type_mask[i, torch.tensor(sorted(types_for_agent), dtype=torch.long)] = True
+
     def grid_channels(self) -> int:
         return 4
 
     def scalar_dim(self) -> int:
         return 3
+
+    def _build_my_task_grids(
+        self,
+        task_positions: tuple,
+        task_types: tuple | None,
+    ) -> torch.Tensor:
+        """Vectorized Ch0: per-agent 'my tasks' grid. Returns (N, H, W)."""
+        N = self._n_agents
+        h, w = self.env_cfg.height, self.env_cfg.width
+        my_task_grids = torch.zeros(N, h, w, dtype=torch.float32)
+        if not task_positions or task_types is None:
+            return my_task_grids
+        rows_t = torch.tensor([p.row for p in task_positions], dtype=torch.long)
+        cols_t = torch.tensor([p.col for p in task_positions], dtype=torch.long)
+        types_t = torch.tensor(task_types, dtype=torch.long)
+        relevant = self._agent_type_mask.index_select(1, types_t)  # (N, T_tasks)
+        if relevant.any():
+            agent_idx, task_idx = relevant.nonzero(as_tuple=True)
+            my_task_grids.index_put_(
+                (agent_idx, rows_t.index_select(0, task_idx), cols_t.index_select(0, task_idx)),
+                torch.ones(agent_idx.numel(), dtype=torch.float32),
+                accumulate=True,
+            )
+            my_task_grids.clamp_max_(1.0)
+        return my_task_grids
 
     def encode(self, state: State, agent_idx: int) -> EncoderOutput:
         h, w = self.env_cfg.height, self.env_cfg.width
@@ -231,18 +392,19 @@ class BlindTaskGridEncoder(GridEncoder):
             if j != agent_idx and j in teammates_of_i:
                 grid[2, pos.row, pos.col] += 1.0
 
-        # Ch3: Actor
-        actor_pos = state.agent_positions[state.actor]
-        grid[3, actor_pos.row, actor_pos.col] = 1.0
-
         # Scalars
         is_actor = 1.0 if agent_idx == state.actor else 0.0
         is_teammate_actor = 1.0 if state.actor in teammates_of_i else 0.0
         # If agent IS the actor, is_teammate_actor = 0 (actor is not its own teammate)
         if agent_idx == state.actor:
             is_teammate_actor = 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
+
+        # Ch3: teammate-actor position only (0 when a stranger is acting)
+        if is_actor or is_teammate_actor:
+            actor_pos = state.agent_positions[state.actor]
+            grid[3, actor_pos.row, actor_pos.col] = 1.0
 
         return EncoderOutput(grid=grid, scalar=scalar)
 
@@ -290,7 +452,9 @@ class BlindTaskGridEncoder(GridEncoder):
                 if is_actor_teammate:
                     grids[k, 2, actor_pos.row, actor_pos.col] += 1.0
                 # If actor is a stranger, they're invisible — nothing to add
-            grids[k, 3, actor_pos.row, actor_pos.col] = 1.0
+            # Ch3: teammate-actor position only (0 when a stranger is acting)
+            if is_actor or is_actor_teammate:
+                grids[k, 3, actor_pos.row, actor_pos.col] = 1.0
 
             # Handle pick after-states where tasks changed
             if s_after.task_positions != state.task_positions:
@@ -306,9 +470,10 @@ class BlindTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -317,12 +482,8 @@ class BlindTaskGridEncoder(GridEncoder):
         h, w = self.env_cfg.height, self.env_cfg.width
         grids = torch.zeros(N, 4, h, w, dtype=torch.float32)
 
-        # Ch0: My Tasks — per-agent (each agent sees only its own types)
-        if state.task_positions and state.task_types is not None:
-            for pos, tau in zip(state.task_positions, state.task_types):
-                for i in range(N):
-                    if tau in self._my_types[i]:
-                        grids[i, 0, pos.row, pos.col] = 1.0
+        # Ch0: My Tasks (vectorized)
+        grids[:, 0] = self._build_my_task_grids(state.task_positions, state.task_types)
 
         # Ch1: Self — one-hot per agent
         self_grids = torch.zeros(N, h, w, dtype=torch.float32)
@@ -336,19 +497,22 @@ class BlindTaskGridEncoder(GridEncoder):
         ).view(N, h, w)
         grids[:, 2] = teammate_grids
 
-        # Ch3: Actor
-        actor_pos = state.agent_positions[state.actor]
-        grids[:, 3, actor_pos.row, actor_pos.col] = 1.0
-
         # Scalars (N, 3): [is_self_actor, is_teammate_actor, is_pick_phase]
         scalars = torch.zeros(N, 3, dtype=torch.float32)
         scalars[state.actor, 0] = 1.0
-        # is_teammate_actor: for each agent i, is the actor a teammate of i?
         scalars[:, 1] = self._teammate_matrix[:, state.actor]
-        # Actor itself should have is_teammate_actor = 0
         scalars[state.actor, 1] = 0.0
+
+        # Ch3: teammate-actor position only (0 for strangers when a stranger is acting)
+        actor_is_teammate = self._teammate_matrix[:, state.actor]  # (N,) — 1 for teammates of actor
+        actor_pos = state.agent_positions[state.actor]
+        # Visible to actor itself (scalars[:,0]=1) and teammates (actor_is_teammate=1)
+        ch3_visible = (actor_is_teammate > 0)
+        ch3_visible[state.actor] = True
+        grids[ch3_visible, 3, actor_pos.row, actor_pos.col] = 1.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -362,14 +526,8 @@ class BlindTaskGridEncoder(GridEncoder):
 
         grids = torch.zeros(N, B, 4, h, w, dtype=torch.float32)
 
-        # Ch0: My Tasks — broadcast over B (will fix for pick after-states)
-        my_task_grids = torch.zeros(N, h, w, dtype=torch.float32)
-        if state.task_positions and state.task_types is not None:
-            for pos, tau in zip(state.task_positions, state.task_types):
-                for i in range(N):
-                    if tau in self._my_types[i]:
-                        my_task_grids[i, pos.row, pos.col] = 1.0
-        grids[:, :, 0] = my_task_grids.unsqueeze(1)
+        # Ch0: My Tasks (vectorized), broadcast over B
+        grids[:, :, 0] = self._build_my_task_grids(state.task_positions, state.task_types).unsqueeze(1)
 
         # Ch1: Self — original positions, broadcast over B
         self_orig = torch.zeros(N, h, w, dtype=torch.float32)
@@ -383,49 +541,54 @@ class BlindTaskGridEncoder(GridEncoder):
         ).view(N, h, w)
         grids[:, :, 2] = teammate_orig.unsqueeze(1)
 
-        # Per-action adjustments for actor movement
+        # Vectorized per-action actor adjustment
         old_actor_pos = state.agent_positions[actor]
         old_ar, old_ac = old_actor_pos.row, old_actor_pos.col
         actor_is_teammate = self._teammate_matrix[:, actor]  # (N,)
 
-        for k, s_after in enumerate(after_states):
-            actor_pos = s_after.agent_positions[actor]
-            new_ar, new_ac = actor_pos.row, actor_pos.col
+        actor_rows = torch.tensor([s.agent_positions[actor].row for s in after_states], dtype=torch.long)
+        actor_cols = torch.tensor([s.agent_positions[actor].col for s in after_states], dtype=torch.long)
+        batch_idx = torch.arange(B)
 
-            # Fix actor's self channel
-            grids[actor, k, 1] = 0
-            grids[actor, k, 1, new_ar, new_ac] = 1.0
+        # Ch1 for actor's own self; Ch3 for actor and teammates only
+        actor_pos_grids = torch.zeros(B, h, w, dtype=torch.float32)
+        actor_pos_grids[batch_idx, actor_rows, actor_cols] = 1.0
+        grids[actor, :, 1] = actor_pos_grids
+        # Ch3: teammate-actor position only (strangers see zeros)
+        ch3_visible = actor_is_teammate.clone()
+        ch3_visible[actor] = 1.0  # actor itself
+        grids[:, :, 3] = ch3_visible.view(N, 1, 1, 1) * actor_pos_grids.unsqueeze(0)
 
-            # Fix teammate channels for non-actor agents
-            if old_ar != new_ar or old_ac != new_ac:
-                for i in range(N):
-                    if i == actor:
-                        continue
-                    if actor_is_teammate[i] > 0.5:
-                        grids[i, k, 2, old_ar, old_ac] -= 1.0
-                        grids[i, k, 2, new_ar, new_ac] += 1.0
-                    # If actor is stranger to i, no adjustment needed (invisible)
+        # Ch2: fix teammate channels for states where actor moved
+        moved_mask = (actor_rows != old_ar) | (actor_cols != old_ac)
+        moved_indices = batch_idx[moved_mask]
+        moved_rows = actor_rows[moved_mask]
+        moved_cols = actor_cols[moved_mask]
+        if moved_indices.numel() > 0:
+            for i in range(N):
+                if i == actor:
+                    continue
+                if actor_is_teammate[i] > 0.5:
+                    grids[i, moved_indices, 2, old_ar, old_ac] -= 1.0
+                    grids[i, moved_indices, 2, moved_rows, moved_cols] += 1.0
 
-            # Ch3: Actor position
-            grids[:, k, 3, new_ar, new_ac] = 1.0
-
-            # Handle pick after-states
-            if s_after.task_positions != state.task_positions:
-                grids[:, k, 0] = 0
-                if s_after.task_positions and s_after.task_types is not None:
-                    for pos, tau in zip(s_after.task_positions, s_after.task_types):
-                        for i in range(N):
-                            if tau in self._my_types[i]:
-                                grids[i, k, 0, pos.row, pos.col] = 1.0
+        # Ch0: fix pick after-states where tasks changed (vectorized per changed step)
+        changed_task_indices = [k for k, s in enumerate(after_states)
+                                if s.task_positions != state.task_positions]
+        for k in changed_task_indices:
+            grids[:, k, 0] = self._build_my_task_grids(
+                after_states[k].task_positions, after_states[k].task_types
+            )
 
         # Scalars (N, B, 3)
         scalars = torch.zeros(N, B, 3, dtype=torch.float32)
         scalars[actor, :, 0] = 1.0
         scalars[:, :, 1] = actor_is_teammate.unsqueeze(1)
         scalars[actor, :, 1] = 0.0
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[:, k, 2] = 1.0
+        pick_phase_mask = torch.tensor([s.pick_phase for s in after_states], dtype=torch.bool)
+        if pick_phase_mask.any():
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
 
         return grids, scalars
 
@@ -571,7 +734,7 @@ class FilteredTaskGridEncoder(GridEncoder):
         # Scalars
         is_actor = 1.0 if agent_idx == state.actor else 0.0
         is_teammate_actor = 1.0 if (state.actor in teammates_of_i and agent_idx != state.actor) else 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
 
         return EncoderOutput(grid=grid, scalar=scalar)
@@ -647,9 +810,10 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -693,7 +857,8 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars[:, 1] = self._teammate_matrix[:, state.actor]
         scalars[state.actor, 1] = 0.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -790,7 +955,8 @@ class FilteredTaskGridEncoder(GridEncoder):
         scalars[:] = scalars_base.unsqueeze(1)
         pick_phase_mask = torch.tensor([s_after.pick_phase for s_after in after_states], dtype=torch.bool)
         if pick_phase_mask.any():
-            scalars[:, pick_phase_mask, 2] = 1.0
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
         return grids, scalars
 
 
@@ -889,7 +1055,7 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         # Scalars
         is_actor = 1.0 if agent_idx == state.actor else 0.0
         is_teammate_actor = 1.0 if (state.actor in teammates_of_i and agent_idx != state.actor) else 0.0
-        p2 = 1.0 if state.pick_phase else 0.0
+        p2 = 1.0 if (state.pick_phase and (is_actor or is_teammate_actor)) else 0.0
         scalar = torch.tensor([is_actor, is_teammate_actor, p2], dtype=torch.float32)
 
         return EncoderOutput(grid=grid, scalar=scalar)
@@ -962,9 +1128,10 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars = torch.zeros(n, 3, dtype=torch.float32)
         scalars[:, 0] = is_actor_val
         scalars[:, 1] = is_tm_actor_val
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[k, 2] = 1.0
+        if is_actor or is_actor_teammate:
+            for k, s_after in enumerate(after_states):
+                if s_after.pick_phase:
+                    scalars[k, 2] = 1.0
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
@@ -1006,7 +1173,8 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars[:, 1] = self._teammate_matrix[:, state.actor]
         scalars[state.actor, 1] = 0.0
         if state.pick_phase:
-            scalars[:, 2] = 1.0
+            visible = (scalars[:, 0] > 0.5) | (scalars[:, 1] > 0.5)
+            scalars[visible, 2] = 1.0
 
         return grids, scalars
 
@@ -1087,8 +1255,9 @@ class PositionAwareTaskGridEncoder(GridEncoder):
         scalars[actor, :, 0] = 1.0
         scalars[:, :, 1] = actor_is_teammate.unsqueeze(1)
         scalars[actor, :, 1] = 0.0
-        for k, s_after in enumerate(after_states):
-            if s_after.pick_phase:
-                scalars[:, k, 2] = 1.0
+        pick_phase_mask = torch.tensor([s_after.pick_phase for s_after in after_states], dtype=torch.bool)
+        if pick_phase_mask.any():
+            agent_can_see = (scalars[:, :, 0] > 0.5) | (scalars[:, :, 1] > 0.5)  # (N, B)
+            scalars[:, :, 2] = (agent_can_see & pick_phase_mask.unsqueeze(0)).float()
 
         return grids, scalars

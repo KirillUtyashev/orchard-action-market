@@ -20,9 +20,37 @@ def initial_following_rate_vector(
     budget: float,
     *,
     influencer_enabled: bool = False,
+    teammate_mask=None,
+    teammate_budget: float | None = None,
+    non_teammate_budget: float | None = None,
 ) -> np.ndarray:
     rates = np.zeros(int(num_agents), dtype=float)
-    if num_agents <= 1 or budget <= 0.0:
+    if num_agents <= 1:
+        return rates
+
+    if teammate_budget is not None or non_teammate_budget is not None:
+        teammate_budget = max(0.0, float(teammate_budget or 0.0))
+        non_teammate_budget = max(0.0, float(non_teammate_budget or 0.0))
+        teammate_flags = np.zeros(int(num_agents), dtype=bool)
+        if teammate_mask is not None:
+            teammate_flags = np.asarray(teammate_mask, dtype=bool).reshape(-1)
+            if teammate_flags.shape != (int(num_agents),):
+                raise ValueError(
+                    f"Expected teammate mask shape {(int(num_agents),)}, got {teammate_flags.shape}."
+                )
+        teammate_flags[int(agent_id)] = False
+        non_teammate_flags = ~teammate_flags
+        non_teammate_flags[int(agent_id)] = False
+
+        teammate_count = int(np.count_nonzero(teammate_flags))
+        non_teammate_count = int(np.count_nonzero(non_teammate_flags))
+        if teammate_count > 0 and teammate_budget > 0.0:
+            rates[teammate_flags] = teammate_budget / float(teammate_count)
+        if non_teammate_count > 0 and non_teammate_budget > 0.0:
+            rates[non_teammate_flags] = non_teammate_budget / float(non_teammate_count)
+        return rates
+
+    if budget <= 0.0:
         return rates
 
     if influencer_enabled:
