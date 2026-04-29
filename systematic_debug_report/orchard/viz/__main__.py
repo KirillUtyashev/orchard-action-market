@@ -72,6 +72,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dpi", type=int, default=120, help="PNG render DPI (default: 120)")
     p.add_argument("--no-html", action="store_true",
                    help="Skip rendering and HTML — just print stats and write CSV/JSON (fast sanity check)")
+    p.add_argument("--scenario", type=str, default=None,
+                   help="Apply a fixed-eval scenario before init (e.g. edge_zones_center_agents, frozen_zones). "
+                        "Overrides spawn zone positions and agent start as defined in orchard.fixed_eval.SCENARIOS.")
+    p.add_argument("--override", nargs="*", default=[],
+                   help="Override config values using dot notation: key=value (e.g. env.n_agents=8 env.height=11). "
+                        "Applied after loading the config, before creating the env.")
     return p.parse_args()
 
 
@@ -268,7 +274,7 @@ def render_all_frames(
     return svgs
 
 
-def _load_config_or_metadata(path: str):
+def _load_config_or_metadata(path: str, overrides: list[str] | None = None):
     """Load config from either a raw config YAML or a run metadata.yaml."""
     import yaml
 
@@ -287,7 +293,7 @@ def _load_config_or_metadata(path: str):
         tmp_path = tmp.name
 
     try:
-        return load_config(tmp_path)
+        return load_config(tmp_path, overrides=overrides or [])
     finally:
         import os
         os.unlink(tmp_path)
@@ -300,7 +306,7 @@ def main() -> None:
 
     # --- Load config ---
     print(f"Loading config: {args.config}")
-    cfg = _load_config_or_metadata(args.config)
+    cfg = _load_config_or_metadata(args.config, overrides=args.override or [])
 
     seed = args.seed if args.seed is not None else cfg.train.seed
     set_all_seeds(seed)
@@ -308,6 +314,22 @@ def main() -> None:
     n_task_types = cfg.env.n_task_types
     task_assignments = cfg.env.task_assignments
     pick_mode = cfg.env.pick_mode
+
+    # --- Apply scenario overrides (if requested) ---
+    env_cfg = cfg.env
+    scenario_obj = None
+    if args.scenario is not None:
+        from orchard.fixed_eval import SCENARIOS
+        if args.scenario not in SCENARIOS:
+            print(f"ERROR: unknown scenario '{args.scenario}'. Available: {list(SCENARIOS)}", file=sys.stderr)
+            sys.exit(1)
+        scenario_obj = SCENARIOS[args.scenario]
+        stoch_modified = scenario_obj.make_stochastic(env_cfg.stochastic, env_cfg)
+        env_cfg = dataclasses.replace(env_cfg, stochastic=stoch_modified)
+        eval_seed = args.eval_seed if args.eval_seed is not None else scenario_obj.eval_seed
+        print(f"  Scenario '{args.scenario}' applied (eval_seed={eval_seed})")
+        args.eval_seed = eval_seed
+    cfg = dataclasses.replace(cfg, env=env_cfg)
 
     # --- Create env and encoder ---
     env = create_env(cfg.env)
@@ -368,8 +390,15 @@ def main() -> None:
     policy_fn = make_policy_fn(policy_name, networks, env,
                                actor_networks=actor_networks)
     spawn_area_snapshots: list = []
-    env.set_eval_mode(True, seed=args.eval_seed)
+    fixed_zones = (
+        scenario_obj.get_fixed_spawn_zones(env_cfg.stochastic, env_cfg)
+        if scenario_obj is not None and scenario_obj.get_fixed_spawn_zones is not None
+        else None
+    )
+    env.set_eval_mode(True, seed=args.eval_seed, fixed_spawn_zones=fixed_zones)
     init_state = env.init_state()
+    if scenario_obj is not None and scenario_obj.override_init_state is not None:
+        init_state = scenario_obj.override_init_state(init_state, env_cfg)
     try:
         frames = generate_frames(
             start_state=init_state,

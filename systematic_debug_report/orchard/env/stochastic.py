@@ -72,7 +72,12 @@ class StochasticEnv(BaseEnv):
             return self._all_cells
         return self._spawn_area_cells[tau]
 
-    def set_eval_mode(self, eval_mode: bool, seed: int | None = None) -> None:
+    def set_eval_mode(
+        self,
+        eval_mode: bool,
+        seed: int | None = None,
+        fixed_spawn_zones: tuple[tuple[int, int], ...] | None = None,
+    ) -> None:
         if eval_mode:
             self._saved_spawn_area_cells = (
                 [list(cells) for cells in self._spawn_area_cells]
@@ -89,6 +94,12 @@ class StochasticEnv(BaseEnv):
                 if self._type_rngs is not None:
                     for i, r in enumerate(self._type_rngs):
                         r.seed(seed + i + 1)
+            if fixed_spawn_zones is not None and self._spawn_area_cells is not None:
+                size = self.stoch.spawn_area_size
+                self._spawn_area_cells = [
+                    [Grid(r0 + dr, c0 + dc) for dr in range(size) for dc in range(size)]
+                    for r0, c0 in fixed_spawn_zones
+                ]
         else:
             self._spawn_area_cells = self._saved_spawn_area_cells
             self._saved_spawn_area_cells = None

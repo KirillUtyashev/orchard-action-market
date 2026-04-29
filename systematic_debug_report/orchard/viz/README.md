@@ -20,6 +20,13 @@ python -m orchard.viz configs/my_config.yaml --checkpoint runs/exp1/checkpoints/
 
 # Fast sanity check (no rendering, just stats + CSV)
 python -m orchard.viz configs/my_config.yaml --no-html --steps 500
+
+# Override config values on the fly (dot notation, same as train.py)
+python -m orchard.viz metadata.yaml --checkpoint final.pt --override env.n_agents=8 env.height=11
+
+# Apply a fixed-eval scenario (fixed spawn zones + agent start) for direct comparison with evaluate_checkpoint
+python -m orchard.viz metadata.yaml --checkpoint final.pt \
+    --scenario edge_zones_center_agents --compare nearest_correct_task_stay_wrong
 ```
 
 ## Policy Options
@@ -31,6 +38,20 @@ python -m orchard.viz configs/my_config.yaml --no-html --steps 500
 --policy random                             Random actions (including pick actions in choice mode)
 --policy learned                            Greedy from checkpoint (requires --checkpoint)
 ```
+
+## Scenarios
+
+Scenarios patch the env config before creating the env, exactly mirroring what `evaluate_checkpoint`
+does in `fixed_eval.py` — so what you see in viz is what gets measured in notebook plots.
+
+```
+--scenario frozen_zones               freeze spawn zones (eval_spawn_zone_move_interval=0), fixed seed
+--scenario edge_zones_center_agents   spawn zones at grid edges (maximally spread around perimeter),
+                                      all agents start at grid center — exposes centralized failures
+```
+
+The `--eval-seed` defaults to the scenario's seed (`42`) for reproducibility. Pass `--eval-seed N`
+to see a different deterministic arrangement with the same zone layout.
 
 **Default:** `learned` if `--checkpoint` is provided, otherwise auto-detects:
 `nearest_correct_task` for `n_task_types > 1`, `nearest_task` for legacy.
@@ -56,22 +77,28 @@ When the config has `n_task_types > 1`:
 
 ```
 positional arguments:
-  config                Path to YAML config file (or metadata.yaml from a run)
+  config                    Path to YAML config file (or metadata.yaml from a run)
 
 optional arguments:
-  --checkpoint PATH     Path to model checkpoint (.pt)
-  --policy POLICY       Policy to visualize (see above)
-  --compare [POLICY]    Compare against another policy (default: auto-select heuristic).
-                        Accepts same values as --policy.
-  --show-after-states   Show s_t and s_t^a per transition
-  --steps N             Number of agent decisions (default: 200)
-  --seed N              Override config seed
-  --fps N               Autoplay FPS (default: 3)
-  --output-dir DIR      Output directory (default: ./viz_output)
-  --decisions           Show Q-values for all actions (requires --checkpoint)
-  --values              Show per-agent V_i(s) (requires --checkpoint)
-  --dpi N               PNG render DPI (default: 120)
-  --no-html             Skip rendering and HTML (fast stats + CSV/JSON only)
+  --checkpoint PATH         Path to model checkpoint (.pt)
+  --policy POLICY           Policy to visualize (see above)
+  --compare [POLICY]        Compare against another policy (default: auto-select heuristic).
+                            Accepts same values as --policy.
+  --show-after-states       Show s_t and s_t^a per transition
+  --steps N                 Number of agent decisions (default: 200)
+  --seed N                  Override config seed (affects env + training RNGs)
+  --eval-seed N             Reseed env RNGs at eval start only (matches EvalConfig.eval_seed)
+  --scenario NAME           Apply a fixed-eval scenario (see Scenarios section)
+  --override key=val ...    Override config values using dot notation, e.g.:
+                              env.n_agents=8
+                              env.stochastic.spawn_zone_move_interval=0
+                              train.learning_type=centralized
+  --fps N                   Autoplay FPS (default: 3)
+  --output-dir DIR          Output directory (default: ./viz_output)
+  --decisions               Show Q-values for all actions (requires --checkpoint)
+  --values                  Show per-agent V_i(s) (requires --checkpoint)
+  --dpi N                   PNG render DPI (default: 120)
+  --no-html                 Skip rendering and HTML (fast stats + CSV/JSON only)
 ```
 
 ## Output Files
