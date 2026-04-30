@@ -2,7 +2,7 @@
 
 import pytest
 from collections import Counter
-from orchard.enums import PickMode, DespawnMode, TaskSpawnMode
+from orchard.enums import PickMode, DespawnMode, SpawnZoneMode, TaskSpawnMode
 from orchard.datatypes import EnvConfig, StochasticConfig, Grid, State
 from orchard.env.stochastic import StochasticEnv
 from orchard.seed import set_all_seeds
@@ -362,8 +362,10 @@ def _make_moving_zone_cfg(
             spawn_prob=0.05, despawn_mode=DespawnMode.NONE, despawn_prob=0.0,
             per_type_seeds=per_type_seeds,
             spawn_area_size=3,
-            spawn_zone_move_interval=move_interval,
-            eval_spawn_zone_move_interval=eval_move_interval,
+            spawn_zone_mode=SpawnZoneMode.RANDOM if move_interval > 0 else SpawnZoneMode.NONE,
+            spawn_zone_interval=move_interval,
+            eval_spawn_zone_mode=SpawnZoneMode.RANDOM if eval_move_interval > 0 else SpawnZoneMode.NONE,
+            eval_spawn_zone_interval=eval_move_interval,
         ),
     )
 
