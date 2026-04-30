@@ -93,6 +93,7 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "none": SpawnZoneMode.NONE,
         "random": SpawnZoneMode.RANDOM,
         "edge_switch": SpawnZoneMode.EDGE_SWITCH,
+        "fixed_spread_agents_center_start": SpawnZoneMode.FIXED_SPREAD_AGENTS_CENTER_START,
     },
     "task_spawn_mode": {
         "global_unique": TaskSpawnMode.GLOBAL_UNIQUE,
@@ -165,7 +166,16 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         eval_spawn_zone_mode=_enum(sd.get("eval_spawn_zone_mode", "none"), "spawn_zone_mode"),
         eval_spawn_zone_interval=int(sd.get("eval_spawn_zone_interval", 0)),
         eval_spawn_flip_interval=int(sd.get("eval_spawn_flip_interval", 0)),
+        reset_agent_pos_interval=int(sd.get("reset_agent_pos_interval", 0)),
+        eval_reset_agent_pos_interval=int(sd.get("eval_reset_agent_pos_interval", 0)),
     )
+
+    if stochastic_cfg.spawn_zone_mode == SpawnZoneMode.FIXED_SPREAD_AGENTS_CENTER_START:
+        if stochastic_cfg.eval_spawn_zone_mode != SpawnZoneMode.NONE:
+            raise ValueError(
+                "spawn_zone_mode=fixed_spread_agents_center_start requires "
+                "eval_spawn_zone_mode=none (eval uses the same fixed training zones)"
+            )
 
     return EnvConfig(
         height=int(d["height"]),

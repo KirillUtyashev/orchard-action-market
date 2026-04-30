@@ -64,18 +64,30 @@ env:
     #                 types. spawn_zone_interval=0 still places zones on the border at
     #                 construction (training) or eval-start (eval) — no periodic moves.
     #
+    #   fixed_spread_agents_center_start — zones placed evenly on the border at construction
+    #                 (same spread as edge_switch init) and NEVER move. Training and eval
+    #                 share identical fixed zone positions; eval_spawn_zone_mode must be "none".
+    #                 - All agents init at grid center (height//2, width//2) each time
+    #                   init_state() is called (start of training and start of eval).
+    #                 - reset_agent_pos_interval / eval_reset_agent_pos_interval: every N
+    #                   rounds, all agents teleport back to center (tasks and zones are
+    #                   unaffected). 0 = disabled.
+    #
     # spawn_flip_interval (independent of mode): every N rounds, each zone flips to its
     #   antipodal corner: (r,c) → (H-S-r, W-S-c). A border position always flips to
     #   another border position. 0 = disabled.
     #
     # Typical training setup: edge_switch + high interval (generalization) + low flip interval
     # Typical eval setup:     edge_switch + interval=0 (start on border, no resets) + flip interval
-    spawn_zone_mode: none          # "none" | "random" | "edge_switch"
+    spawn_zone_mode: none          # "none" | "random" | "edge_switch" | "fixed_spread_agents_center_start"
     spawn_zone_interval: 0         # rounds between zone moves in training (0 = no periodic move)
     spawn_flip_interval: 0         # rounds between antipodal flips in training (0 = disabled)
     eval_spawn_zone_mode: none     # same for eval rollouts
     eval_spawn_zone_interval: 0
     eval_spawn_flip_interval: 0
+    reset_agent_pos_interval: 0      # training: rounds between agent teleports to center
+                                     # only for fixed_spread_agents_center_start; 0 = disabled
+    eval_reset_agent_pos_interval: 0 # eval: same; 0 = disabled
 
 model:
   # Encoder: how the grid state is converted to neural network input
@@ -122,14 +134,6 @@ train:
   # TD(λ) eligibility trace decay. 0=TD(0), 1=Monte Carlo-ish.
   # 0.3 is our standard value — good balance of bias/variance.
   td_lambda: 0.3
-
-  # Communication weight for decentralized V_weighted learning.
-  # 0 = each agent only sees its own reward (will NOT learn to pick with r_picker<0)
-  # 1 = full team reward sharing (standard for cooperative tasks)
-  # Between 0 and 1 = partial sharing
-  # For centralized: irrelevant (single network already sees sum of rewards)
-  # For actor_critic: must be 0.0 (actor-critic uses its own social weighting logic)
-  comm_weight: 0.0
 
   total_steps: 10000000            # maximum training steps (may stop early)
   seed: 1234                       # RNG seed for reproducibility

@@ -16,6 +16,14 @@ class SpawnZoneMode(Enum):
     EDGE_SWITCH = auto()  # every interval rounds: all zones reposition to the grid border,
                           # evenly spread around the perimeter, randomly assigned to types.
                           # interval=0 still places zones on the border at init/eval-start.
+    FIXED_SPREAD_AGENTS_CENTER_START = auto()
+                          # zones placed evenly on the border at construction (like edge_switch
+                          # init) and NEVER move. Training and eval share identical fixed zones.
+                          # eval_spawn_zone_mode must be NONE.
+                          # Agents always init at grid center (height//2, width//2).
+                          # reset_agent_pos_interval / eval_reset_agent_pos_interval: every N
+                          # rounds, all agents teleport back to center (tasks/zones unaffected).
+                          # 0 = disabled.
 
 
 class TaskSpawnMode(Enum):

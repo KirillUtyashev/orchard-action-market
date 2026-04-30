@@ -86,11 +86,25 @@ def _edge_zones_center_agents_init(state: State, env: EnvConfig) -> State:
     )
 
 
+def _noop_stochastic(stoch: StochasticConfig, env: EnvConfig) -> StochasticConfig:
+    return stoch
+
+
 # ---------------------------------------------------------------------------
 # Scenario registry
 # ---------------------------------------------------------------------------
 
 SCENARIOS: dict[str, TestScenario] = {
+    "center_agents": TestScenario(
+        name="center_agents",
+        description=(
+            "Same eval dynamics as training config (eval_spawn_zone_mode, intervals unchanged), "
+            "but all agents start stacked at grid center. Tests whether agents can disperse "
+            "and find their correct spawn zones from a worst-case starting position."
+        ),
+        make_stochastic=_noop_stochastic,
+        override_init_state=_edge_zones_center_agents_init,
+    ),
     "frozen_zones": TestScenario(
         name="frozen_zones",
         description=(

@@ -151,6 +151,8 @@ class StochasticConfig:
     eval_spawn_zone_mode: SpawnZoneMode = SpawnZoneMode.NONE  # how zones move during eval
     eval_spawn_zone_interval: int = 0  # rounds between zone moves in eval (same rules as training)
     eval_spawn_flip_interval: int = 0  # rounds between antipodal flips during eval (0 = disabled)
+    reset_agent_pos_interval: int = 0       # training: rounds between agent teleports to center; only for FIXED_SPREAD_AGENTS_CENTER_START; 0 = disabled
+    eval_reset_agent_pos_interval: int = 0  # eval: same; 0 = disabled
 
 
 @dataclass(frozen=True)

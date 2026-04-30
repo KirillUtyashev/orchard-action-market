@@ -76,7 +76,10 @@ class StochasticEnv(BaseEnv):
             self._spawn_area_corners: list[tuple[int, int]] | None = [(0, 0)] * cfg.n_task_types
             self._spawn_area_cells: list[list[Grid]] | None = [[] for _ in range(cfg.n_task_types)]
 
-            if cfg.stochastic.spawn_zone_mode == SpawnZoneMode.EDGE_SWITCH:
+            if cfg.stochastic.spawn_zone_mode in (
+                SpawnZoneMode.EDGE_SWITCH,
+                SpawnZoneMode.FIXED_SPREAD_AGENTS_CENTER_START,
+            ):
                 self._place_zones_on_edge()
             else:
                 for tau in range(cfg.n_task_types):
@@ -201,6 +204,24 @@ class StochasticEnv(BaseEnv):
 
     def init_state(self) -> State:
         """Random placement, no overlaps between agents and tasks."""
+        if self.stoch.spawn_zone_mode == SpawnZoneMode.FIXED_SPREAD_AGENTS_CENTER_START:
+            center = Grid(self.cfg.height // 2, self.cfg.width // 2)
+            agent_positions = tuple(center for _ in range(self.cfg.n_agents))
+            agent_set = {center}
+            all_task_positions: list[Grid] = []
+            all_task_types: list[int] = []
+            for tau in range(self.cfg.n_task_types):
+                count = min(self.cfg.n_tasks, self.cfg.max_tasks_per_type)
+                available = [
+                    c for c in self._spawn_cells_for_type(tau)
+                    if self.stoch.spawn_on_agent_cells or c not in agent_set
+                ]
+                for cell in rng.sample(available, min(count, len(available))):
+                    all_task_positions.append(cell)
+                    all_task_types.append(tau)
+            tp, tt = sort_tasks(all_task_positions, all_task_types)
+            return State(agent_positions=agent_positions, task_positions=tp, actor=0, task_types=tt)
+
         cells = [
             Grid(r, c)
             for r in range(self.cfg.height)
@@ -302,6 +323,22 @@ class StochasticEnv(BaseEnv):
                     self._relocate_spawn_areas()
                 elif flip_interval > 0 and rounds % flip_interval == 0:
                     self._flip_spawn_areas()
+
+            if self.stoch.spawn_zone_mode == SpawnZoneMode.FIXED_SPREAD_AGENTS_CENTER_START:
+                reset_interval = (
+                    self.stoch.eval_reset_agent_pos_interval
+                    if self._eval_mode
+                    else self.stoch.reset_agent_pos_interval
+                )
+                if reset_interval > 0 and rounds % reset_interval == 0:
+                    center = Grid(self.cfg.height // 2, self.cfg.width // 2)
+                    state = State(
+                        agent_positions=tuple(center for _ in range(self.cfg.n_agents)),
+                        task_positions=state.task_positions,
+                        actor=state.actor,
+                        task_types=state.task_types,
+                        pick_phase=state.pick_phase,
+                    )
 
         if self.stoch.spawn_at_round_end and state.actor != self.cfg.n_agents - 1:
             return state
