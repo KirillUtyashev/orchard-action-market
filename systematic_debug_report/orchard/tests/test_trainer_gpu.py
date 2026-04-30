@@ -39,7 +39,7 @@ def _setup_dual_trainers():
     train_cfg = TrainConfig(
         total_steps=100, seed=42, lr=lr_cfg, epsilon=eps_cfg,
         learning_type=LearningType.DECENTRALIZED, use_gpu=True,
-        td_lambda=0.0, comm_weight=0.0, heuristic=Heuristic.NEAREST_TASK,
+        td_lambda=0.0, heuristic=Heuristic.NEAREST_TASK,
         stopping=StoppingConfig()
     )
     
@@ -53,15 +53,13 @@ def _setup_dual_trainers():
         network_list=cpu_nets, env=env, gamma=0.99,
         epsilon_schedule=eps_cfg, lr_schedule=lr_cfg,
         total_steps=100, heuristic=Heuristic.NEAREST_TASK,
-        comm_weight=0.0
     )
-    
+
     bt = BatchedTrainer(gpu_nets, td_lambda=0.0, device="cpu") # Run vmap on CPU for float match
     gpu_trainer = GpuTrainer(
         network_list=gpu_nets, bt=bt, env=env, gamma=0.99,
         epsilon_schedule=eps_cfg, lr_schedule=lr_cfg,
         total_steps=100, heuristic=Heuristic.NEAREST_TASK,
-        comm_weight=0.0
     )
     
     return cpu_trainer, gpu_trainer
@@ -114,8 +112,8 @@ class TestVmapCorrectness:
         # 3 arbitrary candidate after-states
         after_states = [s, s, s]
         
-        cpu_vals = cpu_trainer._compute_team_values(s, after_states, actor=0)
-        gpu_vals = gpu_trainer._compute_team_values(s, after_states, actor=0)
+        cpu_vals = cpu_trainer._compute_team_values(s, after_states)
+        gpu_vals = gpu_trainer._compute_team_values(s, after_states)
         
         assert len(cpu_vals) == 3
         for c_val, g_val in zip(cpu_vals, gpu_vals):

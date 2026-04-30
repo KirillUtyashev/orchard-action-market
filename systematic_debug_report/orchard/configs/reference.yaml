@@ -20,7 +20,7 @@ env:
   #     picker gets r_low, everyone else gets 0
   #   With r_picker=-1: picker is penalized, groupmates get +2/(n_group-1) each
   r_picker: -1.0                   # reward to the picking agent on correct pick
-  r_low: -1.0                     # reward to picker on wrong-type pick
+  r_low: -1.0                      # reward to picker on wrong-type pick
 
   # Pick mode:
   #   choice: agent must explicitly choose pick(τ) or STAY when on a task cell
@@ -37,10 +37,57 @@ env:
   stochastic:
     spawn_prob: 0.01               # probability per empty cell per type per turn
     despawn_prob: 0.0125           # probability each existing task despawns per turn
-    # despawn_mode: probability    # "probability" or "none" (default: probability)
-    # task_spawn_mode: null        # null=auto (forced→global_unique, choice→per_type_unique)
+    despawn_mode: probability      # "probability" or "none"
+    task_spawn_mode: null          # null=auto (forced→global_unique, choice→per_type_unique)
                                    # "global_unique": at most 1 task of ANY type per cell
                                    # "per_type_unique": at most 1 per type; types may coexist
+    spawn_on_agent_cells: false    # if true, agents do not block task spawning
+    spawn_at_round_end: false      # if true, spawn/despawn only fires after the last agent acts
+    per_type_seeds: null           # list of one seed per task type for per-team RNG isolation
+                                   # enables exact T=1 vs T=M equivalence testing
+
+    spawn_area_size: null          # null = whole grid. Integer (e.g. 3) restricts each task
+                                   # type to its own NxN square spawn region.
+
+    # --- Zone movement mode ---
+    # spawn_zone_mode selects HOW zones are repositioned; spawn_zone_interval selects WHEN.
+    # Requires spawn_area_size to be set.
+    #
+    #   none        — zones never move (default)
+    #
+    #   random      — every spawn_zone_interval rounds, each zone independently jumps to a
+    #                 random valid corner anywhere on the grid.
+    #                 Zones start at random positions at construction.
+    #
+    #   edge_switch — every spawn_zone_interval rounds, ALL zones are repositioned to the
+    #                 grid border: evenly spread around the perimeter, randomly assigned to
+    #                 types. spawn_zone_interval=0 still places zones on the border at
+    #                 construction (training) or eval-start (eval) — no periodic moves.
+    #
+    #   fixed_spread_agents_center_start — zones placed evenly on the border at construction
+    #                 (same spread as edge_switch init) and NEVER move. Training and eval
+    #                 share identical fixed zone positions; eval_spawn_zone_mode must be "none".
+    #                 - All agents init at grid center (height//2, width//2) each time
+    #                   init_state() is called (start of training and start of eval).
+    #                 - reset_agent_pos_interval / eval_reset_agent_pos_interval: every N
+    #                   rounds, all agents teleport back to center (tasks and zones are
+    #                   unaffected). 0 = disabled.
+    #
+    # spawn_flip_interval (independent of mode): every N rounds, each zone flips to its
+    #   antipodal corner: (r,c) → (H-S-r, W-S-c). A border position always flips to
+    #   another border position. 0 = disabled.
+    #
+    # Typical training setup: edge_switch + high interval (generalization) + low flip interval
+    # Typical eval setup:     edge_switch + interval=0 (start on border, no resets) + flip interval
+    spawn_zone_mode: none          # "none" | "random" | "edge_switch" | "fixed_spread_agents_center_start"
+    spawn_zone_interval: 0         # rounds between zone moves in training (0 = no periodic move)
+    spawn_flip_interval: 0         # rounds between antipodal flips in training (0 = disabled)
+    eval_spawn_zone_mode: none     # same for eval rollouts
+    eval_spawn_zone_interval: 0
+    eval_spawn_flip_interval: 0
+    reset_agent_pos_interval: 0      # training: rounds between agent teleports to center
+                                     # only for fixed_spread_agents_center_start; 0 = disabled
+    eval_reset_agent_pos_interval: 0 # eval: same; 0 = disabled
 
 model:
   # Encoder: how the grid state is converted to neural network input
@@ -72,105 +119,7 @@ model:
 # Optional actor-specific model config for actor-critic runs.
 # If omitted, actor networks reuse the critic model config above.
 # The encoder must match model.encoder because orchard initializes one encoder singleton.
-config:
-  env:
-    height: 12
-    width: 12
-    n_agents: 8
-    n_tasks: 18
-    gamma: 0.99
-    r_picker: -1.0
-    n_task_types: 2
-    r_low: -1.0
-    task_assignments:
-    - - 0
-    - - 0
-    - - 0
-    - - 0
-    - - 1
-    - - 1
-    - - 1
-    - - 1
-    pick_mode: choice
-    max_tasks_per_type: 18
-    stochastic:
-      spawn_prob: 0.01
-      despawn_mode: probability
-      despawn_prob: 0.0125
-      task_spawn_mode: null
-  model:
-    encoder: filtered_task_cnn_grid
-    mlp_dims:
-    - 8
-    conv_specs:
-    - - 8
-      - 3
-    - - 8
-      - 3
-    activation: leaky_relu
-    weight_init: zero_bias
-  actor_model: null
-  train:
-    total_steps: 7000000
-    seed: 1234
-    lr:
-      start: 0.005
-      end: 0.005
-      schedule: none
-      step_size: 0
-      step_factor: 1.0
-      step_start: 0
-    epsilon:
-      start: 0.05
-      end: 0.05
-      schedule: none
-      step_size: 0
-      step_factor: 1.0
-      step_start: 0
-    actor_lr: null
-    freeze_critic: false
-    algorithm:
-      name: value
-    following_rates:
-      enabled: false
-      budget: 0.0
-      rho: 0.0
-      reallocation_freq: 1
-      solver: closed_form
-      fixed: false
-    influencer:
-      enabled: false
-      budget: 0.0
-    learning_type: decentralized
-    use_gpu: true
-    td_lambda: 0.3
-    comm_weight: 1.0
-    heuristic: nearest_correct_task_stay_wrong
-    stopping:
-      condition: running_max_rps
-      patience_steps: 1500000
-      improvement_threshold: 1.0e-07
-      min_steps_before_stop: 2000000
-  eval:
-    rollout_len: 2000
-    eval_steps: 1000
-    n_test_states: 50
-    checkpoint_freq: 100000
-  logging:
-    output_dir: /u/taddmao/code/orchard-action-market/systematic_debug_report/slurm_experiments/april4/model_sizes_and_vary_N/runs/N8_12x12/dec/x8
-    main_csv_freq: 10000
-    detail_csv_freq: 50000
-    timing_csv_freq: 0
-run:
-  start_time: '2026-04-07T22:27:42.832712'
-  end_time: '2026-04-09T13:27:16.405481'
-  total_wall_seconds: 140373.76
-  hostname: gpunode15
-  git_hash: 241c6ba
-  slurm_job_id: '142906'
-  slurm_array_task_id: null
-  slurm_array_job_id: null
-
+actor_model: null
 
 train:
   # Learning type determines number of networks:
@@ -186,22 +135,11 @@ train:
   # 0.3 is our standard value — good balance of bias/variance.
   td_lambda: 0.3
 
-  # Communication weight for decentralized V_weighted learning.
-  # 0 = each agent only sees its own reward (will NOT learn to pick with r_picker<0)
-  # 1 = full team reward sharing (standard for cooperative tasks)
-  # Between 0 and 1 = partial sharing
-  # For centralized: irrelevant (single network already sees sum of rewards)
-  # For actor_critic: must be 0.0 (actor-critic uses its own social weighting logic)
-  comm_weight: 0.0
-
   total_steps: 10000000            # maximum training steps (may stop early)
   seed: 1234                       # RNG seed for reproducibility
 
-  # Heuristic baseline policy used for:
-  #   1. Eval comparison (heuristic RPS vs greedy RPS in metrics.csv)
-  #   Options: nearest_task, nearest_correct_task, nearest_correct_task_stay_wrong
-  #   nearest_correct_task_stay_wrong: moves toward correct-type tasks,
-  #     picks if correct type at cell, STAYs if wrong type
+  # Heuristic baseline policy used for eval comparison
+  # Options: nearest_task, nearest_correct_task, nearest_correct_task_stay_wrong
   heuristic: nearest_correct_task_stay_wrong
 
   # Learning rate schedule for SGD
@@ -224,7 +162,7 @@ train:
   #   value: current after-state value learning
   #   actor_critic: decentralized masked-policy actor-critic
   algorithm:
-    name: actor_critic                    # switch to actor_critic to use actor_model + policy training
+    name: actor_critic
 
   # Optional actor LR schedule for actor-critic.
   # If omitted, actor networks reuse train.lr.
@@ -234,13 +172,9 @@ train:
     schedule: none
 
   # Optional actor-critic mode: keep critics fixed and train only the actor.
-  # Useful when bootstrapping from a pretrained value checkpoint via --resume.
   freeze_critic: false
 
   # Number of initial steps where critic and actor weight updates are skipped.
-  # Forward passes, alpha/beta updates, and following-rate reallocations still run,
-  # so this lets alpha/beta warm up before touching pretrained weights. Requires
-  # algorithm.name=actor_critic.
   warmup_steps: 0
 
   # Optional following-rate extension for actor-critic only.
@@ -270,7 +204,7 @@ eval:
   checkpoint_freq: 100000          # save model every N steps (0=final only)
 
 logging:
-  output_dir: output/runs/                # base directory; timestamped subfolder created
+  output_dir: output/runs/         # base directory; timestamped subfolder created
   main_csv_freq: 10000             # write metrics.csv every N steps
   detail_csv_freq: 50000           # write details.csv (weight norms, etc.) every N steps
-  timing_csv_freq: 10000           # write timing.csv every N steps (0=disable). This outputs the amount of time for each section.
+  timing_csv_freq: 10000           # write timing.csv every N steps (0=disable)

@@ -25,6 +25,7 @@ def generate_frames(
     networks: list[ValueNetwork] | None = None,
     include_decisions: bool = False,
     include_values: bool = False,
+    spawn_area_snapshots: list | None = None,
 ) -> list[Frame]:
     """Run a rollout and produce a Frame for every transition.
 
@@ -77,8 +78,11 @@ def generate_frames(
         total_reward += transition.rewards[transition.s_t.actor]
         total_team_reward += sum(transition.rewards)
 
-        # Increment decision count on non-PICK transitions (actual agent choices)
-        if transition.action.is_move():
+        # Increment on move-phase steps only, matching training's n_steps denominator.
+        # Can't use action.is_move(): STAY (value<=4) is also returned during pick phase.
+        # s_t.pick_phase is not set on stored transitions (only used for policy queries).
+        # discount=gamma for move steps, discount=1.0 for pick steps — reliable discriminant.
+        if transition.discount < 1.0:
             decision_count += 1
 
         # --- Optional: decision introspection (only at decision points) ---
@@ -139,6 +143,12 @@ def generate_frames(
             agent_picks=dict(agent_pick_counts),
         )
         frames.append(frame)
+
+        if spawn_area_snapshots is not None:
+            raw = getattr(env, "_spawn_area_cells", None)
+            spawn_area_snapshots.append(
+                [list(cells) for cells in raw] if raw is not None else None
+            )
 
         state_index += 1
         transition_index += 1

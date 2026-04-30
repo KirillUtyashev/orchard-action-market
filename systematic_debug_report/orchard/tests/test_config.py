@@ -41,6 +41,7 @@ class TestConfigParsing:
         assert cfg.env.gamma == 0.99
         assert cfg.model.encoder == EncoderType.BLIND_TASK_CNN_GRID
         assert cfg.train.total_steps == 100
+        assert cfg.train.comm_only_teammates is False
         
         os.unlink(path)
 
@@ -115,6 +116,9 @@ train:
         assert cfg.train.freeze_critic is True
         assert cfg.train.following_rates.enabled is True
         assert cfg.train.influencer.enabled is True
+        assert cfg.train.comm_only_teammates is False
+        assert cfg.train.following_rates.teammate_budget is None
+        assert cfg.train.following_rates.non_teammate_budget is None
         assert cfg.actor_model is not None
         assert cfg.actor_model.mlp_dims == (32,)
         os.unlink(path)
@@ -155,9 +159,18 @@ class TestOverrides:
 
     def test_config_load_with_overrides(self):
         path = _write_yaml(VALID_YAML)
-        cfg = load_config(path, overrides=["train.total_steps=999", "env.pick_mode=choice"])
+        cfg = load_config(
+            path,
+            overrides=[
+                "train.total_steps=999",
+                "env.pick_mode=choice",
+                "train.algorithm.name=actor_critic",
+                "train.comm_only_teammates=true",
+            ],
+        )
         assert cfg.train.total_steps == 999
         assert cfg.env.pick_mode == PickMode.CHOICE
+        assert cfg.train.comm_only_teammates is True
         os.unlink(path)
 
 
@@ -177,21 +190,6 @@ train:
             load_config(path)
         os.unlink(path)
 
-    def test_actor_critic_rejects_comm_weight(self):
-        yaml_str = VALID_YAML + """
-train:
-  total_steps: 100
-  comm_weight: 0.5
-  lr:
-    start: 0.001
-  algorithm:
-    name: actor_critic
-"""
-        path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="train.comm_weight is only supported"):
-            load_config(path)
-        os.unlink(path)
-
     def test_influencer_requires_following_rates(self):
         yaml_str = VALID_YAML + """
 train:
@@ -206,6 +204,150 @@ train:
 """
         path = _write_yaml(yaml_str)
         with pytest.raises(ValueError, match="requires train.following_rates.enabled=true"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_actor_critic_rejects_comm_only_teammates_without_gpu(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  use_gpu: false
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  comm_only_teammates: true
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for GPU actor-critic"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_non_actor_critic_rejects_comm_only_teammates(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  comm_only_teammates: true
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for train.algorithm.name=actor_critic"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_fixed_following_rates_parse_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    teammate_budget: 1.5
+    non_teammate_budget: 2.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.following_rates.fixed is True
+        assert cfg.train.following_rates.teammate_budget == 1.5
+        assert cfg.train.following_rates.non_teammate_budget == 2.5
+        os.unlink(path)
+
+    def test_fixed_following_rates_require_both_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    teammate_budget: 1.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="requires both"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_fixed_following_rates_allow_legacy_budget_field_but_ignore_it(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    budget: 1.0
+    teammate_budget: 1.5
+    non_teammate_budget: 2.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.following_rates.fixed is True
+        assert cfg.train.following_rates.budget == 1.0
+        assert cfg.train.following_rates.teammate_budget == 1.5
+        assert cfg.train.following_rates.non_teammate_budget == 2.5
+        os.unlink(path)
+
+    def test_non_fixed_following_rates_reject_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    budget: 1.0
+    teammate_budget: 1.5
+    non_teammate_budget: 2.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported when train.following_rates.fixed=true"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_fixed_following_rates_reject_negative_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    teammate_budget: -1.0
+    non_teammate_budget: 2.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="teammate_budget must be >= 0"):
             load_config(path)
         os.unlink(path)
 

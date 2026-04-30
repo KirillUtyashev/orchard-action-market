@@ -34,14 +34,22 @@ class GpuTrainer(ValueTrainerBase):
         lr_schedule: ScheduleConfig,
         total_steps: int,
         heuristic: Heuristic,
-        comm_weight: float = 0.0,
         timer: Timer | None = None,
+        train_only_teammates: bool = False,
+        per_type_seeds: tuple[int, ...] | None = None,
+        simulate_stranger_gap: int = 0,
+        greedy_own_type_only: bool = False,
+        discount_method: str = "team_steps",
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
-            total_steps=total_steps, heuristic=heuristic,
-            comm_weight=comm_weight, timer=timer,
+            total_steps=total_steps, heuristic=heuristic, timer=timer,
+            train_only_teammates=train_only_teammates,
+            per_type_seeds=per_type_seeds,
+            simulate_stranger_gap=simulate_stranger_gap,
+            greedy_own_type_only=greedy_own_type_only,
+            discount_method=discount_method,
         )
         self._bt = bt
 
@@ -57,53 +65,45 @@ class GpuTrainer(ValueTrainerBase):
     def _td_step(
         self, prev: Any, rewards: tuple[float, ...],
         discount: float, current: Any, t: int,
+        teammate_indices: list[int] | None = None,
     ) -> float:
         grids_t, scalars_t = prev
         grids_next, scalars_next = current
         rewards_t = torch.tensor(rewards, dtype=torch.float32)
 
-        if self._comm_weight > 0.0 and self._n_networks > 1:
-            w = self._comm_weight
-            with torch.no_grad():
-                v_s = self._bt.forward_single_batched(grids_t, scalars_t)
-                v_next = self._bt.forward_single_batched(grids_next, scalars_next)
-            
-            team_v_s = v_s.sum()
-            team_v_next = v_next.sum()
-            team_r = rewards_t.sum()
-            # below is just r_i' = r_i + w * sum_{j != i} [ r_j + discount * V_j(s') - V_j(s) ] in a different form
-            rewards_t = rewards_t.to(self._bt.device)
-            rewards_t = (
-                rewards_t 
-                + w * (team_r - rewards_t)
-                + discount * w * (team_v_next - v_next)
-                - w * (team_v_s - v_s)
-            )
-
         return self._bt.td_lambda_step_batched(
             grids_t, scalars_t, rewards_t, discount,
             grids_next, scalars_next,
             alpha=compute_schedule_value(self._lr_schedule, t, self._total_steps),
+            agent_indices=teammate_indices,
         )
 
     # ------------------------------------------------------------------
     # Value computation for greedy action selection
     # ------------------------------------------------------------------
     def _compute_team_values(
-        self, state: State, after_states: list[State], actor: int,
+        self, state: State, after_states: list[State],
+        teammate_indices: list[int] | None = None,
     ) -> list[float]:
+        from orchard.trainer.timer import TimerSection
+        self._timer.start(TimerSection.ACTION_ENCODE)
         grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
+        self._timer.stop()
+        self._timer.start(TimerSection.ACTION_FORWARD)
         values = self._bt.forward_batched(grids, scalars)  # (N, B)
-        n_nets = values.size(0)
+        self._timer.stop()
+        self._last_action_grids = grids      # (N, B, C, H, W) — kept for enc caching
+        self._last_action_scalars = scalars  # (N, B, S)
+        if teammate_indices is not None:
+            return values[teammate_indices].sum(dim=0).tolist()
+        return values.sum(dim=0).tolist()
 
-        if n_nets > 1 and self._comm_weight < 1.0:
-            weights = torch.full((n_nets, 1), self._comm_weight, device=values.device)
-            weights[actor] = 1.0
-            team_values = (values * weights).sum(dim=0)
-        else: # centralized case
-            team_values = values.sum(dim=0)
-
-        return team_values.tolist()
+    def _cache_selected_enc(self, best_idx: int) -> None:
+        """Cache the encoding of the selected after-state for reuse in train_move/train_pick."""
+        self._cached_enc = (
+            self._last_action_grids[:, best_idx].contiguous(),
+            self._last_action_scalars[:, best_idx].contiguous(),
+        )
 
     # ------------------------------------------------------------------
     # Sync
