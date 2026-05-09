@@ -1,22 +1,31 @@
+"""Tests for heuristic policies and action space helpers."""
+
 import pytest
-from orchard.enums import Action, Heuristic, PickMode, make_pick_action
+from orchard.enums import Action, Heuristic, make_pick_action, DespawnMode
 from orchard.datatypes import EnvConfig, StochasticConfig, Grid, State
+from orchard.env.stochastic import StochasticEnv
 from orchard.policy import (
     get_all_actions,
     get_phase2_actions,
-    nearest_task_action,
-    nearest_correct_task_action,
-    nearest_correct_task_stay_wrong_action,
+    nearest_action,
     heuristic_action,
 )
+from orchard.seed import set_all_seeds
 
-def _make_cfg(pick_mode=PickMode.CHOICE) -> EnvConfig:
+
+def _make_cfg(n_agents=4, n_task_types=2, clustering=0, specialization=0) -> EnvConfig:
     return EnvConfig(
-        height=5, width=5, n_agents=4, n_tasks=2, gamma=0.99, r_picker=1.0,
-        n_task_types=2, pick_mode=pick_mode, max_tasks_per_type=2,
-        task_assignments=((0,), (0,), (1,), (1,)),
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0)
+        height=5, width=5, n_agents=n_agents, n_tasks=2, gamma=0.99,
+        n_task_types=n_task_types, clustering=clustering, specialization=specialization,
+        max_tasks_per_type=2,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0)
     )
+
+
+def _make_env(cfg: EnvConfig) -> StochasticEnv:
+    set_all_seeds(0)
+    return StochasticEnv(cfg)
+
 
 class TestActionMasking:
     def test_get_all_actions_always_returns_moves(self):
@@ -27,102 +36,120 @@ class TestActionMasking:
 
     def test_get_phase2_actions_not_on_task(self):
         cfg = _make_cfg()
+        env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
             task_positions=(Grid(2, 2),),
             actor=0, task_types=(0,)
         )
         # Not on a task cell, so phase 2 should return an empty list
-        actions = get_phase2_actions(s, cfg)
+        actions = get_phase2_actions(s, env)
         assert actions == []
 
-    def test_get_phase2_actions_on_single_task(self):
-        cfg = _make_cfg()
+    def test_get_phase2_actions_on_task_with_phi_match(self):
+        # specialization=4 → all agents have phi > 0 for all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        env = _make_env(cfg)
         s = State(
-            agent_positions=(Grid(2, 2), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
+            agent_positions=(Grid(2, 2), Grid(0, 1)),
             task_positions=(Grid(2, 2),),
-            actor=0, task_types=(1,)
+            actor=0, task_types=(0,)
         )
-        actions = get_phase2_actions(s, cfg)
-        # Should allow STAY or picking Type 1
-        assert len(actions) == 2
+        actions = get_phase2_actions(s, env)
         assert Action.STAY in actions
-        assert make_pick_action(1) in actions
+        assert make_pick_action(0) in actions
 
-    def test_get_phase2_actions_on_stacked_tasks(self):
-        cfg = _make_cfg()
+    def test_get_phase2_actions_no_phi_match_returns_stay_only(self):
+        # Agent 0 has specialization=0 → phi[0, κ]=1 only for κ=0
+        # Task type=1 → phi[0,1]=0 → not eligible → only STAY
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=0)
+        env = _make_env(cfg)
         s = State(
-            agent_positions=(Grid(2, 2), Grid(0, 1), Grid(0, 2), Grid(0, 3)),
+            agent_positions=(Grid(2, 2), Grid(0, 1)),
+            task_positions=(Grid(2, 2),),
+            actor=0, task_types=(1,)  # agent 0 not eligible for type 1
+        )
+        actions = get_phase2_actions(s, env)
+        # phi[0,1] = 0 → only STAY
+        assert actions == [Action.STAY]
+
+    def test_get_phase2_actions_stacked_tasks(self):
+        # specialization=4 → all agents see all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        env = _make_env(cfg)
+        s = State(
+            agent_positions=(Grid(2, 2), Grid(0, 1)),
             task_positions=(Grid(2, 2), Grid(2, 2)),
             actor=0, task_types=(0, 1)
         )
-        actions = get_phase2_actions(s, cfg)
-        # Should allow STAY, pick(0), or pick(1)
+        actions = get_phase2_actions(s, env)
+        # Both types present, both eligible → STAY + pick(0) + pick(1)
         assert len(actions) == 3
         assert Action.STAY in actions
         assert make_pick_action(0) in actions
         assert make_pick_action(1) in actions
 
 
-class TestHeuristicPolicies:
-    def test_nearest_task(self):
-        cfg = _make_cfg()
-        # Actor 0 at (0,0), Tasks at (0,2) and (4,0)
+class TestNearestAction:
+    def test_moves_toward_eligible_task(self):
+        # specialization=4 → agent 0 eligible for all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        env = _make_env(cfg)
+
+        # Actor 0 at (0,0), task at (0,1): nearest is RIGHT
         s = State(
-            agent_positions=(Grid(0, 0), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
-            task_positions=(Grid(0, 2), Grid(4, 0)),
-            actor=0, task_types=(1, 0)
-        )
-        # Nearest task is at (0,2), distance 2. Action should be RIGHT
-        assert nearest_task_action(s, cfg) == Action.RIGHT
-
-    def test_nearest_correct_task_ignores_wrong_types(self):
-        cfg = _make_cfg()
-        # Actor 0 is assigned Type 0.
-        # Type 1 task at (0,1) [distance 1]
-        # Type 0 task at (3,0) [distance 3]
-        s = State(
-            agent_positions=(Grid(0, 0), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
-            task_positions=(Grid(0, 1), Grid(3, 0)),
-            actor=0, task_types=(1, 0)
-        )
-        # Should ignore the close Type 1 task and move DOWN toward Type 0
-        assert nearest_correct_task_action(s, cfg) == Action.DOWN
-
-    def test_nearest_correct_stay_wrong_phase2(self):
-        cfg = _make_cfg()
-        # Actor 0 (assigned Type 0) is standing on a Type 1 task
-        s_wrong = State(
-            agent_positions=(Grid(2, 2), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
-            task_positions=(Grid(2, 2),),
-            actor=0, task_types=(1,)
-        )
-        # Phase 2 logic: should STAY because it's the wrong type
-        action_wrong = nearest_correct_task_stay_wrong_action(s_wrong.with_pick_phase(), cfg)
-        assert action_wrong == Action.STAY
-
-        # Actor 0 standing on a Type 0 task
-        s_correct = State(
-            agent_positions=(Grid(2, 2), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
-            task_positions=(Grid(2, 2),),
+            agent_positions=(Grid(0, 0), Grid(4, 4)),
+            task_positions=(Grid(0, 1),),
             actor=0, task_types=(0,)
         )
-        # Phase 2 logic: should pick because it's the correct type
-        action_correct = nearest_correct_task_stay_wrong_action(s_correct.with_pick_phase(), cfg)
-        assert action_correct == make_pick_action(0)
+        action = nearest_action(s, env)
+        assert action == Action.RIGHT
+
+    def test_stays_when_no_tasks(self):
+        cfg = _make_cfg(n_agents=2, n_task_types=1, specialization=0)
+        env = _make_env(cfg)
+        s = State(
+            agent_positions=(Grid(1, 1), Grid(2, 2)),
+            task_positions=(),
+            actor=0, task_types=()
+        )
+        action = nearest_action(s, env)
+        assert action == Action.STAY
+
+    def test_phase2_picks_eligible_type(self):
+        # specialization=4 → phi[0,0]=phi[0,1]=1
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        env = _make_env(cfg)
+        s = State(
+            agent_positions=(Grid(2, 2), Grid(0, 0)),
+            task_positions=(Grid(2, 2),),
+            actor=0, task_types=(0,),
+            pick_phase=True,
+        )
+        action = nearest_action(s, env)
+        assert action == make_pick_action(0)
+
+    def test_phase2_stays_when_no_eligible_type(self):
+        # specialization=0 → phi[0, kappa]=1 only for kappa=0
+        # Task at actor's cell is type 1 → not eligible → STAY
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=0)
+        env = _make_env(cfg)
+        s = State(
+            agent_positions=(Grid(2, 2), Grid(0, 0)),
+            task_positions=(Grid(2, 2),),
+            actor=0, task_types=(1,),  # type 1 not eligible for agent 0
+            pick_phase=True,
+        )
+        action = nearest_action(s, env)
+        assert action == Action.STAY
 
     def test_heuristic_dispatch(self):
-        cfg = _make_cfg()
+        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        env = _make_env(cfg)
         s = State(
-            agent_positions=(Grid(0, 0), Grid(1, 1), Grid(1, 2), Grid(1, 3)),
-            task_positions=(Grid(0, 1), Grid(3, 0)),
-            actor=0, task_types=(1, 0)
+            agent_positions=(Grid(0, 0), Grid(4, 4)),
+            task_positions=(Grid(0, 1),),
+            actor=0, task_types=(0,)
         )
-        
-        # Nearest task goes RIGHT (to 0,1)
-        a1 = heuristic_action(s, cfg, Heuristic.NEAREST_TASK)
-        assert a1 == Action.RIGHT
-        
-        # Nearest correct goes DOWN (to 3,0)
-        a2 = heuristic_action(s, cfg, Heuristic.NEAREST_CORRECT_TASK)
-        assert a2 == Action.DOWN
+        a = heuristic_action(s, env, Heuristic.NEAREST)
+        assert a == Action.RIGHT

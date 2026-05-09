@@ -18,7 +18,7 @@ from typing import Any
 import torch
 
 from orchard.datatypes import EvalConfig, ScheduleConfig, State
-from orchard.enums import Action, Heuristic, PickMode
+from orchard.enums import Action, Heuristic
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.policy import get_all_actions, get_phase2_actions, heuristic_action
@@ -45,9 +45,6 @@ class ValueTrainerBase(TrainerBase):
         heuristic: Heuristic,
         timer: Timer | None = None,
         train_only_teammates: bool = False,
-        per_type_seeds: tuple[int, ...] | None = None,
-        simulate_stranger_gap: int = 0,
-        greedy_own_type_only: bool = False,
         discount_method: str = "team_steps",
     ) -> None:
         self._networks_list = network_list
@@ -63,84 +60,44 @@ class ValueTrainerBase(TrainerBase):
         self._timer = timer or Timer()
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
+        self._agent_rngs = None  # no per-agent RNGs
 
-        # Per-agent epsilon RNGs — one per agent, mapped from per_type_seeds.
-        # Agent i uses the RNG for its first assigned task type.
-        # None → fall back to global rng (existing behaviour).
-        if per_type_seeds is not None and env.cfg.task_assignments is not None:
-            import random as _random
-            assert all(len(env.cfg.task_assignments[i]) == 1 for i in range(env.cfg.n_agents)), \
-                "per_type_seeds requires each agent to have exactly one task type"
-            self._agent_rngs: list[_random.Random] | None = [
-                _random.Random(per_type_seeds[env.cfg.task_assignments[i][0]])
-                for i in range(env.cfg.n_agents)
-            ]
-        else:
-            self._agent_rngs = None
-
-        # Precompute per-agent teammate index lists (including self) for train_only_teammates
-        if train_only_teammates and env.cfg.task_assignments is not None:
+        # Precompute per-agent teammate index lists (including self) for train_only_teammates.
+        # Teammate = R(i, j) > 0, i.e. env.teammate_mask[i, j].
+        if train_only_teammates:
             self._teammate_sets: list[list[int]] | None = [
-                [j for j in range(env.cfg.n_agents)
-                 if set(env.cfg.task_assignments[i]) & set(env.cfg.task_assignments[j])]
+                [j for j in range(env.cfg.n_agents) if env.teammate_mask[i, j]]
                 for i in range(env.cfg.n_agents)
             ]
+            # Map each agent to its team representative via union-find so each team
+            # maintains its own _prev. Without this, the shared _prev gets overwritten
+            # by every other team's steps, training V_i on the wrong predecessor state.
+            parent = list(range(env.cfg.n_agents))
+            def _find(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+            for i in range(env.cfg.n_agents):
+                for j in range(env.cfg.n_agents):
+                    if env.teammate_mask[i, j]:
+                        pi, pj = _find(i), _find(j)
+                        if pi != pj:
+                            parent[pi] = pj
+            self._agent_team: list[int] | None = [_find(i) for i in range(env.cfg.n_agents)]
+            self._prev_per_team: dict[int, Any] | None = {}
         else:
             self._teammate_sets = None
+            self._agent_team = None
+            self._prev_per_team = None
 
         self._discount_method: str = discount_method
 
         if discount_method == "team_steps" and self._centralized:
             raise ValueError("discount_method='team_steps' is not supported for centralized training")
 
-        # Per-team TD trace: one _prev per team so stranger steps don't contaminate
-        # team k's discount chain. Only active when train_only_teammates is set.
-        if self._teammate_sets is not None and env.cfg.task_assignments is not None:
-            assert all(
-                len(env.cfg.task_assignments[i]) == 1 for i in range(env.cfg.n_agents)
-            ), "per-team TD requires each agent to have exactly one task type"
-            self._agent_team_idx: list[int] | None = [
-                env.cfg.task_assignments[i][0] for i in range(env.cfg.n_agents)
-            ]
-            self._prev_per_team: list[Any] = [None] * env.cfg.n_task_types
-            if discount_method in ("world_steps", "round_steps"):
-                self._n_team_agents: list[int] = [
-                    sum(1 for i in range(env.cfg.n_agents) if self._agent_team_idx[i] == k)
-                    for k in range(env.cfg.n_task_types)
-                ]
-                self._team_step_count: list[int] = [0] * env.cfg.n_task_types
-                if discount_method == "world_steps":
-                    # Per-team accumulated discount factor.
-                    # When team k's agent acts, eff_gamma = _gamma_accum[k] * gamma.
-                    # After use, resets to gamma^simulate_stranger_gap (1.0 in T=M;
-                    # gamma^n_strangers in T=1 to simulate stranger steps that don't exist).
-                    # Every time any OTHER team's agent takes a move step,
-                    # _gamma_accum[k] *= gamma for all k not in that team.
-                    # This makes dec V_i = E[sum_t gamma^t r_i(t)] over ALL world steps,
-                    # so sum_i V_i_dec ≈ V_cen.
-                    self._gamma_accum_per_team: list[float] | None = [1.0] * env.cfg.n_task_types
-                    self._simulate_stranger_gap: int = simulate_stranger_gap
-                else:  # round_steps: no stranger accumulation needed
-                    self._gamma_accum_per_team = None
-                    self._simulate_stranger_gap = 0
-            else:  # "team_steps": plain gamma per own-team step, no stranger accumulation
-                self._gamma_accum_per_team = None
-                self._simulate_stranger_gap = 0
-                self._n_team_agents = None
-                self._team_step_count = None
-        else:
-            self._agent_team_idx = None
-            self._prev_per_team = None
-            self._gamma_accum_per_team = None
-            self._simulate_stranger_gap = 0
-            self._n_team_agents = None
-            self._team_step_count = None
-
-        # Round boundary counter for centralized round_steps: tracks steps within
-        # the current global round (0 = start of new round → use gamma).
+        # Round boundary counter for centralized round_steps
         self._global_round_step_count: int = 0
-
-        self._greedy_own_type_only = greedy_own_type_only
 
         # After-state TD bookkeeping (opaque: subclass determines format)
         self._prev: Any = None
@@ -280,56 +237,20 @@ class ValueTrainerBase(TrainerBase):
         _trace_actor = state.actor
         teammate_indices = self._teammate_sets[state.actor] if self._teammate_sets is not None else None
 
-        _team_idx = self._agent_team_idx[state.actor] if self._agent_team_idx is not None else None
-        if _team_idx is not None:
-            self._prev = self._prev_per_team[_team_idx]
-            if self._discount_method == "world_steps":
-                # Compute effective gamma: accumulated stranger discount * own move step.
-                _eff_gamma = self._gamma_accum_per_team[_team_idx] * self._gamma
-                # Reset accumulator. The gap is only applied at the END of the team's
-                # round (after all n_team_agents have acted consecutively). Mid-round
-                # resets to 1.0 because no strangers acted between teammates.
-                self._team_step_count[_team_idx] += 1
-                if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
-                    # End of team's round: load simulated stranger gap for T=1 testing,
-                    # or 1.0 in T=M (strangers accumulate naturally via the loop below).
-                    self._gamma_accum_per_team[_team_idx] = (
-                        self._gamma ** self._simulate_stranger_gap
-                        if self._simulate_stranger_gap > 0 else 1.0
-                    )
-                    self._team_step_count[_team_idx] = 0
-                else:
-                    # Mid-round: teammates are about to act — no strangers in between.
-                    self._gamma_accum_per_team[_team_idx] = 1.0
-            elif self._discount_method == "round_steps":
-                # gamma at the start of team k's sub-round (first step after strangers
-                # finished); 1.0 for all subsequent steps within the sub-round.
-                _eff_gamma = self._gamma if self._team_step_count[_team_idx] == 0 else 1.0
-                self._team_step_count[_team_idx] += 1
-                if self._team_step_count[_team_idx] >= self._n_team_agents[_team_idx]:
-                    self._team_step_count[_team_idx] = 0
-            else:  # "team_steps": plain gamma per own-team step, no stranger accumulation
-                _eff_gamma = self._gamma
+        if self._discount_method == "round_steps":
+            _eff_gamma = self._gamma if self._global_round_step_count == 0 else 1.0
+            self._global_round_step_count += 1
+            if self._global_round_step_count >= self._n_agents:
+                self._global_round_step_count = 0
         else:
-            if self._discount_method == "round_steps":
-                # Centralized round_steps: gamma at first step of each global round,
-                # 1.0 for all other steps within the round. Both cen and dec use this.
-                _eff_gamma = self._gamma if self._global_round_step_count == 0 else 1.0
-                self._global_round_step_count += 1
-                if self._global_round_step_count >= self._n_agents:
-                    self._global_round_step_count = 0
-            else:
-                _eff_gamma = self._gamma
+            _eff_gamma = self._gamma
 
         move_action = self.select_move(state, t)
         _trace_eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
 
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
-        _my_types = (
-            frozenset(self._env.cfg.task_assignments[s_moved.actor])
-            if self._env.cfg.task_assignments is not None else None
-        )
+        _my_types = self._env.phi_positive_types[s_moved.actor]
         on_task = s_moved.is_agent_on_task(s_moved.actor, _my_types)
         self._timer.stop()
 
@@ -341,33 +262,18 @@ class ValueTrainerBase(TrainerBase):
 
         if on_task:
             self._timer.start(TimerSection.ENV)
-            if self._env.cfg.pick_mode == PickMode.FORCED:
-                # Forced mode: always pick, no epsilon selection (matches old force_pick behavior)
-                s_picked, pick_rewards = self._env.resolve_pick(s_moved)
-                _trace_pick_type = 0
-            else:
-                pick_action = self.select_pick(s_moved.with_pick_phase(), t)
-                s_picked, pick_rewards = self._env.resolve_pick(
-                    s_moved,
-                    pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
-                )
-                _trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
+            pick_action = self.select_pick(s_moved.with_pick_phase(), t)
+            s_picked, pick_rewards = self._env.resolve_pick(
+                s_moved,
+                pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
+            )
+            _trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
             self._timer.stop()
             self.train_pick(s_picked, pick_rewards, t, teammate_indices)
             _trace_pick_happened = True
             _trace_pick_rewards = pick_rewards
         else:
             s_picked = s_moved
-
-        if _team_idx is not None:
-            self._prev_per_team[_team_idx] = self._prev
-            if self._discount_method == "world_steps":
-                # One move step just happened for team _team_idx.
-                # All other teams accumulate gamma for this step — their next TD
-                # update will account for this stranger step in the discount chain.
-                for _k in range(len(self._gamma_accum_per_team)):
-                    if _k != _team_idx:
-                        self._gamma_accum_per_team[_k] *= self._gamma
 
         self._timer.start(TimerSection.ENV)
         _s_pre_spawn = s_picked
@@ -436,10 +342,9 @@ class ValueTrainerBase(TrainerBase):
     def select_pick(self, state: State, t: int) -> Action:
         self._timer.start(TimerSection.ACTION)
         eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
-        actions = get_phase2_actions(state, self._env.cfg)
-        _arng = self._agent_rngs[state.actor] if self._agent_rngs is not None else rng
-        if _arng.random() < eps:
-            action = actions[_arng.randint(0, len(actions) - 1)]
+        actions = get_phase2_actions(state, self._env)
+        if rng.random() < eps:
+            action = actions[rng.randint(0, len(actions) - 1)]
         else:
             action = self._greedy_action(state)
         self._timer.stop()
@@ -448,15 +353,11 @@ class ValueTrainerBase(TrainerBase):
     def _greedy_action(self, state: State) -> Action:
         """Argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
         phase2 = state.pick_phase
-        all_actions = get_phase2_actions(state, self._env.cfg) if phase2 else get_all_actions(self._env.cfg)
+        all_actions = get_phase2_actions(state, self._env) if phase2 else get_all_actions(self._env.cfg)
 
-        # Build after-states and immediate rewards for each candidate action
         after_states: list[State] = []
         immediate_rewards: list[float] = []
-        _actor_types = (
-            frozenset(self._env.cfg.task_assignments[state.actor])
-            if self._env.cfg.task_assignments is not None else None
-        )
+        _actor_types = self._env.phi_positive_types[state.actor]
         self._timer.start(TimerSection.ACTION_ENV)
         for a in all_actions:
             if phase2 and a.is_pick():
@@ -464,10 +365,6 @@ class ValueTrainerBase(TrainerBase):
                 after_states.append(s_after)
                 immediate_rewards.append(sum(rewards))
             elif phase2:
-                # STAY exits pick phase: after-state has pick_phase=False.
-                # All pick phase actions (pick or stay) return to move phase next.
-                # Using pick_phase=True here would make Q(STAY) != Q(pick(stranger))
-                # under blind encoding, breaking T=1 ≡ T=M for choice pick.
                 after_states.append(dataclasses.replace(state, pick_phase=False))
                 immediate_rewards.append(0.0)
             else:
@@ -479,12 +376,7 @@ class ValueTrainerBase(TrainerBase):
                 immediate_rewards.append(0.0)
         self._timer.stop()
 
-        _greedy_tm = (
-            self._teammate_sets[state.actor]
-            if self._greedy_own_type_only and self._teammate_sets is not None
-            else None
-        )
-        team_values = self._compute_team_values(state, after_states, _greedy_tm)
+        team_values = self._compute_team_values(state, after_states, None)
 
         best_idx = 0
         best_val = team_values[0] + immediate_rewards[0]
@@ -521,9 +413,16 @@ class ValueTrainerBase(TrainerBase):
             self._dbg_enc_was_cached = False
         self._timer.stop()
 
-        if self._prev is not None:
+        if self._prev_per_team is not None:
+            _team = self._agent_team[s_moved.actor]
+            _effective_prev = self._prev_per_team.get(_team)
+        else:
+            _team = None
+            _effective_prev = self._prev
+
+        if _effective_prev is not None:
             self._timer.start(TimerSection.TRAIN)
-            loss = self._td_step(self._prev, self._zero_rewards, _gamma,
+            loss = self._td_step(_effective_prev, self._zero_rewards, _gamma,
                                  self._move, t, teammate_indices)
             n_trained = len(teammate_indices) if teammate_indices is not None else self._n_networks
             self._td_loss_accum += loss
@@ -534,7 +433,10 @@ class ValueTrainerBase(TrainerBase):
             self._dbg_td_delta_sq = 0.0
 
         if not on_task:
-            self._prev = self._move
+            if self._prev_per_team is not None:
+                self._prev_per_team[_team] = self._move
+            else:
+                self._prev = self._move
 
     def train_pick(self, s_picked: State, rewards: tuple[float, ...], t: int,
                    teammate_indices: list[int] | None = None) -> None:
@@ -552,7 +454,10 @@ class ValueTrainerBase(TrainerBase):
         self._td_loss_count += n_trained
         self._timer.stop()
 
-        self._prev = pick_enc
+        if self._prev_per_team is not None:
+            self._prev_per_team[self._agent_team[s_picked.actor]] = pick_enc
+        else:
+            self._prev = pick_enc
 
     # ------------------------------------------------------------------
     # Evaluation
@@ -567,7 +472,7 @@ class ValueTrainerBase(TrainerBase):
                 return self._greedy_action(s)
 
             def baseline_policy(s: State) -> Action:
-                return heuristic_action(s, env.cfg, self._heuristic)
+                return heuristic_action(s, env, self._heuristic)
 
             heuristic_name = self._heuristic.name.lower()
             greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
@@ -576,12 +481,8 @@ class ValueTrainerBase(TrainerBase):
             return {
                 "greedy_rps": greedy_metrics["rps"],
                 "greedy_team_rps": greedy_metrics["team_rps"],
-                "greedy_correct_pps": greedy_metrics["correct_pps"],
-                "greedy_wrong_pps": greedy_metrics["wrong_pps"],
                 f"{heuristic_name}_rps": baseline_metrics["rps"],
                 f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
-                f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-                f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
             }
         finally:
             env.set_eval_mode(False)

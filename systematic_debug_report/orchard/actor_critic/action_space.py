@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from orchard.datatypes import EnvConfig, State
-from orchard.enums import Action, PickMode, make_pick_action
+from orchard.enums import Action, make_pick_action
 
 
 _MOVE_ACTIONS_BY_VALUE: tuple[Action, ...] = (
@@ -22,9 +22,7 @@ _MOVE_ACTION_SINGLETONS: dict[int, Action] = {
 
 
 def full_action_head_dim(env_cfg: EnvConfig) -> int:
-    """Size of the fixed actor head derived from orchard's action encoding."""
-    if env_cfg.pick_mode == PickMode.FORCED or env_cfg.n_task_types <= 0:
-        return Action.STAY.value + 1
+    """Size of the fixed actor head: 5 move + T pick actions."""
     return make_pick_action(env_cfg.n_task_types - 1).value + 1
 
 
@@ -38,8 +36,8 @@ def policy_index_to_action(idx: int) -> Action:
     value = int(idx)
     if value in _MOVE_ACTION_SINGLETONS:
         return _MOVE_ACTION_SINGLETONS[value]
-    if value >= Action.PICK.value:
-        return make_pick_action(value - Action.PICK.value)
+    if value >= 5:
+        return make_pick_action(value - 5)
     raise ValueError(f"Unsupported policy index: {idx}")
 
 
@@ -57,17 +55,20 @@ def build_phase1_legal_mask(state: State, env_cfg: EnvConfig) -> np.ndarray:
     return mask
 
 
-def build_phase2_legal_mask(state: State, env_cfg: EnvConfig) -> np.ndarray:
+def build_phase2_legal_mask(
+    state: State,
+    env_cfg: EnvConfig,
+    phi_positive_types: list[set[int]] | None = None,
+) -> np.ndarray:
     """Mask for pick/stay selection after landing on a task cell."""
     mask = np.zeros(full_action_head_dim(env_cfg), dtype=bool)
     mask[action_to_policy_index(Action.STAY)] = True
-    if env_cfg.pick_mode == PickMode.FORCED:
-        return mask
-
     actor_pos = state.agent_positions[state.actor]
+    eligible = phi_positive_types[state.actor] if phi_positive_types is not None else None
     for _, tau in state.tasks_at(actor_pos):
         if 0 <= tau < env_cfg.n_task_types:
-            mask[action_to_policy_index(make_pick_action(tau))] = True
+            if eligible is None or tau in eligible:
+                mask[action_to_policy_index(make_pick_action(tau))] = True
     return mask
 
 

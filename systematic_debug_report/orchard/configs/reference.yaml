@@ -6,99 +6,46 @@
 env:
   height: 9                        # grid rows
   width: 9                         # grid columns
-  n_agents: 4                      # total agents in the environment
+  n_agents: 4                      # total agents N
   n_task_types: 2                  # T: number of distinct task types
   n_tasks: 10                      # initial tasks spawned per type at env.init_state()
   max_tasks_per_type: 10           # cap: spawning stops when this many of type τ exist
   gamma: 0.99                      # discount factor for move turns (pick turns use γ=1)
 
-  # Reward structure:
-  #   Agent picks correct type (τ ∈ G_actor):
-  #     picker gets r_picker, groupmates share (1 - r_picker)
-  #     centralized sum = r_picker + (1 - r_picker) = 1, always
-  #   Agent picks wrong type (τ ∉ G_actor):
-  #     picker gets r_low, everyone else gets 0
-  #   With r_picker=-1: picker is penalized, groupmates get +2/(n_group-1) each
-  r_picker: -1.0                   # reward to the picking agent on correct pick
-  r_low: -1.0                      # reward to picker on wrong-type pick
-
-  # Pick mode:
-  #   choice: agent must explicitly choose pick(τ) or STAY when on a task cell
-  #   forced: agent auto-picks when stepping on a task cell (no STAY option)
-  pick_mode: choice
-
-  # Task assignments: G_i for each agent — which task types they're assigned to.
-  # Agent i gets reward for picking types in G_i (correct pick).
-  # Length must equal n_agents. Each sub-list contains type indices [0, T-1].
-  # Alternative: use "rho: 0.5" instead, which auto-generates cyclic assignments.
-  task_assignments: [[0],[0],[1],[1]]
+  # Reward structure (φ/R framework):
+  #
+  #   R[i,j] = 1[ |i - j| <= clustering ]
+  #     — who shares reward with whom. clustering=0: each agent rewards only itself.
+  #       clustering=N-1: all agents share each other's rewards.
+  #
+  #   phi[i,κ] = 1[ |i - κ| <= specialization ]
+  #     — which task types agent i can profitably pick. specialization=0: agent i
+  #       can only pick type i (mod T). specialization=T-1: any agent can pick any type.
+  #
+  #   category_rewards r'[κ,j]: stochastic T×N reward matrix, sampled once at env
+  #     construction from Normal(1, sigma_b²) + agent noise Normal(0, sigma_a²).
+  #     sigma_a=sigma_b=0 → r'[κ,j]=1 for all κ,j (homogeneous rewards).
+  #
+  #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j]
+  #
+  clustering: 0                    # C: reward-sharing radius; 0 = no sharing
+  specialization: 0                # S: task-type eligibility radius; 0 = strict assignment
 
   # Stochastic spawning/despawning (required):
   stochastic:
     spawn_prob: 0.01               # probability per empty cell per type per turn
     despawn_prob: 0.0125           # probability each existing task despawns per turn
     despawn_mode: probability      # "probability" or "none"
-    task_spawn_mode: null          # null=auto (forced→global_unique, choice→per_type_unique)
-                                   # "global_unique": at most 1 task of ANY type per cell
-                                   # "per_type_unique": at most 1 per type; types may coexist
     spawn_on_agent_cells: false    # if true, agents do not block task spawning
     spawn_at_round_end: false      # if true, spawn/despawn only fires after the last agent acts
-    per_type_seeds: null           # list of one seed per task type for per-team RNG isolation
-                                   # enables exact T=1 vs T=M equivalence testing
-
-    spawn_area_size: null          # null = whole grid. Integer (e.g. 3) restricts each task
-                                   # type to its own NxN square spawn region.
-
-    # --- Zone movement mode ---
-    # spawn_zone_mode selects HOW zones are repositioned; spawn_zone_interval selects WHEN.
-    # Requires spawn_area_size to be set.
-    #
-    #   none        — zones never move (default)
-    #
-    #   random      — every spawn_zone_interval rounds, each zone independently jumps to a
-    #                 random valid corner anywhere on the grid.
-    #                 Zones start at random positions at construction.
-    #
-    #   edge_switch — every spawn_zone_interval rounds, ALL zones are repositioned to the
-    #                 grid border: evenly spread around the perimeter, randomly assigned to
-    #                 types. spawn_zone_interval=0 still places zones on the border at
-    #                 construction (training) or eval-start (eval) — no periodic moves.
-    #
-    #   fixed_spread_agents_center_start — zones placed evenly on the border at construction
-    #                 (same spread as edge_switch init) and NEVER move. Training and eval
-    #                 share identical fixed zone positions; eval_spawn_zone_mode must be "none".
-    #                 - All agents init at grid center (height//2, width//2) each time
-    #                   init_state() is called (start of training and start of eval).
-    #                 - reset_agent_pos_interval / eval_reset_agent_pos_interval: every N
-    #                   rounds, all agents teleport back to center (tasks and zones are
-    #                   unaffected). 0 = disabled.
-    #
-    # spawn_flip_interval (independent of mode): every N rounds, each zone flips to its
-    #   antipodal corner: (r,c) → (H-S-r, W-S-c). A border position always flips to
-    #   another border position. 0 = disabled.
-    #
-    # Typical training setup: edge_switch + high interval (generalization) + low flip interval
-    # Typical eval setup:     edge_switch + interval=0 (start on border, no resets) + flip interval
-    spawn_zone_mode: none          # "none" | "random" | "edge_switch" | "fixed_spread_agents_center_start"
-    spawn_zone_interval: 0         # rounds between zone moves in training (0 = no periodic move)
-    spawn_flip_interval: 0         # rounds between antipodal flips in training (0 = disabled)
-    eval_spawn_zone_mode: none     # same for eval rollouts
-    eval_spawn_zone_interval: 0
-    eval_spawn_flip_interval: 0
-    reset_agent_pos_interval: 0      # training: rounds between agent teleports to center
-                                     # only for fixed_spread_agents_center_start; 0 = disabled
-    eval_reset_agent_pos_interval: 0 # eval: same; 0 = disabled
+    sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
+    sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
 
 model:
   # Encoder: how the grid state is converted to neural network input
-  #   blind_task_cnn_grid:        dec O(1), 4 grid channels, 3 scalars
-  #                               agent sees only its own tasks, self, teammates, actor
-  #   filtered_task_cnn_grid:     dec O(1), 6 grid channels, 3 scalars
-  #                               like blind but also sees stranger tasks separately
-  #   centralized_task_cnn_grid:  cen, T+N+1 channels, N scalars
-  #                               single network sees everything
-  #   position_aware_task_cnn_grid: dec O(1), 5 grid channels, 3 scalars
-  encoder: filtered_task_cnn_grid
+  #   general_dec_cnn_grid:  decentralized; agent sees own phi, R, category_rewards
+  #   general_cen_cnn_grid:  centralized (single network); sees full joint state
+  encoder: general_dec_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer
   # Padding is always kernel_size // 2 (same-padding), so spatial dims don't shrink
@@ -128,19 +75,29 @@ train:
   learning_type: decentralized
 
   # Device: true=GPU (BatchedTrainer + vmap), false=CPU (sequential forwards)
-  # GPU works for both cen and dec. CPU works for both too (slower for dec).
   use_gpu: false
 
   # TD(λ) eligibility trace decay. 0=TD(0), 1=Monte Carlo-ish.
-  # 0.3 is our standard value — good balance of bias/variance.
   td_lambda: 0.3
 
   total_steps: 10000000            # maximum training steps (may stop early)
   seed: 1234                       # RNG seed for reproducibility
 
   # Heuristic baseline policy used for eval comparison
-  # Options: nearest_task, nearest_correct_task, nearest_correct_task_stay_wrong
-  heuristic: nearest_correct_task_stay_wrong
+  # Options: nearest
+  heuristic: nearest
+
+  # Discount timing method:
+  #   team_steps:  γ applied every step an agent acts (own steps only). Default for dec.
+  #   round_steps: γ applied once per full N-agent round (first step of each cycle).
+  #                Required for centralized, and for train_only_teammates=true with
+  #                multiple teams (ensures cen = Σ dec over round boundaries).
+  discount_method: team_steps
+
+  # If true, only update network j when R(actor, j) > 0 (env.teammate_mask).
+  # Each team maintains its own TD prev-state so stranger steps don't corrupt the trace.
+  # Pair with discount_method: round_steps when using multiple teams.
+  train_only_teammates: false
 
   # Learning rate schedule for SGD
   lr:

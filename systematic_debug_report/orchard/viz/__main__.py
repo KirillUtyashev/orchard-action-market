@@ -27,7 +27,7 @@ from orchard.policy import (
 )
 from orchard.seed import set_all_seeds, rng
 from orchard.datatypes import State
-from orchard.enums import Action, Heuristic, PickMode, num_actions
+from orchard.enums import Action, Heuristic, num_actions
 
 from orchard.viz.export import write_summary_json, write_trajectory_csv
 from orchard.viz.frame import Frame
@@ -37,10 +37,7 @@ from orchard.viz.rollout import generate_frames
 
 
 _HEURISTIC_MAP = {
-    "nearest_task": Heuristic.NEAREST_TASK,
-    "nearest_correct_task": Heuristic.NEAREST_CORRECT_TASK,
-    "nearest_correct_task_stay_wrong": Heuristic.NEAREST_CORRECT_TASK_STAY_WRONG,
-    "nearest": Heuristic.NEAREST_TASK,  # backward compat alias
+    "nearest": Heuristic.NEAREST,
 }
 
 _ALL_POLICIES = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]
@@ -79,7 +76,7 @@ def parse_args() -> argparse.Namespace:
                    help="Override config values using dot notation: key=value (e.g. env.n_agents=8 env.height=11). "
                         "Applied after loading the config, before creating the env.")
     p.add_argument("--rand-zone-seed", type=int, default=None,
-                   help="Randomize per_type_seeds using this seed, giving different initial spawn zone positions. "
+                   help="Randomize initial spawn zone positions using this seed. "
                         "Use different values (0, 1, 2, ...) to sweep over zone configurations.")
     return p.parse_args()
 
@@ -133,7 +130,7 @@ def _greedy_actor_action(
     """Greedy action via actor network argmax (no critic involved)."""
     actor_id = state.actor
     enc = encoding.encode(state, actor_id)
-    legal_mask = build_phase2_legal_mask(state, env.cfg) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
+    legal_mask = build_phase2_legal_mask(state, env.cfg, env.phi_positive_types) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
     with torch.no_grad():
         probs = actor_networks[actor_id].get_action_probabilities(enc, legal_mask)
     return policy_index_to_action(int(np.argmax(probs)))
@@ -146,14 +143,11 @@ def _greedy_action_batched(
 ) -> Action:
     """Standalone greedy argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
     phase2 = state.pick_phase
-    all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
+    all_actions = get_phase2_actions(state, env) if phase2 else get_all_actions(env.cfg)
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
-    _actor_types = (
-        frozenset(env.cfg.task_assignments[state.actor])
-        if env.cfg.task_assignments is not None else None
-    )
+    _actor_types = env.phi_positive_types[state.actor]
     for a in all_actions:
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
@@ -221,10 +215,10 @@ def make_policy_fn(
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
         def policy(s: State) -> Action:
-            return heuristic_action(s, env.cfg, h)
+            return heuristic_action(s, env, h)
         return policy
     elif policy_name == "random":
-        n_act = num_actions(env.cfg.pick_mode, env.cfg.n_task_types)
+        n_act = num_actions(env.cfg.n_task_types)
         def policy(s: State) -> Action:
             return Action(rng.randint(0, n_act - 1))
         return policy
@@ -315,8 +309,6 @@ def main() -> None:
     set_all_seeds(seed)
 
     n_task_types = cfg.env.n_task_types
-    task_assignments = cfg.env.task_assignments
-    pick_mode = cfg.env.pick_mode
 
     # --- Apply scenario overrides (if requested) ---
     env_cfg = cfg.env
@@ -334,20 +326,9 @@ def main() -> None:
         args.eval_seed = eval_seed
     cfg = dataclasses.replace(cfg, env=env_cfg)
 
-    # --- Randomize per_type_seeds (if requested) ---
-    if args.rand_zone_seed is not None and cfg.env.stochastic is not None:
-        import random as _random
-        rz = _random.Random(args.rand_zone_seed)
-        n_types = cfg.env.n_task_types
-        new_seeds = [rz.randint(0, 10**9) for _ in range(n_types)]
-        stoch = dataclasses.replace(cfg.env.stochastic, per_type_seeds=new_seeds)
-        env_cfg = dataclasses.replace(cfg.env, stochastic=stoch)
-        cfg = dataclasses.replace(cfg, env=env_cfg)
-        print(f"  Random zone seeds (rand_zone_seed={args.rand_zone_seed}): {new_seeds}")
-
     # --- Create env and encoder ---
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, cfg.env)
+    encoding.init_encoder(cfg.model.encoder, env)
 
     # --- Load checkpoint if provided ---
     from orchard.enums import LearningType, AlgorithmName
@@ -374,10 +355,8 @@ def main() -> None:
         policy_name = args.policy
     elif args.checkpoint:
         policy_name = "learned"
-    elif n_task_types > 1:
-        policy_name = "nearest_correct_task"
     else:
-        policy_name = "nearest_task"
+        policy_name = "nearest"
 
     if policy_name == "learned" and networks is None:
         print("ERROR: --policy learned requires --checkpoint", file=sys.stderr)
@@ -393,9 +372,7 @@ def main() -> None:
 
     # Print config info (always)
     print(f"  T={n_task_types}, N={cfg.env.n_agents}, grid={cfg.env.height}x{cfg.env.width}")
-    print(f"  Pick mode: {pick_mode.name}, r_picker={cfg.env.r_picker}, r_low={cfg.env.r_low}")
-    if task_assignments is not None:
-        print(f"  Assignments: {task_assignments}")
+    print(f"  C={cfg.env.clustering}, S={cfg.env.specialization}")
 
     # --- Generate primary rollout ---
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
@@ -434,7 +411,7 @@ def main() -> None:
     if args.compare is not None:
         # Determine compare policy name
         if args.compare == "auto":
-            compare_name = "nearest_correct_task" if n_task_types > 1 else "nearest_task"
+            compare_name = "nearest"
         else:
             compare_name = args.compare
 
@@ -533,7 +510,7 @@ def main() -> None:
     print("Rendering primary frames...")
     t0 = time.time()
     frame_svgs = render_all_frames(frames, args.show_after_states,
-                                   n_task_types=n_task_types, task_assignments=task_assignments,
+                                   n_task_types=n_task_types, task_assignments=None,
                                    spawn_area_snapshots=spawn_area_snapshots if has_spawn_areas else None)
     print(f"  Rendered in {time.time() - t0:.1f}s")
 
@@ -543,7 +520,7 @@ def main() -> None:
         print("Rendering compare frames...")
         t0 = time.time()
         compare_svgs = render_all_frames(compare_frames, args.show_after_states,
-                                         n_task_types=n_task_types, task_assignments=task_assignments,
+                                         n_task_types=n_task_types, task_assignments=None,
                                          spawn_area_snapshots=compare_spawn_snapshots if has_compare_spawn else None)
         print(f"  Rendered in {time.time() - t0:.1f}s")
 
@@ -559,8 +536,11 @@ def main() -> None:
         compare_frames=compare_frames,
         compare_svgs=compare_svgs,
         n_task_types=n_task_types,
-        task_assignments=task_assignments,
-        pick_mode=pick_mode,
+        phi=env.phi,
+        relatedness=env.relatedness,
+        category_rewards=env.category_rewards,
+        clustering=cfg.env.clustering,
+        specialization=cfg.env.specialization,
     )
     print(f"Wrote {html_path} ({html_path.stat().st_size / 1024 / 1024:.1f} MB) in {time.time() - t0:.1f}s")
     print(f"\nDone! Open {html_path} in a browser to view.")

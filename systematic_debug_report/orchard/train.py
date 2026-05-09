@@ -67,7 +67,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     # --- Setup ---
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, cfg.env)
+    encoding.init_encoder(cfg.model.encoder, env)
     trainer = create_trainer(cfg, env)
 
     if resume_checkpoint is not None:
@@ -155,9 +155,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
             print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
-                  f"Team RPS: {metrics['greedy_team_rps']:.4f}  "
-                  f"Correct PPS: {metrics['greedy_correct_pps']:.4f}  "
-                  f"Wrong PPS: {metrics['greedy_wrong_pps']:.4f}")
+                  f"Team RPS: {metrics['greedy_team_rps']:.4f}")
             h_rps_key = f"{heuristic_name}_rps"
             h_team_key = f"{heuristic_name}_team_rps"
             if h_rps_key in metrics:

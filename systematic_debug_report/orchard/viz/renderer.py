@@ -87,10 +87,8 @@ def use_type_colors_for_agents(
     task_assignments: tuple[tuple[int, ...], ...] | None,
     n_task_types: int,
 ) -> bool:
-    """True when every agent has exactly one task-type assignment."""
-    if task_assignments is None or n_task_types <= 1:
-        return False
-    return all(len(g) == 1 for g in task_assignments)
+    """Legacy: always False in the new framework (agents colored by index)."""
+    return False
 
 
 def _task_hex(task_type: int, n_task_types: int) -> str:
@@ -134,10 +132,10 @@ def _render_grid_svg_elements(
     width: int,
     actor: int | None,
     n_task_types: int,
-    task_assignments: tuple[tuple[int, ...], ...] | None,
+    task_assignments: tuple[tuple[int, ...], ...] | None,  # kept for compat, ignored
     picked_cell: tuple[int, int] | None,
     picked_correct: bool | None,
-    use_type_colors: bool,
+    use_type_colors: bool,  # ignored
     x0: float,
     y0: float,
     spawn_areas: list | None = None,
@@ -194,10 +192,14 @@ def _render_grid_svg_elements(
             )
 
     # --- Tasks ---
+    # Each task square is clickable and shows per-agent reward breakdown in JS popup.
+    # data-popup-data encodes row, col, and all types present so JS can build the popup.
     sq = CELL * 0.22
     for (r, c), types_list in task_map.items():
         cx = x0 + c * CELL
         cy = y0 + r * CELL
+        # Popup data includes row/col so JS can look up rewards; types for dropdown
+        all_types_popup = _attr_json({"row": r, "col": c, "types": types_list})
 
         if len(types_list) <= TASK_COLLAPSE:
             for ti, tau in enumerate(types_list):
@@ -205,28 +207,26 @@ def _render_grid_svg_elements(
                 dark = _darken_hex(tc)
                 sq_x = cx + CELL - 4 - (ti + 1) * (sq + 2) + 2
                 sq_y = cy + 4
-                popup = _attr_json({"types": [tau]})
+                popup = _attr_json({"row": r, "col": c, "types": types_list, "focus": tau})
                 parts.append(
-                    f'<g data-popup-type="tasks" data-popup-data="{popup}">'
+                    f'<g data-popup-type="tasks" data-popup-data="{popup}" style="cursor:pointer">'
                     f'<rect x="{sq_x:.1f}" y="{sq_y:.1f}" width="{sq:.1f}" height="{sq:.1f}" '
                     f'rx="2" fill="{tc}" stroke="{dark}" stroke-width="1"/>'
                 )
-                if n_task_types > 1:
-                    parts.append(
-                        f'<text x="{sq_x + sq/2:.1f}" y="{sq_y + sq/2:.1f}" '
-                        f'text-anchor="middle" dominant-baseline="central" '
-                        f'font-size="8" font-weight="bold" fill="white" pointer-events="none">'
-                        f'{tau}</text>'
-                    )
+                parts.append(
+                    f'<text x="{sq_x + sq/2:.1f}" y="{sq_y + sq/2:.1f}" '
+                    f'text-anchor="middle" dominant-baseline="central" '
+                    f'font-size="8" font-weight="bold" fill="white" pointer-events="none">'
+                    f'{tau}</text>'
+                )
                 parts.append("</g>")
         else:
-            # Count badge — square to match the individual task squares
+            # Badge: show count, click shows all types in popup
             badge = sq * 1.6
             bx = cx + CELL - badge - 3
             by = cy + 3
-            popup = _attr_json({"types": types_list})
             parts.append(
-                f'<g data-popup-type="tasks" data-popup-data="{popup}" style="cursor:pointer">'
+                f'<g data-popup-type="tasks" data-popup-data="{all_types_popup}" style="cursor:pointer">'
                 f'<rect x="{bx:.1f}" y="{by:.1f}" width="{badge:.1f}" height="{badge:.1f}" '
                 f'rx="3" fill="#555" stroke="white" stroke-width="1"/>'
                 f'<text x="{bx + badge/2:.1f}" y="{by + badge/2:.1f}" '

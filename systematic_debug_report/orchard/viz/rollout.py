@@ -8,7 +8,7 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.datatypes import State
-from orchard.enums import Action, PickMode
+from orchard.enums import Action
 from orchard.env.base import BaseEnv
 from orchard.eval import rollout_trajectory
 from orchard.model import ValueNetwork
@@ -54,11 +54,10 @@ def generate_frames(
         picked_task_type: int | None = None
         picked_correct: bool | None = None
 
-        if picked and env.cfg.task_assignments is not None:
+        if picked:
             total_picks += 1
             agent_pick_counts[transition.s_t.actor] += 1
 
-            # Figure out what type was picked by comparing before/after tasks
             before_tasks = set(zip(transition.s_t.task_positions,
                                    transition.s_t.task_types or ()))
             after_tasks = set(zip(transition.s_t_after.task_positions,
@@ -67,8 +66,9 @@ def generate_frames(
             if removed:
                 _, tau = next(iter(removed))
                 picked_task_type = tau
-                g_actor = set(env.cfg.task_assignments[transition.s_t.actor])
-                picked_correct = (tau in g_actor)
+                actor = transition.s_t.actor
+                eligible = env.phi_positive_types[actor]
+                picked_correct = (tau in eligible)
                 if picked_correct:
                     total_correct_picks += 1
                 else:

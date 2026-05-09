@@ -134,7 +134,7 @@ env:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: general_dec_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -164,7 +164,7 @@ env:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: general_dec_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -191,17 +191,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  r_picker: 1.0
-  r_low: 0.0
-  pick_mode: forced
+  clustering: 0
+  specialization: 0
   max_tasks_per_type: 2
-  task_assignments: [[0], [1]]
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: blind_task_cnn_grid
+  encoder: general_dec_cnn_grid
   mlp_dims: [8]
   conv_specs: [[4, 3]]
 train:
@@ -210,7 +208,7 @@ train:
   td_lambda: 0.3
   total_steps: 10
   seed: 42
-  heuristic: nearest_correct_task
+  heuristic: nearest
   lr:
     start: 0.01
   epsilon:

@@ -1,7 +1,6 @@
 # Orchard Viz — Trajectory Visualizer
 
 Interactive HTML viewer for inspecting agent trajectories in the orchard environment.
-Supports both legacy (homogeneous tasks) and task specialization (multi-type) modes.
 
 ## Quick Start
 
@@ -12,66 +11,49 @@ python -m orchard.viz configs/my_config.yaml --steps 200
 # Learned policy from checkpoint
 python -m orchard.viz configs/my_config.yaml --checkpoint runs/exp1/checkpoints/final.pt
 
-# Compare learned vs heuristic (auto-selects heuristic)
+# Compare learned vs heuristic
 python -m orchard.viz configs/my_config.yaml --checkpoint runs/exp1/checkpoints/final.pt --compare
-
-# Compare learned vs a specific policy
-python -m orchard.viz configs/my_config.yaml --checkpoint runs/exp1/checkpoints/final.pt --compare nearest_correct_task_stay_wrong
 
 # Fast sanity check (no rendering, just stats + CSV)
 python -m orchard.viz configs/my_config.yaml --no-html --steps 500
 
-# Override config values on the fly (dot notation, same as train.py)
+# Override config values on the fly (dot notation)
 python -m orchard.viz metadata.yaml --checkpoint final.pt --override env.n_agents=8 env.height=11
 
-# Apply a fixed-eval scenario (fixed spawn zones + agent start) for direct comparison with evaluate_checkpoint
-python -m orchard.viz metadata.yaml --checkpoint final.pt \
-    --scenario edge_zones_center_agents --compare nearest_correct_task_stay_wrong
+# Apply a fixed-eval scenario for direct comparison with evaluate_checkpoint
+python -m orchard.viz metadata.yaml --checkpoint final.pt --scenario center_agents
 ```
 
 ## Policy Options
 
 ```
---policy nearest_task                       Move toward nearest task (any type)
---policy nearest_correct_task               Move toward nearest task with τ ∈ G_actor
---policy nearest_correct_task_stay_wrong    Move toward nearest correct; stay on wrong-type tasks
---policy random                             Random actions (including pick actions in choice mode)
---policy learned                            Greedy from checkpoint (requires --checkpoint)
+--policy nearest    Value-aware nearest heuristic: move toward task with highest
+                    phi[actor,κ] * Σ_j R[actor,j] * r'[κ,j]; pick best eligible type
+--policy random     Random actions (including pick actions)
+--policy learned    Greedy from checkpoint (requires --checkpoint)
 ```
+
+**Default:** `learned` if `--checkpoint` is provided, otherwise `nearest`.
 
 ## Scenarios
 
-Scenarios patch the env config before creating the env, exactly mirroring what `evaluate_checkpoint`
-does in `fixed_eval.py` — so what you see in viz is what gets measured in notebook plots.
+Scenarios mirror what `evaluate_checkpoint` does in `fixed_eval.py` — so what you see
+in viz is what gets measured in evaluation.
 
 ```
---scenario frozen_zones               freeze spawn zones (eval_spawn_zone_move_interval=0), fixed seed
---scenario edge_zones_center_agents   spawn zones at grid edges (maximally spread around perimeter),
-                                      all agents start at grid center — exposes centralized failures
+--scenario center_agents   All agents start at grid center each time init_state() is called.
+                           No spawn zone changes.
 ```
 
-The `--eval-seed` defaults to the scenario's seed (`42`) for reproducibility. Pass `--eval-seed N`
-to see a different deterministic arrangement with the same zone layout.
+## φ/R Framework Display
 
-**Default:** `learned` if `--checkpoint` is provided, otherwise auto-detects:
-`nearest_correct_task` for `n_task_types > 1`, `nearest_task` for legacy.
+The HTML viewer shows the φ/R reward structure in the legend panel:
+- **φ matrix** (`phi[actor, κ]`): which task types each agent can profitably pick
+- **R matrix** (`relatedness[actor, j]`): which agents share rewards with whom
+- **r' matrix** (`category_rewards[κ, j]`): per-category per-agent reward values
+- `C` (clustering) and `S` (specialization) parameters from the config
 
-**Backward compat:** `--policy nearest` still works (alias for `nearest_task`).
-
-## Task Specialization Features
-
-When the config has `n_task_types > 1`:
-
-- **Color-coded tasks:** Each task type gets a distinct color (colorblind-friendly palette
-  with up to 12 types). Task circles show the type number inside.
-- **Correct/wrong pick borders:** When a pick occurs, the cell gets a green border
-  (correct: τ ∈ G_actor) or red border (wrong: τ ∉ G_actor).
-- **Legend:** Shows task type → color mapping and agent → assigned types mapping.
-- **Info panel:** Shows actor's assignment G_i, pick type and correctness,
-  per-type task counts, cumulative correct/wrong picks.
-- **Stats summary:** Prints correct and wrong picks per step alongside Team RPS.
-- **Q-value tables** (with `--decisions`): Show Q-values for all actions including
-  `pick(0)`, `pick(1)`, etc. in choice pick mode.
+Pick events are annotated correct/wrong based on `phi[actor, κ] > 0`.
 
 ## All Options
 
@@ -81,8 +63,8 @@ positional arguments:
 
 optional arguments:
   --checkpoint PATH         Path to model checkpoint (.pt)
-  --policy POLICY           Policy to visualize (see above)
-  --compare [POLICY]        Compare against another policy (default: auto-select heuristic).
+  --policy POLICY           Policy to visualize: nearest, random, learned
+  --compare [POLICY]        Compare against another policy (default: nearest).
                             Accepts same values as --policy.
   --show-after-states       Show s_t and s_t^a per transition
   --steps N                 Number of agent decisions (default: 200)
@@ -91,15 +73,16 @@ optional arguments:
   --scenario NAME           Apply a fixed-eval scenario (see Scenarios section)
   --override key=val ...    Override config values using dot notation, e.g.:
                               env.n_agents=8
-                              env.stochastic.spawn_zone_move_interval=0
+                              env.clustering=1
                               train.learning_type=centralized
+  --rand-zone-seed N        Randomize initial spawn zone positions using this seed.
+                            Use different values (0, 1, 2, ...) to sweep zone configs.
   --fps N                   Autoplay FPS (default: 3)
   --output-dir DIR          Output directory (default: ./viz_output)
   --decisions               Show Q-values for all actions (requires --checkpoint)
   --values                  Show per-agent V_i(s) (requires --checkpoint)
   --dpi N                   PNG render DPI (default: 120)
   --no-html                 Skip rendering and HTML (fast stats + CSV/JSON only)
-  --rand-zone-seed          Auto randomize spawn zones. If not using this flag, initial spawn zones are determined by per-type seeds.
 ```
 
 ## Output Files
@@ -109,70 +92,41 @@ optional arguments:
 - `summary.json` — Aggregate statistics (Team RPS, correct/wrong picks, task counts)
 - `trajectory_compare.csv` / `summary_compare.json` — Same for comparison policy (with `--compare`)
 
-## Comparing Heuristics
+## Example Config
 
-```bash
-# See how nearest_correct_task performs
-python -m orchard.viz config.yaml --policy nearest_correct_task --steps 500
-
-# Compare learned against the training heuristic
-python -m orchard.viz metadata.yaml --checkpoint final.pt --compare nearest_correct_task_stay_wrong
-
-# Compare with nearest_task (ignores type assignments)
-python -m orchard.viz config.yaml --policy nearest_task --steps 500
+```yaml
+env:
+  height: 9
+  width: 9
+  n_agents: 4
+  n_task_types: 2
+  n_tasks: 10
+  max_tasks_per_type: 10
+  gamma: 0.99
+  clustering: 0        # C: reward-sharing radius
+  specialization: 0    # S: task-type eligibility radius
+  stochastic:
+    spawn_prob: 0.01
+    despawn_prob: 0.0125
+    despawn_mode: probability
+    sigma_a: 0.0
+    sigma_b: 0.0
+model:
+  encoder: general_dec_cnn_grid   # or general_cen_cnn_grid for centralized
+  conv_specs: [[16, 3]]
+  mlp_dims: [16]
 ```
 
-The `--no-html` mode is fast (~1 second for 1000 steps) and prints Team RPS
-directly, so you can iterate quickly.
+## Tips
 
-### Visual inspection
+The `--no-html` mode is fast (~1 second for 1000 steps) and prints Team RPS
+directly, so you can iterate quickly over configs.
+
 Once you have good parameters, run with HTML to visually verify:
-- Agents move toward their assigned task types
+- Agents move toward tasks where `phi[actor, κ] > 0`
 - Pick events are mostly correct (green borders)
 - Task density looks right (not too sparse, not too dense)
-- In choice mode: agents walk past wrong-type tasks and explicitly pick correct ones
 
 ```bash
 python -m orchard.viz config.yaml --steps 100 --dpi 100
-```
-
-## Example Configs
-
-### Legacy (homogeneous tasks)
-```yaml
-env:
-  n_task_types: 1  # or omit entirely
-  r_picker: 1.0
-  r_low: 0.0
-  # ... standard config
-model:
-  encoder: filtered_task_cnn_grid
-```
-
-### Task specialization (forced pick)
-```yaml
-env:
-  n_task_types: 4
-  r_picker: 1.0
-  r_low: 0.0
-  pick_mode: forced
-  max_tasks_per_type: 3
-  task_assignments: [[0], [1], [2], [3]]
-  # ...
-model:
-  encoder: centralized_task_cnn_grid  # or filtered_task_cnn_grid for dec
-```
-
-### Task specialization (choice pick)
-```yaml
-env:
-  n_task_types: 4
-  r_picker: 1.0
-  r_low: -1.0
-  pick_mode: choice
-  max_tasks_per_type: 3
-  task_assignments: [[0], [1], [2], [3]]
-  # ...
-model:
-  encoder: centralized_task_cnn_grid  # or filtered_task_cnn_grid for dec
 ```

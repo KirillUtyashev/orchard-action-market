@@ -10,44 +10,13 @@ class DespawnMode(Enum):
     PROBABILITY = auto()
 
 
-class SpawnZoneMode(Enum):
-    NONE = auto()         # zones never move
-    RANDOM = auto()       # every interval rounds: each zone jumps to a random valid corner
-    EDGE_SWITCH = auto()  # every interval rounds: all zones reposition to the grid border,
-                          # evenly spread around the perimeter, randomly assigned to types.
-                          # interval=0 still places zones on the border at init/eval-start.
-    FIXED_SPREAD_AGENTS_CENTER_START = auto()
-                          # zones placed evenly on the border at construction (like edge_switch
-                          # init) and NEVER move. Training and eval share identical fixed zones.
-                          # eval_spawn_zone_mode must be NONE.
-                          # Agents always init at grid center (height//2, width//2).
-                          # reset_agent_pos_interval / eval_reset_agent_pos_interval: every N
-                          # rounds, all agents teleport back to center (tasks/zones unaffected).
-                          # 0 = disabled.
-
-
-class TaskSpawnMode(Enum):
-    GLOBAL_UNIQUE = auto()   # at most 1 task of ANY type per cell (forced pick)
-    PER_TYPE_UNIQUE = auto() # at most 1 task per TYPE per cell; types may coexist (choice pick)
-
-
-class PickMode(Enum):
-    FORCED = auto()   # auto-pick when stepping on task cell
-    CHOICE = auto()   # explicit pick(τ) action required
-
-
 class Heuristic(Enum):
-    NEAREST_TASK = auto()                    # move toward any nearest task
-    NEAREST_CORRECT_TASK = auto()            # move toward nearest task with τ ∈ G_actor; phase 2: always pick
-    NEAREST_CORRECT_TASK_STAY_WRONG = auto() # same phase 1; phase 2: pick if correct type, STAY if wrong
+    NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
 
 
 class EncoderType(Enum):
-    CNN_GRID = auto()                        # dec O(1): 4 channels, 1 scalar — mirrors old BasicGridEncoder
-    BLIND_TASK_CNN_GRID = auto()             # dec O(1): 4 grid channels, 3 scalars
-    FILTERED_TASK_CNN_GRID = auto()          # dec O(1): 6 grid channels, 3 scalars
-    POSITION_AWARE_TASK_CNN_GRID = auto()    # dec O(1): 5 grid channels, 3 scalars
-    CENTRALIZED_TASK_CNN_GRID = auto()       # cen: T+N+1 channels, N scalars
+    GENERAL_DEC_CNN_GRID = auto()   # dec: T+3 channels, 3 scalars
+    GENERAL_CEN_CNN_GRID = auto()   # cen: T+N+1 channels, N+1 scalars
 
 
 class Activation(Enum):
@@ -100,7 +69,6 @@ _ACTION_NAMES: dict[int, str] = {
     2: 'LEFT',
     3: 'RIGHT',
     4: 'STAY',
-    5: 'PICK',
 }
 
 
@@ -114,7 +82,6 @@ class Action:
     LEFT: Action
     RIGHT: Action
     STAY: Action
-    PICK: Action
 
     def __init__(self, value: int) -> None:
         self._value = value
@@ -160,7 +127,6 @@ Action.DOWN = Action(1)
 Action.LEFT = Action(2)
 Action.RIGHT = Action(3)
 Action.STAY = Action(4)
-Action.PICK = Action(5)  # generic pick, used in forced mode transitions
 
 
 def make_pick_action(task_type: int) -> Action:
@@ -171,10 +137,8 @@ def make_pick_action(task_type: int) -> Action:
 NUM_MOVE_ACTIONS: int = 5
 
 
-def num_actions(pick_mode: PickMode, n_task_types: int) -> int:
-    """Total action count: 5 for forced, 5+T for choice."""
-    if pick_mode == PickMode.FORCED:
-        return 5
+def num_actions(n_task_types: int) -> int:
+    """Total action count: 5 move + T pick options."""
     return 5 + n_task_types
 
 

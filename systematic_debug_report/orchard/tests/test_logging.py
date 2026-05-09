@@ -46,18 +46,21 @@ class TestCSVLogger:
 
 class TestFieldnames:
     def test_main_csv_fields(self):
-        fields = build_main_csv_fieldnames("nearest_correct_task")
-        
+        fields = build_main_csv_fieldnames("nearest")
+
         assert "step" in fields
         assert "greedy_rps" in fields
-        assert "greedy_correct_pps" in fields
-        assert "greedy_wrong_pps" in fields
-        assert "nearest_correct_task_rps" in fields
+        assert "greedy_team_rps" in fields
+        assert "nearest_rps" in fields
+        assert "nearest_team_rps" in fields
         assert "td_loss_avg" in fields
+        # No correct_pps/wrong_pps in new framework
+        assert "greedy_correct_pps" not in fields
+        assert "greedy_wrong_pps" not in fields
 
     def test_main_csv_fields_actor_critic_extensions(self):
         fields = build_main_csv_fieldnames(
-            "nearest_correct_task",
+            "nearest",
             actor_critic=True,
             following_rates=True,
             influencer=True,

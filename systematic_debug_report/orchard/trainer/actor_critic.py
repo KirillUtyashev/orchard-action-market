@@ -33,7 +33,7 @@ from orchard.datatypes import (
     ScheduleConfig,
     State,
 )
-from orchard.enums import Action, Heuristic, PickMode
+from orchard.enums import Action, Heuristic
 from orchard.env.base import BaseEnv
 from orchard.eval import evaluate_policy_metrics
 from orchard.following_rates import (
@@ -113,11 +113,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
         self._warmup_steps = max(0, int(warmup_steps))
-        self._defer_actor_updates = (
-            env.cfg.pick_mode == PickMode.FORCED
-            if defer_actor_updates is None
-            else bool(defer_actor_updates)
-        )
+        self._defer_actor_updates = False if defer_actor_updates is None else bool(defer_actor_updates)
         self._actor_bt = actor_bt
         self._deferred_actor_t: int | None = None
         self._timer = timer or Timer()
@@ -214,17 +210,7 @@ class ActorCriticTrainerBase(TrainerBase):
         self._dbg_actor_advantage: float = 0.0
 
     def _build_agent_action_rngs(self) -> list[_random.Random] | None:
-        stoch = self._env.cfg.stochastic
-        seeds = stoch.per_type_seeds if stoch is not None else None
-        assignments = self._env.cfg.task_assignments
-        if seeds is None or assignments is None:
-            return None
-        if not all(len(assignments[i]) == 1 for i in range(self._n_agents)):
-            raise ValueError("per_type_seeds requires each actor-critic agent to have exactly one task type")
-        return [
-            _random.Random(int(seeds[int(assignments[i][0])]))
-            for i in range(self._n_agents)
-        ]
+        return None
 
     def _sample_action_index_from_probs(self, actor_id: int, probs: np.ndarray | torch.Tensor) -> int:
         agent_rngs = self._agent_action_rngs
@@ -243,17 +229,13 @@ class ActorCriticTrainerBase(TrainerBase):
         return int(len(probs_np) - 1)
 
     def _build_teammate_matrix(self) -> tuple[tuple[bool, ...], ...]:
-        assignments = self._env.cfg.task_assignments or ()
-        teammate_rows: list[tuple[bool, ...]] = []
-        for actor_id in range(self._n_agents):
-            actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
-            teammate_rows.append(tuple(
-                observer_id != actor_id
-                and bool(actor_types & set(assignments[observer_id]))
-                if observer_id < len(assignments) else False
-                for observer_id in range(self._n_agents)
-            ))
-        return tuple(teammate_rows)
+        # Use relatedness matrix: R(actor, observer) > 0 means observer is teammate of actor
+        tm = self._env.teammate_mask  # (N, N) bool, includes self
+        return tuple(
+            tuple(bool(tm[actor_id, observer_id]) and observer_id != actor_id
+                  for observer_id in range(self._n_agents))
+            for actor_id in range(self._n_agents)
+        )
 
     def _is_teammate_observer(self, observer_id: int, actor_id: int) -> bool:
         return bool(self._teammate_matrix[actor_id][observer_id])
@@ -270,11 +252,8 @@ class ActorCriticTrainerBase(TrainerBase):
         mask[actor_id] = 1.0
         return mask
 
-    def _actor_task_types(self, actor_id: int) -> frozenset[int] | None:
-        assignments = self._env.cfg.task_assignments
-        if assignments is None:
-            return None
-        return frozenset(assignments[actor_id])
+    def _actor_task_types(self, actor_id: int) -> frozenset[int]:
+        return self._env.phi_positive_types[actor_id]
 
     # ------------------------------------------------------------------
     # Abstract critic hooks
@@ -447,7 +426,7 @@ class ActorCriticTrainerBase(TrainerBase):
         trace_pick_type = -1
         trace_pick_rewards: tuple[float, ...] = tuple(0.0 for _ in range(self._n_agents))
 
-        if self._env.cfg.pick_mode == PickMode.CHOICE and on_task:
+        if on_task:
             pick_state = s_moved.with_pick_phase()
             self._train_decision(
                 state=state,
@@ -563,7 +542,7 @@ class ActorCriticTrainerBase(TrainerBase):
 
     def _legal_mask(self, state: State) -> np.ndarray:
         if state.pick_phase:
-            return build_phase2_legal_mask(state, self._env.cfg)
+            return build_phase2_legal_mask(state, self._env.cfg, self._env.phi_positive_types)
         return build_phase1_legal_mask(state, self._env.cfg)
 
     def _actor_probabilities(self, state: State) -> np.ndarray:
@@ -899,7 +878,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 return self._greedy_action(s)
 
             def baseline_policy(s: State) -> Action:
-                return heuristic_action(s, env.cfg, self._heuristic)
+                return heuristic_action(s, env, self._heuristic)
 
             heuristic_name = self._heuristic.name.lower()
             greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
@@ -907,12 +886,8 @@ class ActorCriticTrainerBase(TrainerBase):
             return {
                 "greedy_rps": greedy_metrics["rps"],
                 "greedy_team_rps": greedy_metrics["team_rps"],
-                "greedy_correct_pps": greedy_metrics["correct_pps"],
-                "greedy_wrong_pps": greedy_metrics["wrong_pps"],
                 f"{heuristic_name}_rps": baseline_metrics["rps"],
                 f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
-                f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-                f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
             }
         finally:
             env.set_eval_mode(False)
@@ -1075,10 +1050,7 @@ class ActorCriticTrainerBase(TrainerBase):
             build_phase2_policy_prob_csv_fieldnames(self._env.cfg.n_task_types),
         )
         self._phase1_eval_states = sample_phase1_policy_eval_states(self._env.cfg)
-        self._phase2_eval_states = (
-            [] if self._env.cfg.pick_mode == PickMode.FORCED
-            else generate_phase2_policy_eval_states(self._env.cfg)
-        )
+        self._phase2_eval_states = generate_phase2_policy_eval_states(self._env.cfg)
 
         if self._following_rates_cfg.enabled:
             fieldnames = build_following_rate_csv_fieldnames(self._n_agents)
@@ -1126,10 +1098,8 @@ class ActorCriticTrainerBase(TrainerBase):
         freq = self._alpha_state_log_freq
         if freq <= 0 or t % freq != 0:
             return
-        assignments = self._env.cfg.task_assignments or ()
-        actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
         teammate_of_actor = [
-            i != actor_id and bool(set(assignments[i]) & actor_types if i < len(assignments) else False)
+            i != actor_id and bool(self._env.teammate_mask[actor_id, i])
             for i in range(self._n_agents)
         ]
         record = {
@@ -1167,7 +1137,7 @@ class ActorCriticTrainerBase(TrainerBase):
             for idx, (label, state) in enumerate(self._phase2_eval_states):
                 probs = self._actor_probabilities(state)
                 self._phase2_logger.log(
-                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg)
+                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg, self._env.phi_positive_types)
                 )
         for idx, state in enumerate(self._following_states):
             logger = self._following_loggers.get(idx)

@@ -7,7 +7,7 @@ import numpy as np
 from orchard.actor_critic.action_space import full_action_head_dim
 from orchard.actor_critic.policy_eval_states import serialize_state
 from orchard.datatypes import EnvConfig, State
-from orchard.enums import Action, PickMode, make_pick_action
+from orchard.enums import Action, make_pick_action
 
 
 def _probability_columns(probs, env_cfg: EnvConfig) -> dict[str, float]:
@@ -23,9 +23,8 @@ def _probability_columns(probs, env_cfg: EnvConfig) -> dict[str, float]:
         "prob_right": float(probs_arr[Action.RIGHT.value]),
         "prob_stay": float(probs_arr[Action.STAY.value]),
     }
-    if env_cfg.pick_mode == PickMode.CHOICE:
-        for tau in range(env_cfg.n_task_types):
-            row[f"prob_pick_{tau}"] = float(probs_arr[make_pick_action(tau).value])
+    for tau in range(env_cfg.n_task_types):
+        row[f"prob_pick_{tau}"] = float(probs_arr[make_pick_action(tau).value])
     return row
 
 
@@ -56,6 +55,7 @@ def build_phase2_policy_prob_row(
     state: State,
     probs,
     env_cfg: EnvConfig,
+    phi_positive_types: list[set[int]] | None = None,
 ) -> dict[str, float | int | str]:
     actor = state.actor
     row: dict[str, float | int | str] = {
@@ -68,11 +68,7 @@ def build_phase2_policy_prob_row(
     }
 
     present_types = {tau for _, tau in state.tasks_at(state.agent_positions[actor])}
-    assigned_types = (
-        set(env_cfg.task_assignments[actor])
-        if env_cfg.task_assignments is not None
-        else {0}
-    )
+    assigned_types = phi_positive_types[actor] if phi_positive_types is not None else set()
     for tau in range(env_cfg.n_task_types):
         row[f"present_type_{tau}"] = int(tau in present_types)
     for tau in range(env_cfg.n_task_types):

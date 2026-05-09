@@ -15,7 +15,6 @@ from orchard.actor_critic.action_space import (
 )
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
 from orchard.env import create_env
-from orchard.enums import PickMode
 
 
 def serialize_state(state: State) -> str:
@@ -183,18 +182,15 @@ def sample_phase1_policy_eval_states(
 
             s_moved = env.apply_action(state, move_action)
             if s_moved.is_agent_on_task(s_moved.actor):
-                if env_cfg.pick_mode == PickMode.FORCED:
-                    s_after, _ = env.resolve_pick(s_moved)
-                else:
-                    phase2_state = s_moved.with_pick_phase()
-                    phase2_mask = build_phase2_legal_mask(phase2_state, env_cfg)
-                    phase2_indices = np.flatnonzero(phase2_mask)
-                    pick_idx = int(phase2_indices[local_rng.randrange(len(phase2_indices))])
-                    pick_action = policy_index_to_action(pick_idx)
-                    s_after, _ = env.resolve_pick(
-                        s_moved,
-                        pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
-                    )
+                phase2_state = s_moved.with_pick_phase()
+                phase2_mask = build_phase2_legal_mask(phase2_state, env_cfg, env.phi_positive_types)
+                phase2_indices = np.flatnonzero(phase2_mask)
+                pick_idx = int(phase2_indices[local_rng.randrange(len(phase2_indices))])
+                pick_action = policy_index_to_action(pick_idx)
+                s_after, _ = env.resolve_pick(
+                    s_moved,
+                    pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
+                )
             else:
                 s_after = s_moved
 

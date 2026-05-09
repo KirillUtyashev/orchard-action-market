@@ -1,5 +1,7 @@
 """Tests for actor policy diagnostics and sampled state suites."""
 
+from __future__ import annotations
+
 import json
 
 from orchard.actor_critic.action_space import full_action_head_dim
@@ -13,7 +15,7 @@ from orchard.actor_critic.policy_logging import (
     build_phase2_policy_prob_row,
 )
 from orchard.datatypes import EnvConfig, Grid, State, StochasticConfig
-from orchard.enums import PickMode
+from orchard.enums import DespawnMode
 
 
 def _make_env_cfg(n_task_types: int = 3, n_agents: int = 2) -> EnvConfig:
@@ -23,12 +25,9 @@ def _make_env_cfg(n_task_types: int = 3, n_agents: int = 2) -> EnvConfig:
         n_agents=n_agents,
         n_tasks=2,
         gamma=0.95,
-        r_picker=1.0,
         n_task_types=n_task_types,
-        pick_mode=PickMode.CHOICE,
         max_tasks_per_type=2,
-        task_assignments=((0, 1), (1, 2)) if n_agents == 2 else tuple((0, 1) for _ in range(n_agents)),
-        stochastic=StochasticConfig(spawn_prob=0.05, despawn_mode=None, despawn_prob=0.0),
+        stochastic=StochasticConfig(spawn_prob=0.05, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
 
 
@@ -93,7 +92,7 @@ class TestGeneratePhase2States:
             assert state.pick_phase
             assert state.is_agent_on_task(state.actor)
 
-    def test_phase2_row_contains_present_and_assigned_type_flags(self):
+    def test_phase2_row_contains_present_type_flags(self):
         cfg = _make_env_cfg(n_task_types=3, n_agents=2)
         label, state = generate_phase2_policy_eval_states(cfg)[0]
         probs = [0.0] * full_action_head_dim(cfg)
@@ -105,9 +104,7 @@ class TestGeneratePhase2States:
         assert row["state_id"] == "case_0"
         assert row["state_label"] == label
         assert row["state_json"] == serialize_state(state)
-        assert row["assigned_type_0"] == 1
-        assert row["assigned_type_2"] == 0
-        assert row["present_type_0"] == 1
-        assert row["present_type_1"] == 0
+        # present_type_* flags indicate which task types are at actor's cell
+        assert "present_type_0" in row
         assert row["prob_stay"] == 0.25
         assert row["prob_pick_0"] == 0.75

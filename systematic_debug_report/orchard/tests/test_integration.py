@@ -1,3 +1,5 @@
+"""End-to-end integration test for the full training loop."""
+
 import os
 import tempfile
 import csv
@@ -18,17 +20,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  r_picker: 1.0
-  r_low: 0.0
-  pick_mode: forced
+  clustering: 0
+  specialization: 0
   max_tasks_per_type: 2
-  task_assignments: [[0], [1]]
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: blind_task_cnn_grid
+  encoder: general_dec_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:
@@ -37,7 +37,7 @@ train:
   td_lambda: 0.3
   total_steps: 5
   seed: 42
-  heuristic: nearest_correct_task
+  heuristic: nearest
   lr:
     start: 0.01
   epsilon:
@@ -57,7 +57,7 @@ def test_end_to_end_training_loop():
     yaml_str = BASE_CONFIG.format(output_dir=tmpdir)
     path = _write_config(yaml_str)
     cfg = load_config(path)
-    
+
     # Run the full training loop (CpuTrainer path due to use_gpu: false)
     train(cfg)
     os.unlink(path)
@@ -69,7 +69,7 @@ def test_end_to_end_training_loop():
 
     # Check for metadata
     assert os.path.exists(os.path.join(run_dir, "metadata.yaml"))
-    
+
     # Check for metrics.csv and verify fields
     metrics_path = os.path.join(run_dir, "metrics.csv")
     assert os.path.exists(metrics_path)

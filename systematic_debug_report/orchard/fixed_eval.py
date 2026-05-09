@@ -3,14 +3,14 @@
 Notebook usage:
     from orchard.fixed_eval import evaluate_checkpoint
 
-    results = evaluate_checkpoint(run_dir, scenario="edge_zones_center_agents")
-    # {"greedy_team_rps": 0.42, "nearest_correct_task_stay_wrong_team_rps": 0.61, ...}
+    results = evaluate_checkpoint(run_dir, scenario="center_agents")
+    # {"greedy_team_rps": 0.42, "nearest_team_rps": 0.61, ...}
 
     # Or iterate a whole experiment:
     for config_dir in sorted(runs_dir.iterdir()):
         run_dirs = [d for d in config_dir.iterdir() if d.is_dir()]
         if run_dirs:
-            results = evaluate_checkpoint(run_dirs[0], scenario="edge_zones_center_agents")
+            results = evaluate_checkpoint(run_dirs[0], scenario="center_agents")
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ from orchard.datatypes import (
     StochasticConfig,
 )
 from orchard.env import create_env
-from orchard.env.stochastic import edge_zone_positions
 from orchard.trainer import create_trainer
 
 
@@ -47,8 +46,6 @@ class TestScenario:
     name: str
     description: str
     make_stochastic: Callable[[StochasticConfig, EnvConfig], StochasticConfig]
-    # Optional: returns fixed spawn zone top-left (row, col) per type, passed to set_eval_mode
-    get_fixed_spawn_zones: Callable[[StochasticConfig, EnvConfig], tuple[tuple[int, int], ...]] | None = None
     # Optional: patches the State returned by env.init_state() (e.g. fixed agent positions)
     override_init_state: Callable[[State, EnvConfig], State] | None = None
     eval_seed: int = 42
@@ -56,28 +53,7 @@ class TestScenario:
     n_test_states: int = 20
 
 
-def _frozen_zones(stoch: StochasticConfig, env: EnvConfig) -> StochasticConfig:
-    return dataclasses.replace(stoch, eval_spawn_zone_move_interval=0)
-
-
-
-def _edge_zones_center_agents(stoch: StochasticConfig, env: EnvConfig) -> StochasticConfig:
-    return dataclasses.replace(stoch, eval_spawn_zone_move_interval=0)
-
-
-def _edge_zones_center_agents_spawn_zones(
-    stoch: StochasticConfig, env: EnvConfig
-) -> tuple[tuple[int, int], ...]:
-    """Return spawn zone top-left corners for the edge_zones_center_agents scenario."""
-    size = stoch.spawn_area_size
-    if size is None:
-        raise ValueError(
-            "edge_zones_center_agents requires spawn_area_size to be set in the training config"
-        )
-    return edge_zone_positions(env.height, env.width, size, env.n_task_types)
-
-
-def _edge_zones_center_agents_init(state: State, env: EnvConfig) -> State:
+def _center_agents_init(state: State, env: EnvConfig) -> State:
     """Move all agents to grid center."""
     center = Grid(env.height // 2, env.width // 2)
     return dataclasses.replace(
@@ -98,31 +74,11 @@ SCENARIOS: dict[str, TestScenario] = {
     "center_agents": TestScenario(
         name="center_agents",
         description=(
-            "Same eval dynamics as training config (eval_spawn_zone_mode, intervals unchanged), "
-            "but all agents start stacked at grid center. Tests whether agents can disperse "
-            "and find their correct spawn zones from a worst-case starting position."
+            "Same eval dynamics as training config, but all agents start stacked at grid center. "
+            "Tests whether agents can disperse and find tasks from a worst-case starting position."
         ),
         make_stochastic=_noop_stochastic,
-        override_init_state=_edge_zones_center_agents_init,
-    ),
-    "frozen_zones": TestScenario(
-        name="frozen_zones",
-        description=(
-            "Freeze spawn zones (eval_spawn_zone_move_interval=0), fixed seed. "
-            "Tests learned policy on stable zones without zone drift."
-        ),
-        make_stochastic=_frozen_zones,
-    ),
-    "edge_zones_center_agents": TestScenario(
-        name="edge_zones_center_agents",
-        description=(
-            "Spawn zones placed at grid edges (maximally spread around perimeter), "
-            "all agents start at grid center. Exposes centralized failure: agents "
-            "without per-type zone awareness cannot identify which edge is theirs."
-        ),
-        make_stochastic=_edge_zones_center_agents,
-        get_fixed_spawn_zones=_edge_zones_center_agents_spawn_zones,
-        override_init_state=_edge_zones_center_agents_init,
+        override_init_state=_center_agents_init,
     ),
 }
 
@@ -176,7 +132,7 @@ def _find_checkpoint(run_dir: Path, checkpoint: str) -> Path:
 def evaluate_checkpoint(
     run_dir: str | Path,
     checkpoint: str = "final",
-    scenario: str | TestScenario = "frozen_zones",
+    scenario: str | TestScenario = "center_agents",
     device: str = "cpu",
     use_cache: bool = True,
 ) -> dict[str, float]:
@@ -193,8 +149,8 @@ def evaluate_checkpoint(
                     Subsequent calls return the cached value instantly.
 
     Returns:
-        Dict with keys: greedy_team_rps, greedy_rps, greedy_correct_pps,
-        greedy_wrong_pps, {heuristic_name}_team_rps, {heuristic_name}_rps, ...
+        Dict with keys: greedy_team_rps, greedy_rps,
+        {heuristic_name}_team_rps, {heuristic_name}_rps, ...
     """
     run_dir = Path(run_dir)
 
@@ -228,7 +184,7 @@ def evaluate_checkpoint(
     model_cfg = _parse_model(raw["model"])
     actor_model_raw = raw.get("actor_model")
     actor_model_cfg = _parse_model(actor_model_raw) if actor_model_raw else None
-    train_cfg = _parse_train(raw["train"], n_task_types=env_cfg.n_task_types)
+    train_cfg = _parse_train(raw["train"])
     train_cfg = dataclasses.replace(train_cfg, use_gpu=(device == "cuda"))
 
     eval_cfg = EvalConfig(
@@ -251,27 +207,23 @@ def evaluate_checkpoint(
     from orchard import encoding
     from orchard.eval import evaluate_policy_metrics
     from orchard.policy import heuristic_action
-    encoding.init_encoder(model_cfg.encoder, env_cfg)
     env = create_env(env_cfg)
+    encoding.init_encoder(model_cfg.encoder, env)
     trainer = create_trainer(cfg, env)
 
     ckpt_path = _find_checkpoint(run_dir, checkpoint)
     trainer.load_checkpoint(ckpt_path)
     trainer.sync_to_cpu()
 
-    # Run fixed eval with scenario overrides applied to set_eval_mode and init_state
-    fixed_zones = (
-        scenario.get_fixed_spawn_zones(stoch_modified, env_cfg)
-        if scenario.get_fixed_spawn_zones is not None else None
-    )
-    env.set_eval_mode(True, seed=eval_cfg.eval_seed, fixed_spawn_zones=fixed_zones)
+    # Run fixed eval with scenario overrides
+    env.set_eval_mode(True, seed=eval_cfg.eval_seed)
     try:
         eval_start = env.init_state()
         if scenario.override_init_state is not None:
             eval_start = scenario.override_init_state(eval_start, env_cfg)
 
         greedy_policy = lambda s: trainer._greedy_action(s)
-        baseline_policy = lambda s: heuristic_action(s, env.cfg, trainer._heuristic)
+        baseline_policy = lambda s: heuristic_action(s, env, trainer._heuristic)
         heuristic_name = trainer._heuristic.name.lower()
 
         greedy_m = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
@@ -282,12 +234,8 @@ def evaluate_checkpoint(
     metrics = {
         "greedy_rps": greedy_m["rps"],
         "greedy_team_rps": greedy_m["team_rps"],
-        "greedy_correct_pps": greedy_m["correct_pps"],
-        "greedy_wrong_pps": greedy_m["wrong_pps"],
         f"{heuristic_name}_rps": baseline_m["rps"],
         f"{heuristic_name}_team_rps": baseline_m["team_rps"],
-        f"{heuristic_name}_correct_pps": baseline_m["correct_pps"],
-        f"{heuristic_name}_wrong_pps": baseline_m["wrong_pps"],
     }
 
     # Write cache

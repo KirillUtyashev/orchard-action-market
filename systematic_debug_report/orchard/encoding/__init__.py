@@ -5,36 +5,33 @@ from __future__ import annotations
 import torch
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import (
-    BlindTaskGridEncoder,
-    CentralizedTaskGridEncoder,
-    CnnGridEncoder,
-    FilteredTaskGridEncoder,
-    PositionAwareTaskGridEncoder,
-)
+from orchard.encoding.grid import GeneralDecEncoder, GeneralCenEncoder
 from orchard.enums import EncoderType
-from orchard.datatypes import EncoderOutput, EnvConfig, State
+from orchard.datatypes import EncoderOutput, State
 
 
 # Module-level singleton
 _encoder: BaseEncoder | None = None
 
 
-_ENCODER_MAP = {
-    EncoderType.CNN_GRID: CnnGridEncoder,
-    EncoderType.BLIND_TASK_CNN_GRID: BlindTaskGridEncoder,
-    EncoderType.POSITION_AWARE_TASK_CNN_GRID: PositionAwareTaskGridEncoder,
-    EncoderType.FILTERED_TASK_CNN_GRID: FilteredTaskGridEncoder,
-    EncoderType.CENTRALIZED_TASK_CNN_GRID: CentralizedTaskGridEncoder,
-}
+def init_encoder(encoder_type: EncoderType, env) -> None:
+    """Initialize the global encoder singleton.
 
-
-def init_encoder(encoder_type: EncoderType, env_cfg: EnvConfig) -> None:
+    env must be a StochasticEnv (or any BaseEnv subclass) with attributes:
+      .cfg, .phi, .relatedness, .category_rewards
+    """
     global _encoder
-    cls = _ENCODER_MAP.get(encoder_type)
-    if cls is None:
+    cfg = env.cfg
+    phi = env.phi
+    rel = env.relatedness
+    cr = env.category_rewards
+
+    if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
+        _encoder = GeneralDecEncoder(cfg, phi, rel, cr)
+    elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
+        _encoder = GeneralCenEncoder(cfg, phi, rel, cr)
+    else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
-    _encoder = cls(env_cfg)
 
 
 def encode(state: State, agent_idx: int) -> EncoderOutput:

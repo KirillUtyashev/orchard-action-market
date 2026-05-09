@@ -6,7 +6,7 @@ import torch
 
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
-from orchard.enums import AlgorithmName, PickMode
+from orchard.enums import AlgorithmName
 from orchard.model import create_actor_networks, create_networks
 from orchard.trainer.base import TrainerBase
 from orchard.trainer.timer import Timer
@@ -35,7 +35,7 @@ def create_trainer(
                 actor.to(device)
             bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
             actor_bt = None
-            defer_actor_updates = cfg.env.pick_mode == PickMode.FORCED and cfg.train.batch_forced_actor_updates
+            defer_actor_updates = False
             if defer_actor_updates:
                 from orchard.batched_actor_training import BatchedActorTrainer
                 actor_bt = BatchedActorTrainer(actors, device=device)
@@ -66,7 +66,7 @@ def create_trainer(
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
         actor_bt = None
-        defer_actor_updates = cfg.env.pick_mode == PickMode.FORCED and cfg.train.batch_forced_actor_updates
+        defer_actor_updates = False
         if defer_actor_updates:
             from orchard.batched_actor_training import BatchedActorTrainer
             actor_bt = BatchedActorTrainer(actors, device="cpu")
@@ -102,7 +102,6 @@ def create_trainer(
             total = torch.cuda.get_device_properties(0).total_memory / 1024**2
             print(f"  VRAM: {alloc:.0f}MB / {total:.0f}MB ({alloc/total*100:.1f}%)")
 
-        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.gpu import GpuTrainer
         return GpuTrainer(
             network_list=networks,
@@ -115,13 +114,9 @@ def create_trainer(
             heuristic=cfg.train.heuristic,
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
-            per_type_seeds=per_type_seeds,
-            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
-            greedy_own_type_only=cfg.train.greedy_own_type_only,
             discount_method=cfg.train.discount_method,
         )
     else:
-        per_type_seeds = cfg.env.stochastic.per_type_seeds if cfg.env.stochastic else None
         from orchard.trainer.cpu import CpuTrainer
         print(f"CpuTrainer: {len(networks)} networks on CPU")
         return CpuTrainer(
@@ -134,8 +129,5 @@ def create_trainer(
             heuristic=cfg.train.heuristic,
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
-            per_type_seeds=per_type_seeds,
-            simulate_stranger_gap=cfg.train.simulate_stranger_gap,
-            greedy_own_type_only=cfg.train.greedy_own_type_only,
             discount_method=cfg.train.discount_method,
         )

@@ -36,9 +36,6 @@ class GpuTrainer(ValueTrainerBase):
         heuristic: Heuristic,
         timer: Timer | None = None,
         train_only_teammates: bool = False,
-        per_type_seeds: tuple[int, ...] | None = None,
-        simulate_stranger_gap: int = 0,
-        greedy_own_type_only: bool = False,
         discount_method: str = "team_steps",
     ) -> None:
         super().__init__(
@@ -46,9 +43,6 @@ class GpuTrainer(ValueTrainerBase):
             epsilon_schedule=epsilon_schedule, lr_schedule=lr_schedule,
             total_steps=total_steps, heuristic=heuristic, timer=timer,
             train_only_teammates=train_only_teammates,
-            per_type_seeds=per_type_seeds,
-            simulate_stranger_gap=simulate_stranger_gap,
-            greedy_own_type_only=greedy_own_type_only,
             discount_method=discount_method,
         )
         self._bt = bt

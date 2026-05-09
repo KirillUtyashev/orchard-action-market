@@ -1,5 +1,7 @@
 """Tests for the orchard actor policy scaffolding."""
 
+from __future__ import annotations
+
 import numpy as np
 import torch
 
@@ -13,7 +15,9 @@ from orchard.actor_critic.action_space import (
 )
 from orchard.actor_critic.policy_network import PolicyNetwork
 from orchard.datatypes import EnvConfig, Grid, ModelConfig, State, StochasticConfig
-from orchard.enums import Action, Activation, EncoderType, PickMode, WeightInit, make_pick_action
+from orchard.enums import Action, Activation, EncoderType, WeightInit, DespawnMode, make_pick_action
+from orchard.env.stochastic import StochasticEnv
+from orchard.seed import set_all_seeds
 
 
 def _make_env_cfg(n_task_types: int = 3) -> EnvConfig:
@@ -23,36 +27,15 @@ def _make_env_cfg(n_task_types: int = 3) -> EnvConfig:
         n_agents=2,
         n_tasks=2,
         gamma=0.99,
-        r_picker=1.0,
         n_task_types=n_task_types,
-        pick_mode=PickMode.CHOICE,
         max_tasks_per_type=2,
-        task_assignments=((0, 1), (1, 2)),
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
-    )
-
-
-def _make_forced_env_cfg(n_task_types: int = 3) -> EnvConfig:
-    cfg = _make_env_cfg(n_task_types=n_task_types)
-    return EnvConfig(
-        height=cfg.height,
-        width=cfg.width,
-        n_agents=cfg.n_agents,
-        n_tasks=cfg.n_tasks,
-        gamma=cfg.gamma,
-        r_picker=cfg.r_picker,
-        n_task_types=cfg.n_task_types,
-        r_low=cfg.r_low,
-        task_assignments=cfg.task_assignments,
-        pick_mode=PickMode.FORCED,
-        max_tasks_per_type=cfg.max_tasks_per_type,
-        stochastic=cfg.stochastic,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
 
 
 def _make_model_cfg() -> ModelConfig:
     return ModelConfig(
-        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
         mlp_dims=(16,),
         conv_specs=((4, 3),),
         activation=Activation.RELU,
@@ -85,11 +68,6 @@ class TestActionHeadMapping:
 
         assert full_action_head_dim(cfg) == make_pick_action(cfg.n_task_types - 1).value + 1
 
-    def test_forced_head_dimension_contains_only_movement_actions(self):
-        cfg = _make_forced_env_cfg(n_task_types=3)
-
-        assert full_action_head_dim(cfg) == Action.STAY.value + 1
-
     def test_action_index_round_trip_matches_action_values(self):
         actions = [
             Action.UP,
@@ -114,14 +92,7 @@ class TestMasks:
 
         assert mask.shape == (full_action_head_dim(cfg),)
         assert mask[: Action.STAY.value + 1].tolist() == [True, True, True, True, True]
-        assert mask[Action.PICK.value :].tolist() == [False, False, False]
-
-    def test_forced_phase1_mask_has_no_pick_slots(self):
-        cfg = _make_forced_env_cfg(n_task_types=3)
-        mask = build_phase1_legal_mask(_make_phase1_state(), cfg)
-
-        assert mask.shape == (Action.STAY.value + 1,)
-        assert mask.tolist() == [True, True, True, True, True]
+        assert mask[Action.STAY.value + 1:].tolist() == [False, False, False]
 
     def test_phase2_mask_allows_stay_and_present_pick_types_only(self):
         cfg = _make_env_cfg(n_task_types=3)
@@ -137,9 +108,11 @@ class TestMasks:
 
 class TestPolicyNetwork:
     def test_masked_probabilities_sum_to_one_and_zero_invalid_entries(self):
+        set_all_seeds(0)
         env_cfg = _make_env_cfg(n_task_types=3)
         model_cfg = _make_model_cfg()
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = StochasticEnv(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         policy = PolicyNetwork(model_cfg, env_cfg, lr=0.01)
 
         state = _make_phase2_state()
@@ -152,9 +125,11 @@ class TestPolicyNetwork:
         assert np.allclose(probs[~mask], 0.0)
 
     def test_sampling_never_returns_masked_action(self):
+        set_all_seeds(0)
         env_cfg = _make_env_cfg(n_task_types=3)
         model_cfg = _make_model_cfg()
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = StochasticEnv(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         policy = PolicyNetwork(model_cfg, env_cfg, lr=0.01)
 
         state = _make_phase2_state()
@@ -166,9 +141,11 @@ class TestPolicyNetwork:
             assert mask[action_to_policy_index(action)]
 
     def test_train_batch_returns_metrics_and_updates_parameters(self):
+        set_all_seeds(0)
         env_cfg = _make_env_cfg(n_task_types=3)
         model_cfg = _make_model_cfg()
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = StochasticEnv(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         policy = PolicyNetwork(model_cfg, env_cfg, lr=0.05)
 
         phase1_state = _make_phase1_state()

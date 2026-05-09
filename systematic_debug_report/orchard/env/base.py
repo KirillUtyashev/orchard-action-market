@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 from abc import ABC, abstractmethod
 
-from orchard.enums import Action, PickMode
+import numpy as np
+import torch
+
+from orchard.enums import Action
 from orchard.datatypes import EnvConfig, Grid, State, Transition, sort_tasks
 
 
@@ -13,6 +17,39 @@ class BaseEnv(ABC):
 
     def __init__(self, cfg: EnvConfig) -> None:
         self.cfg = cfg
+        N = cfg.n_agents
+        T = cfg.n_task_types
+        C = cfg.clustering
+        S = cfg.specialization
+
+        # phi[i, kappa] = 1 if |i - kappa| <= S else 0  (N x T)
+        self.phi: np.ndarray = np.array(
+            [[1.0 if abs(i - kappa) <= S else 0.0 for kappa in range(T)] for i in range(N)],
+            dtype=np.float32,
+        )
+
+        # relatedness[i, j] = 1 if |i - j| <= C else 0  (N x N), diagonal always 1
+        self.relatedness: np.ndarray = np.array(
+            [[1.0 if abs(i - j) <= C else 0.0 for j in range(N)] for i in range(N)],
+            dtype=np.float32,
+        )
+
+        # teammate_mask[i, j] = relatedness[i,j] > 0  (N x N bool)
+        self.teammate_mask: np.ndarray = self.relatedness > 0
+
+        # phi_positive_types[i] = frozenset of kappa where phi[i, kappa] > 0
+        self.phi_positive_types: tuple[frozenset[int], ...] = tuple(
+            frozenset(kappa for kappa in range(T) if self.phi[i, kappa] > 0)
+            for i in range(N)
+        )
+
+        # Torch tensors for use in encoders
+        self._phi_t: torch.Tensor = torch.from_numpy(self.phi)       # (N, T)
+        self._rel_t: torch.Tensor = torch.from_numpy(self.relatedness)  # (N, N)
+
+        # category_rewards is set by StochasticEnv after super().__init__
+        # Shape: (T, N) — category_rewards[kappa, j] = r'_j^(kappa)
+        self.category_rewards: np.ndarray = np.zeros((T, N), dtype=np.float32)
 
     def set_eval_mode(
         self,
@@ -20,17 +57,14 @@ class BaseEnv(ABC):
         seed: int | None = None,
         fixed_spawn_zones: tuple[tuple[int, int], ...] | None = None,
     ) -> None:
-        """Switch between training and eval zone-move behaviour. No-op by default."""
+        """Switch between training and eval mode. No-op by default."""
 
     @abstractmethod
     def init_state(self) -> State:
         ...
 
     def apply_action(self, state: State, action: Action) -> State:
-        """Apply movement action to current actor. Clamps to grid boundaries.
-
-        Does NOT resolve pick, spawn, despawn, or advance actor.
-        """
+        """Apply movement action to current actor. Clamps to grid boundaries."""
         if action.is_pick():
             return state
 
@@ -51,54 +85,32 @@ class BaseEnv(ABC):
     def _find_task_to_pick(
         self, state: State, pick_type: int | None,
     ) -> tuple[int, int] | None:
-        """Find task index and type for a pick attempt. Returns None if no pick."""
-        actor = state.actor
-        pos = state.agent_positions[actor]
-
-        if self.cfg.pick_mode == PickMode.FORCED:
-            if not state.is_agent_on_task(actor):
-                return None
-            g_actor = set(self.cfg.task_assignments[actor])
-            for i, (tp, tt) in enumerate(zip(state.task_positions, state.task_types)):
-                if tp == pos and tt in g_actor:
-                    return i, tt
-            return None  # only wrong-type tasks at this cell: stay
-
+        """Find task index and type for a pick attempt. Returns None if no pick (STAY)."""
         # CHOICE mode: pick_type=None means STAY (decline)
         if pick_type is None:
             return None
-        for i, (tp, tt) in enumerate(zip(state.task_positions, state.task_types)):
+        actor = state.actor
+        pos = state.agent_positions[actor]
+        for i, (tp, tt) in enumerate(zip(state.task_positions, state.task_types or [])):
             if tp == pos and tt == pick_type:
                 return i, pick_type
         return None
 
-    def _compute_pick_rewards(self, actor: int, tau: int) -> tuple[float, ...]:
-        """Per-agent rewards for picking task of type τ.
-
-        Correct (τ ∈ G_actor): picker gets r_picker, groupmates share (1 - r_picker).
-        Wrong   (τ ∉ G_actor): picker gets r_low, everyone else 0.
-        """
+    def _compute_pick_rewards(
+        self, actor: int, tau: int,
+    ) -> tuple[float, ...]:
+        """Per-agent rewards: r_j = phi[actor, tau] * R[actor, j] * r'[tau, j]."""
         n = self.cfg.n_agents
-        g_actor = set(self.cfg.task_assignments[actor])
-
-        if tau not in g_actor:
-            return tuple(self.cfg.r_low if j == actor else 0.0 for j in range(n))
-
-        group = [j for j in range(n) if tau in self.cfg.task_assignments[j]]
-        groupmate_r = (1.0 - self.cfg.r_picker) / (len(group) - 1) if len(group) > 1 else 0.0
-        group_set = set(group)
-        return tuple(
-            self.cfg.r_picker if j == actor
-            else groupmate_r if j in group_set
-            else 0.0
-            for j in range(n)
-        )
+        r_prime = self.category_rewards[tau]   # (N,) array
+        phi_val = float(self.phi[actor, tau])
+        rel_row = self.relatedness[actor]      # (N,) array
+        rewards = phi_val * rel_row * r_prime
+        return tuple(float(v) for v in rewards)
 
     def resolve_pick(
         self, state: State, pick_type: int | None = None,
     ) -> tuple[State, tuple[float, ...]]:
         """Resolve task pickup. Returns (new_state, per_agent_rewards)."""
-        assert self.cfg.task_assignments is not None, "task_assignments must be set"
         assert state.task_types is not None, "task_types must be set"
 
         zero_rewards = tuple(0.0 for _ in range(self.cfg.n_agents))
@@ -134,28 +146,20 @@ class BaseEnv(ABC):
         )
 
     def step(self, state: State, action: Action) -> Transition:
-        """Full step: move → resolve pick (FORCED only) → spawn/despawn → advance.
+        """Full step: move → spawn/despawn → advance.
 
-        In CHOICE mode, pick resolution is handled externally by the train loop.
+        Pick resolution is handled externally by the training loop (CHOICE mode).
         """
-        actor = state.actor
-        zero_rewards = tuple(0.0 for _ in range(self.cfg.n_agents))
-
         assert action.is_move(), f"step() only accepts move actions, got {action}"
 
         s_moved = self.apply_action(state, action)
-
-        if self.cfg.pick_mode == PickMode.FORCED and s_moved.is_agent_on_task(actor):
-            s_picked, rewards = self.resolve_pick(s_moved)
-        else:
-            s_picked, rewards = s_moved, zero_rewards
-
-        s_spawned = self.spawn_and_despawn(s_picked)
+        s_spawned = self.spawn_and_despawn(s_moved)
         s_next = self.advance_actor(s_spawned)
 
+        zero_rewards = tuple(0.0 for _ in range(self.cfg.n_agents))
         return Transition(
-            s_t=state, action=action, s_t_after=s_picked,
-            s_t_next=s_next, rewards=rewards, discount=self.cfg.gamma,
+            s_t=state, action=action, s_t_after=s_moved,
+            s_t_next=s_next, rewards=zero_rewards, discount=self.cfg.gamma,
         )
 
     @property

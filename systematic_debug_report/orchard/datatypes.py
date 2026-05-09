@@ -15,11 +15,8 @@ from orchard.enums import (
     EncoderType,
     Heuristic,
     LearningType,
-    PickMode,
     Schedule,
-    SpawnZoneMode,
     StoppingCondition,
-    TaskSpawnMode,
     WeightInit,
 )
 
@@ -42,14 +39,13 @@ class State:
     actor: int                              # index of agent whose turn it is
     task_types: tuple[int, ...] | None = None  # parallel to task_positions
     # task_types[k] = type τ ∈ {0, ..., T-1} of the task at task_positions[k]
-    # None when n_task_types == 1 (legacy mode)
     pick_phase: bool = False  # True = agent is on task, pick not yet resolved
 
     def is_agent_on_task(self, agent_idx: int, my_types: frozenset[int] | None = None) -> bool:
         """Check if agent is on a task cell.
 
         my_types: if provided, only counts tasks whose type is in this set.
-        None means any task type (legacy behaviour).
+        None means any task type.
         """
         pos = self.agent_positions[agent_idx]
         if pos not in self.task_positions:
@@ -74,7 +70,7 @@ class State:
         for i, tp in enumerate(self.task_positions):
             if tp == pos:
                 t = self.task_types[i] if self.task_types is not None else 0
-                result.append((i, t)) # t is type, i is index
+                result.append((i, t))
         return result
 
     @property
@@ -139,20 +135,10 @@ class StochasticConfig:
     spawn_prob: float           # per empty cell per type per turn
     despawn_mode: DespawnMode
     despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
-    task_spawn_mode: TaskSpawnMode | None = None  # None = auto-select based on pick_mode
-    spawn_on_agent_cells: bool = False  # if True, agent positions don't block task spawning (removes inter-team spawn coupling)
-    spawn_at_round_end: bool = False    # if True, spawn/despawn only fires after the last agent in a round acts (keeps dec sub-problem identical across T)
-    per_type_seeds: tuple[int, ...] | None = None  # one seed per task type; enables per-team RNG isolation for exact T=1 vs T=M equivalence testing
-    spawn_area_size: int | None = None  # square side length for per-type spawn regions; None = whole grid
-    spawn_zone_mode: SpawnZoneMode = SpawnZoneMode.NONE  # how zones move during training
-    spawn_zone_interval: int = 0   # rounds between zone moves in training (0 = no periodic move;
-                                   # edge_switch still places zones on border at construction)
-    spawn_flip_interval: int = 0   # rounds between antipodal flips during training (0 = disabled)
-    eval_spawn_zone_mode: SpawnZoneMode = SpawnZoneMode.NONE  # how zones move during eval
-    eval_spawn_zone_interval: int = 0  # rounds between zone moves in eval (same rules as training)
-    eval_spawn_flip_interval: int = 0  # rounds between antipodal flips during eval (0 = disabled)
-    reset_agent_pos_interval: int = 0       # training: rounds between agent teleports to center; only for FIXED_SPREAD_AGENTS_CENTER_START; 0 = disabled
-    eval_reset_agent_pos_interval: int = 0  # eval: same; 0 = disabled
+    sigma_a: float = 0.0        # std of agent-variance component within a task category
+    sigma_b: float = 0.0        # std of baseline reward across task categories
+    spawn_on_agent_cells: bool = False
+    spawn_at_round_end: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,14 +148,11 @@ class EnvConfig:
     n_agents: int
     n_tasks: int                    # initial tasks per type
     gamma: float
-    r_picker: float                 # reward to picker on correct pick
     n_task_types: int = 1
-    r_low: float = 0.0             # reward for picking wrong task type
-    task_assignments: tuple[tuple[int, ...], ...] | None = None
-    pick_mode: PickMode = PickMode.FORCED
+    clustering: int = 0             # C: R(i,j) = 1[|i-j| <= C]
+    specialization: int = 0         # S: phi(i,kappa) = 1[|i-kappa| <= S]
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
-    allow_cross_type_picks: bool = True
 
 
 @dataclass(frozen=True)
@@ -229,20 +212,11 @@ class TrainConfig:
     td_lambda: float = 0.0
     comm_only_teammates: bool = False
     batch_forced_actor_updates: bool = True
-    heuristic: Heuristic = Heuristic.NEAREST_TASK
+    heuristic: Heuristic = Heuristic.NEAREST
     stopping: StoppingConfig = StoppingConfig()
     warmup_steps: int = 0
-    train_only_teammates: bool = False
-    simulate_stranger_gap: int = 0
-    greedy_own_type_only: bool = False
+    train_only_teammates: bool = False  # train only agents j where R(actor,j) > 0
     discount_method: str = "team_steps"
-    # simulate_stranger_gap: for T=1 ≡ T=M verification with new dec gamma accumulation.
-    # Set to n_total_agents - n_own_team_agents so T=1 artificially accumulates
-    # the same gamma that would build up from stranger move-steps in T=M.
-    # Only meaningful when train_only_teammates=True and discount_method="world_steps".
-    #
-    # discount_method: "team_steps" = discount only by own team's move steps (pre-edf8909 behaviour);
-    #                  "world_steps" = accumulate gamma for stranger steps so sum_i V_dec ≈ V_cen.
 
 
 @dataclass(frozen=True)
@@ -259,7 +233,7 @@ class EvalConfig:
     eval_steps: int = 1000
     n_test_states: int = 50
     checkpoint_freq: int = 0
-    eval_seed: int | None = None  # if set, reseeds env RNGs at start of each eval for reproducibility
+    eval_seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -280,35 +254,3 @@ class ExperimentConfig:
     train: TrainConfig
     eval: EvalConfig
     logging: LoggingConfig
-
-
-# ---------------------------------------------------------------------------
-# Task assignment generation
-# ---------------------------------------------------------------------------
-def compute_task_assignments(
-    n_agents: int, n_task_types: int, rho: float
-) -> tuple[tuple[int, ...], ...]:
-    """Generate G_i for each agent from rho.
-
-    |G_i| = max(1, round(rho * T)). Must be integer.
-    Assignments are cyclic: agent i gets types {i, i+1, ..., i+|G_i|-1} mod T.
-    Every type must be covered by at least one agent.
-    """
-    g_size = max(1, round(rho * n_task_types))
-    assignments = []
-    for i in range(n_agents):
-        start = (i * n_task_types) // n_agents
-        agent_types = tuple((start + k) % n_task_types for k in range(g_size))
-        assignments.append(agent_types)
-
-    covered = set()
-    for g in assignments:
-        covered.update(g)
-    if covered != set(range(n_task_types)):
-        missing = set(range(n_task_types)) - covered
-        raise ValueError(
-            f"Task assignments from rho={rho} do not cover all types. "
-            f"Missing: {missing}"
-        )
-
-    return tuple(assignments)
