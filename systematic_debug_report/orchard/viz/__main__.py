@@ -78,6 +78,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--override", nargs="*", default=[],
                    help="Override config values using dot notation: key=value (e.g. env.n_agents=8 env.height=11). "
                         "Applied after loading the config, before creating the env.")
+    p.add_argument("--rand-zone-seed", type=int, default=None,
+                   help="Randomize per_type_seeds using this seed, giving different initial spawn zone positions. "
+                        "Use different values (0, 1, 2, ...) to sweep over zone configurations.")
     return p.parse_args()
 
 
@@ -330,6 +333,17 @@ def main() -> None:
         print(f"  Scenario '{args.scenario}' applied (eval_seed={eval_seed})")
         args.eval_seed = eval_seed
     cfg = dataclasses.replace(cfg, env=env_cfg)
+
+    # --- Randomize per_type_seeds (if requested) ---
+    if args.rand_zone_seed is not None and cfg.env.stochastic is not None:
+        import random as _random
+        rz = _random.Random(args.rand_zone_seed)
+        n_types = cfg.env.n_task_types
+        new_seeds = [rz.randint(0, 10**9) for _ in range(n_types)]
+        stoch = dataclasses.replace(cfg.env.stochastic, per_type_seeds=new_seeds)
+        env_cfg = dataclasses.replace(cfg.env, stochastic=stoch)
+        cfg = dataclasses.replace(cfg, env=env_cfg)
+        print(f"  Random zone seeds (rand_zone_seed={args.rand_zone_seed}): {new_seeds}")
 
     # --- Create env and encoder ---
     env = create_env(cfg.env)

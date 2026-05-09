@@ -99,6 +99,7 @@ optional arguments:
   --values                  Show per-agent V_i(s) (requires --checkpoint)
   --dpi N                   PNG render DPI (default: 120)
   --no-html                 Skip rendering and HTML (fast stats + CSV/JSON only)
+  --rand-zone-seed          Auto randomize spawn zones. If not using this flag, initial spawn zones are determined by per-type seeds.
 ```
 
 ## Output Files
