@@ -49,18 +49,19 @@ class StochasticEnv(BaseEnv):
         """Generate r'^(kappa) for each category kappa. Returns (T, N) array.
 
         Each r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
-          b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b), shifted by 1/N
+          b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b/N), shifted by 1/N
+                      so that team reward std = N * std(b) = sigma_b
           a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
         """
         rng_np = np.random.default_rng(seed)
 
-        # Baseline b: draw T samples, standardize, shift
+        # Baseline b: draw T samples, standardize to std=sigma_b/N so team reward std=sigma_b
         if sigma_b > 0:
             while True:
                 b_raw = rng_np.standard_normal(T)
                 b_std = b_raw.std()
                 if b_std > 1e-10:
-                    b = (b_raw - b_raw.mean()) / b_std * sigma_b + 1.0 / N
+                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / N) + 1.0 / N
                     break
         else:
             b = np.full(T, 1.0 / N, dtype=np.float64)
