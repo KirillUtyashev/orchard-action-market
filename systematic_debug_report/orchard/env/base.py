@@ -56,12 +56,20 @@ class BaseEnv(ABC):
         self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
 
     def _precompute_pick_rewards(self) -> None:
-        """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]."""
+        """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
+
+        norm[actor] = N / group_size[actor] so that sum_j pick_rewards[actor,tau,j] = phi[actor,tau]
+        regardless of clustering (team total always sums to 1 when a task is picked).
+        """
         # phi: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
+        # norm: (N,1,1) — N / sum_j relatedness[actor, j]
+        group_sizes = self.relatedness.sum(axis=1)  # (N,)
+        norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
         self._pick_rewards = (
             self.phi[:, :, np.newaxis]
             * self.relatedness[:, np.newaxis, :]
             * self.category_rewards[np.newaxis, :, :]
+            * norm
         ).astype(np.float32)
 
     def set_eval_mode(
