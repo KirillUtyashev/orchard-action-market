@@ -36,6 +36,7 @@ class StochasticEnv(BaseEnv):
             cfg.stochastic.sigma_a,
             cfg.stochastic.sigma_b,
         )
+        self._precompute_pick_rewards()
 
     @staticmethod
     def _generate_category_rewards(

@@ -266,11 +266,10 @@ class GeneralDecEncoder(GridEncoder):
         actor_rows = torch.tensor([s.agent_positions[actor].row for s in after_states], dtype=torch.long)
         actor_cols = torch.tensor([s.agent_positions[actor].col for s in after_states], dtype=torch.long)
 
-        # Ch T: actor's self grid varies per action
+        # Ch T: actor's self grid varies per action (vectorized scatter)
         grids[actor, :, T] = 0.0
         actor_self = torch.zeros(B, h, w, dtype=torch.float32)
-        for k in range(B):
-            actor_self[k, int(actor_rows[k]), int(actor_cols[k])] = 1.0
+        actor_self[torch.arange(B), actor_rows, actor_cols] = 1.0
         grids[actor, :, T] = actor_self
 
         # Ch T+1: fix for agents that see actor as teammate (excluding actor itself)
@@ -288,11 +287,9 @@ class GeneralDecEncoder(GridEncoder):
                     grids[i, moved_indices, T + 1, old_ar, old_ac] -= rel
                     grids[i, moved_indices, T + 1, moved_rows, moved_cols] += rel
 
-        # Ch T+2: R(i, actor) * 1[p_actor=cell] per action
+        # Ch T+2: R(i, actor) * 1[p_actor=cell] per action (broadcast over N and B)
         rel_col = self._rel_t[:, actor]   # (N,)
-        for k in range(B):
-            ar, ac = int(actor_rows[k]), int(actor_cols[k])
-            grids[:, k, T + 2, ar, ac] = rel_col
+        grids[:, :, T + 2] = rel_col.view(N, 1, 1, 1) * actor_self.unsqueeze(0)
 
         # Fix task channels for pick after-states
         changed_task_indices = [k for k, s in enumerate(after_states)

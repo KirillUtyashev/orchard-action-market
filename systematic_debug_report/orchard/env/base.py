@@ -51,6 +51,19 @@ class BaseEnv(ABC):
         # Shape: (T, N) — category_rewards[kappa, j] = r'_j^(kappa)
         self.category_rewards: np.ndarray = np.zeros((T, N), dtype=np.float32)
 
+        # Precomputed pick reward table; rebuilt by _precompute_pick_rewards() after
+        # category_rewards is populated. Shape: (N, T, N).
+        self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
+
+    def _precompute_pick_rewards(self) -> None:
+        """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]."""
+        # phi: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
+        self._pick_rewards = (
+            self.phi[:, :, np.newaxis]
+            * self.relatedness[:, np.newaxis, :]
+            * self.category_rewards[np.newaxis, :, :]
+        ).astype(np.float32)
+
     def set_eval_mode(
         self,
         eval_mode: bool,
@@ -100,12 +113,7 @@ class BaseEnv(ABC):
         self, actor: int, tau: int,
     ) -> tuple[float, ...]:
         """Per-agent rewards: r_j = phi[actor, tau] * R[actor, j] * r'[tau, j]."""
-        n = self.cfg.n_agents
-        r_prime = self.category_rewards[tau]   # (N,) array
-        phi_val = float(self.phi[actor, tau])
-        rel_row = self.relatedness[actor]      # (N,) array
-        rewards = phi_val * rel_row * r_prime
-        return tuple(float(v) for v in rewards)
+        return tuple(self._pick_rewards[actor, tau].tolist())
 
     def resolve_pick(
         self, state: State, pick_type: int | None = None,
