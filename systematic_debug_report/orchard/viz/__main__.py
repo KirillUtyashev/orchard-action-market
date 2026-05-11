@@ -78,6 +78,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rand-zone-seed", type=int, default=None,
                    help="Randomize initial spawn zone positions using this seed. "
                         "Use different values (0, 1, 2, ...) to sweep over zone configurations.")
+    p.add_argument("--show-encoding", action="store_true",
+                   help="Show grid channel heatmaps and scalars from the encoder in the HTML viewer")
     return p.parse_args()
 
 
@@ -400,6 +402,7 @@ def main() -> None:
             networks=networks,
             include_decisions=args.decisions,
             include_values=args.values,
+            include_encoding=args.show_encoding,
             spawn_area_snapshots=spawn_area_snapshots,
         )
     finally:
@@ -541,6 +544,8 @@ def main() -> None:
         category_rewards=env.category_rewards,
         clustering=cfg.env.clustering,
         specialization=cfg.env.specialization,
+        encoder_type=cfg.model.encoder if args.show_encoding else None,
+        n_agents=cfg.env.n_agents,
     )
     print(f"Wrote {html_path} ({html_path.stat().st_size / 1024 / 1024:.1f} MB) in {time.time() - t0:.1f}s")
     print(f"\nDone! Open {html_path} in a browser to view.")

@@ -219,6 +219,21 @@ def _build_legend_html(
     )
 
 
+def _enc_labels(encoder_type, T: int, N: int) -> tuple[list[str], list[str]]:
+    """Return (channel_labels, scalar_labels) for the given encoder type."""
+    from orchard.enums import EncoderType
+    if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
+        ch = [f"task-val κ{k}" for k in range(T)] + ["self pos", "teammates (R-wtd)", "actor pos (R-wtd)"]
+        sc = ["is_actor", "R(actor→i)", "pick_signal"]
+    elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
+        ch = [f"opt-val κ{k}" for k in range(T)] + [f"agent {j} pos" for j in range(N)] + ["actor pos"]
+        sc = [f"actor={j}" for j in range(N)] + ["pick_phase"]
+    else:  # EVERYTHING_CNN_GRID
+        ch = [f"task κ{k} present" for k in range(T)] + [f"agent {j} pos" for j in range(N)] + ["actor pos"]
+        sc = [f"actor={j}" for j in range(N)] + ["pick_phase"]
+    return ch, sc
+
+
 def build_html(
     frames: list[Frame],
     frame_svgs: list[str],
@@ -234,6 +249,8 @@ def build_html(
     category_rewards: np.ndarray | None = None,
     clustering: int = 0,
     specialization: int = 0,
+    encoder_type=None,
+    n_agents: int = 1,
 ) -> None:
     """Write a self-contained HTML trajectory viewer with interactive reward popup."""
     n = len(frames)
@@ -279,6 +296,44 @@ def build_html(
     task_type_colors_js = json.dumps(TASK_TYPE_HEX)
     agent_colors_js = json.dumps(AGENT_HEX)
     actor_per_frame_js = json.dumps(actor_per_frame)
+
+    # --- Encoding data (only if --show-encoding was used) ---
+    enc_data_js = "null"
+    enc_scalars_js = "null"
+    enc_channel_labels_js = "null"
+    enc_scalar_labels_js = "null"
+    is_dec_js = "false"
+    show_encoding = encoder_type is not None and frames[0].encoding_grids is not None
+    if show_encoding:
+        # IS_DEC = multiple per-agent encodings were stored (n_networks > 1),
+        # regardless of encoder type. EverythingEncoder with dec training also
+        # stores N separate grids (one per network), so the dropdown is shown.
+        is_dec = len(frames[0].encoding_grids) > 1
+        is_dec_js = "true" if is_dec else "false"
+        ch_labels, sc_labels = _enc_labels(encoder_type, n_task_types, n_agents)
+        enc_channel_labels_js = json.dumps(ch_labels)
+        enc_scalar_labels_js = json.dumps(sc_labels)
+
+        def _round_enc_frame(frame: Frame):
+            if frame.encoding_grids is None:
+                return None, None
+            grids_out = [
+                [[[round(float(v), 4) for v in row] for row in ch] for ch in net_g]
+                for net_g in frame.encoding_grids
+            ]
+            scalars_out = [
+                [round(float(v), 4) for v in net_s]
+                for net_s in frame.encoding_scalars
+            ]
+            return grids_out, scalars_out
+
+        all_g, all_s = [], []
+        for f in frames:
+            g, s = _round_enc_frame(f)
+            all_g.append(g)
+            all_s.append(s)
+        enc_data_js = json.dumps(all_g)
+        enc_scalars_js = json.dumps(all_s)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -385,6 +440,21 @@ def build_html(
     pointer-events: none;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }}
+
+  /* Encoding panel */
+  #encPanel {{
+    background: #22223a; border: 1px solid #333; border-radius: 8px;
+    padding: 10px 12px; margin-top: 8px; width: min(90vw, 820px);
+  }}
+  #encPanel .enc-controls {{
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;
+  }}
+  #encPanel label {{ font-size: 11px; color: #888; }}
+  #encPanel select {{
+    background: #2a2a4a; color: #e0e0e0; border: 1px solid #555;
+    border-radius: 4px; padding: 2px 6px; font-size: 11px; font-family: inherit;
+  }}
+  #encPanelContent {{ font-size: 11px; }}
 </style>
 </head>
 <body>
@@ -419,6 +489,8 @@ def build_html(
 </div>
 
 {legend_html}
+
+{'<div id="encPanel"><div style="font-size:12px;font-weight:bold;color:#aaa;margin-bottom:6px">Encoding</div><div class="enc-controls"><div><label>Channel: </label><select id="encChannelSel" onchange="updateEncoding(currentStep)"></select></div></div><div id="encPanelContent"><span style="color:#555;font-size:11px">Navigate to a frame to see encoding.</span></div></div>' if show_encoding else ''}
 
 <div class="sparkline-container">
   <h3>Task count over trajectory</h3>
@@ -656,6 +728,7 @@ function showStep(step) {{
   // Re-attach click handler after innerHTML replacement
   primarySvg.addEventListener('click', handleSvgClick);
   drawSparkline();
+  if (ENC_DATA) updateEncoding(currentStep);
 }}
 
 function togglePlay() {{
@@ -727,6 +800,133 @@ document.addEventListener('keydown', (e) => {{
   else if (e.key === 'ArrowRight') {{ e.preventDefault(); showStep(currentStep + 1); }}
   else if (e.key === ' ') {{ e.preventDefault(); togglePlay(); }}
 }});
+
+// ---- Encoding panel ----
+const ENC_DATA = {enc_data_js};
+const ENC_SCALARS = {enc_scalars_js};
+const ENC_CHANNEL_LABELS = {enc_channel_labels_js};
+const ENC_SCALAR_LABELS = {enc_scalar_labels_js};
+const IS_DEC = {is_dec_js};
+
+(function initEncPanel() {{
+  const chSel = document.getElementById('encChannelSel');
+  if (!chSel || !ENC_CHANNEL_LABELS) return;
+
+  const allOpt = document.createElement('option');
+  allOpt.value = 'all';
+  allOpt.textContent = 'All channels';
+  chSel.appendChild(allOpt);
+  ENC_CHANNEL_LABELS.forEach((label, i) => {{
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = `${{i}}: ${{label}}`;
+    chSel.appendChild(opt);
+  }});
+
+  // Agent dropdown (only for dec)
+  if (IS_DEC) {{
+    const ctrl = chSel.closest('.enc-controls');
+    const agDiv = document.createElement('div');
+    agDiv.innerHTML = '<label>Agent: </label>';
+    const agSel = document.createElement('select');
+    agSel.id = 'encAgentSel';
+    agSel.onchange = () => updateEncoding(currentStep);
+    for (let i = 0; i < N_AGENTS; i++) {{
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = `A${{i}}`;
+      agSel.appendChild(opt);
+    }}
+    agDiv.appendChild(agSel);
+    ctrl.insertBefore(agDiv, ctrl.firstChild);
+  }}
+}})();
+
+function lerpColor(a, b, t) {{
+  const ah = parseInt(a.slice(1), 16);
+  const bh = parseInt(b.slice(1), 16);
+  const ar = (ah >> 16) & 0xff, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
+  const br = (bh >> 16) & 0xff, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const b2 = Math.round(ab + (bb - ab) * t);
+  return '#' + [r, g, b2].map(x => x.toString(16).padStart(2, '0')).join('');
+}}
+
+function renderChannelSmall(grid2d, label) {{
+  const H = grid2d.length, W = grid2d[0].length;
+  const SZ = Math.max(8, Math.min(14, Math.floor(110 / W)));
+  const flat = grid2d.flat();
+  const maxVal = Math.max(...flat, 1e-9);
+  let cells = '';
+  for (let r = 0; r < H; r++) {{
+    for (let c = 0; c < W; c++) {{
+      const v = grid2d[r][c] / maxVal;
+      const col = lerpColor('#ffffff', '#e06010', v);
+      cells += `<rect x="${{c*SZ}}" y="${{r*SZ}}" width="${{SZ}}" height="${{SZ}}" fill="${{col}}" stroke="#999" stroke-width="0.3"/>`;
+      if (grid2d[r][c] > 0.001 && SZ >= 12) {{
+        cells += `<text x="${{c*SZ+SZ/2}}" y="${{r*SZ+SZ*0.72}}" font-size="7" text-anchor="middle" fill="#333">${{grid2d[r][c].toFixed(2)}}</text>`;
+      }}
+    }}
+  }}
+  return `<div style="display:inline-block;margin:3px;vertical-align:top;text-align:center">` +
+    `<div style="font-size:9px;color:#888;margin-bottom:2px;max-width:${{W*SZ}}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{label}}">${{label}}</div>` +
+    `<svg width="${{W*SZ}}" height="${{H*SZ}}">${{cells}}</svg></div>`;
+}}
+
+function renderChannelLarge(grid2d, label) {{
+  const H = grid2d.length, W = grid2d[0].length;
+  const SZ = 20;
+  const flat = grid2d.flat();
+  const maxVal = Math.max(...flat, 1e-9);
+  let cells = '';
+  for (let r = 0; r < H; r++) {{
+    for (let c = 0; c < W; c++) {{
+      const v = grid2d[r][c] / maxVal;
+      const col = lerpColor('#ffffff', '#e06010', v);
+      cells += `<rect x="${{c*SZ}}" y="${{r*SZ}}" width="${{SZ}}" height="${{SZ}}" fill="${{col}}" stroke="#999" stroke-width="0.5"/>`;
+      if (grid2d[r][c] !== 0) {{
+        cells += `<text x="${{c*SZ+SZ/2}}" y="${{r*SZ+SZ*0.67}}" font-size="8" text-anchor="middle" fill="#111">${{grid2d[r][c].toFixed(3)}}</text>`;
+      }}
+    }}
+  }}
+  return `<div style="text-align:center;margin:4px 0">` +
+    `<div style="font-size:11px;color:#aaa;margin-bottom:4px">${{label}}</div>` +
+    `<svg width="${{W*SZ}}" height="${{H*SZ}}">${{cells}}</svg></div>`;
+}}
+
+function updateEncoding(frameIdx) {{
+  if (!ENC_DATA || !ENC_DATA[frameIdx]) return;
+  const agentSel = document.getElementById('encAgentSel');
+  const agent = (IS_DEC && agentSel) ? parseInt(agentSel.value) : 0;
+  const chSel = document.getElementById('encChannelSel');
+  const chVal = chSel ? chSel.value : 'all';
+  const grids = ENC_DATA[frameIdx][agent];
+  const scalars = ENC_SCALARS[frameIdx][agent];
+
+  let html = '';
+  if (chVal === 'all') {{
+    html += '<div style="display:flex;flex-wrap:wrap;gap:4px;max-height:320px;overflow-y:auto;padding:4px;background:#111128;border-radius:4px">';
+    for (let ch = 0; ch < grids.length; ch++) {{
+      html += renderChannelSmall(grids[ch], ENC_CHANNEL_LABELS[ch]);
+    }}
+    html += '</div>';
+  }} else {{
+    html += renderChannelLarge(grids[parseInt(chVal)], ENC_CHANNEL_LABELS[parseInt(chVal)]);
+  }}
+
+  html += '<div style="margin-top:8px"><span style="font-size:11px;font-weight:bold;color:#aaa">Scalars</span>';
+  html += '<table style="font-size:11px;margin-top:3px;border-collapse:collapse"><tbody>';
+  for (let s = 0; s < scalars.length; s++) {{
+    const v = scalars[s];
+    const style = Math.abs(v) > 0.01 ? 'font-weight:bold;color:#e0c060' : 'color:#888';
+    html += `<tr><td style="color:#666;padding:1px 8px 1px 0">${{ENC_SCALAR_LABELS[s]}}</td>` +
+            `<td style="${{style}}">${{v.toFixed(4)}}</td></tr>`;
+  }}
+  html += '</tbody></table></div>';
+
+  document.getElementById('encPanelContent').innerHTML = html;
+}}
 
 showStep(0);
 </script>

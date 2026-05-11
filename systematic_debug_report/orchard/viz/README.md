@@ -22,6 +22,9 @@ python -m orchard.viz metadata.yaml --checkpoint final.pt --override env.n_agent
 
 # Apply a fixed-eval scenario for direct comparison with evaluate_checkpoint
 python -m orchard.viz metadata.yaml --checkpoint final.pt --scenario center_agents
+
+# Inspect raw encoder inputs: show grid channels and scalars in the HTML viewer
+python -m orchard.viz configs/my_config.yaml --checkpoint final.pt --show-encoding
 ```
 
 ## Policy Options
@@ -55,6 +58,44 @@ The HTML viewer shows the φ/R reward structure in the legend panel:
 
 Pick events are annotated correct/wrong based on `phi[actor, κ] > 0`.
 
+## Encoding Inspector (`--show-encoding`)
+
+Add `--show-encoding` to embed the raw encoder inputs for every frame in the HTML viewer.
+An **Encoding** panel appears below the frame info panel and updates as you step through the trajectory.
+
+### Controls
+
+- **Agent dropdown** (`A0 … AN-1`) — shown whenever decentralized training is used (N networks),
+  i.e. whenever each network gets its own encoding call. Switches between any agent's actual
+  input view, independent of who the current actor is.
+  For `general_dec_cnn_grid` each agent sees a structurally distinct grid (task-value channels
+  weighted by `φ(i,κ)` and `R(i,j)`). For `everything_cnn_grid` with dec training the raw binary
+  grids are identical across agents (the network learns structure from reward), but you can still
+  verify this by switching agents.
+  No dropdown when N=1 (centralized) — single shared encoding.
+- **Channel dropdown** — `All channels` shows every channel as a compact heatmap in a scrollable
+  grid. Select a specific channel to see it full-size with per-cell value annotations.
+
+### Channel labels by encoder type
+
+| Encoder | Channels | Scalars |
+|---|---|---|
+| `general_dec_cnn_grid` | `task-val κk` (×T), `self pos`, `teammates (R-wtd)`, `actor pos (R-wtd)` | `is_actor`, `R(actor→i)`, `pick_signal` |
+| `general_cen_cnn_grid` | `opt-val κk` (×T), `agent j pos` (×N), `actor pos` | `actor=j` (×N), `pick_phase` |
+| `everything_cnn_grid` | `task κk present` (×T), `agent j pos` (×N), `actor pos` | `actor=j` (×N), `pick_phase` |
+
+### Heatmap color scale
+
+All channels are normalized to `[0, 1]` per-channel per-frame (white = 0, orange = max value).
+Non-zero cells are annotated with their raw value.
+
+### Use cases
+
+- Verify that task-value channels are non-zero only for tasks where `φ(i,κ) > 0` (decentralized)
+- Confirm self-position and actor-position channels light up at the correct grid cell
+- Check that teammates channels reflect the `R(i,j)` weights correctly
+- Sanity-check that the pick_signal scalar flips to 1.0 at the right transitions
+
 ## All Options
 
 ```
@@ -81,6 +122,7 @@ optional arguments:
   --output-dir DIR          Output directory (default: ./viz_output)
   --decisions               Show Q-values for all actions (requires --checkpoint)
   --values                  Show per-agent V_i(s) (requires --checkpoint)
+  --show-encoding           Show encoder grid channels and scalars in the HTML viewer
   --dpi N                   PNG render DPI (default: 120)
   --no-html                 Skip rendering and HTML (fast stats + CSV/JSON only)
 ```

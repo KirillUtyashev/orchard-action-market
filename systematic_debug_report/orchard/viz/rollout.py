@@ -25,6 +25,7 @@ def generate_frames(
     networks: list[ValueNetwork] | None = None,
     include_decisions: bool = False,
     include_values: bool = False,
+    include_encoding: bool = False,
     spawn_area_snapshots: list | None = None,
 ) -> list[Frame]:
     """Run a rollout and produce a Frame for every transition.
@@ -114,6 +115,15 @@ def generate_frames(
                 for i, net in enumerate(networks):
                     agent_values[i] = net(encoding.encode(transition.s_t, i)).item()
 
+        # --- Optional: encoder grid/scalar snapshots ---
+        enc_grids: list | None = None
+        enc_scalars: list | None = None
+        if include_encoding:
+            with torch.no_grad():
+                grids_t, scalars_t = encoding.encode_all_agents(transition.s_t)
+            enc_grids = grids_t.numpy().tolist()
+            enc_scalars = scalars_t.numpy().tolist()
+
         frame = Frame(
             step=decision_count,
             transition_index=transition_index,
@@ -141,6 +151,8 @@ def generate_frames(
             decisions=decisions,
             agent_values=agent_values,
             agent_picks=dict(agent_pick_counts),
+            encoding_grids=enc_grids,
+            encoding_scalars=enc_scalars,
         )
         frames.append(frame)
 
