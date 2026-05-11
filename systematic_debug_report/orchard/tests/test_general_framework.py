@@ -214,6 +214,17 @@ class TestCategoryRewards:
         env = _make_env()
         assert env.category_rewards.dtype == np.float32
 
+    def test_category_reward_components_reconstruct_rewards(self):
+        env = _make_env(n_agents=5, n_task_types=6, sigma_a=0.4, sigma_b=1.2)
+        reconstructed = env.category_reward_agent_offsets + env.category_reward_baselines[:, np.newaxis]
+
+        assert env.category_reward_baseline_raw.shape == (6,)
+        assert env.category_reward_baseline_standardized.shape == (6,)
+        assert env.category_reward_baselines.shape == (6,)
+        assert env.category_reward_agent_offsets.shape == (6, 5)
+        assert np.allclose(reconstructed, env.category_rewards, atol=1e-6)
+        assert np.allclose(env.category_reward_agent_offsets.mean(axis=1), 0.0, atol=1e-6)
+
     def test_sigma_b_sets_team_sum_variance(self):
         sigma_b = 1.25
         env = _make_env(n_agents=4, n_task_types=8, sigma_a=0.7, sigma_b=sigma_b)

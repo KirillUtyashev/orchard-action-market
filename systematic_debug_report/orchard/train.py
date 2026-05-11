@@ -20,6 +20,7 @@ from orchard.logging_ import (
     build_main_csv_fieldnames,
     finalize_logging,
     setup_logging,
+    write_reward_vectors_csv,
 )
 from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
@@ -84,6 +85,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
 
     # --- Logging ---
     run_dir = setup_logging(cfg)
+    write_reward_vectors_csv(run_dir, env)
     trainer.setup_aux_loggers(run_dir, alpha_state_log_freq=cfg.logging.alpha_state_log_freq, env_trace=cfg.logging.env_trace)
     trainer.save_checkpoint(run_dir / "checkpoints" / "step_0.pt", 0)
 

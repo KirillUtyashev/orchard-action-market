@@ -116,6 +116,67 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
     return run_dir
 
 
+def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
+    """Write generated category reward vectors and their components for this run."""
+    rewards = getattr(env, "category_rewards", None)
+    if rewards is None:
+        return None
+
+    n_task_types, n_agents = rewards.shape
+    baselines = getattr(env, "category_reward_baselines", rewards.mean(axis=1))
+    baseline_raw = getattr(env, "category_reward_baseline_raw", ["" for _ in range(n_task_types)])
+    baseline_standardized = getattr(
+        env,
+        "category_reward_baseline_standardized",
+        ["" for _ in range(n_task_types)],
+    )
+    agent_offsets = getattr(env, "category_reward_agent_offsets", rewards - baselines[:, None])
+    stoch = getattr(getattr(env, "cfg", None), "stochastic", None)
+
+    fieldnames = [
+        "reward_seed",
+        "sigma_a",
+        "sigma_b",
+        "task_type",
+        "b_raw",
+        "b_standardized",
+        "b_normalized",
+        "reward_sum",
+        "reward_mean",
+        "reward_variance",
+    ]
+    fieldnames += [f"reward_agent_{i}" for i in range(n_agents)]
+    fieldnames += [f"a_offset_agent_{i}" for i in range(n_agents)]
+
+    path = run_dir / "reward_vectors.csv"
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for task_type in range(n_task_types):
+            reward_vec = rewards[task_type]
+            offset_vec = agent_offsets[task_type]
+            row: dict[str, float | int | str] = {
+                "reward_seed": getattr(env, "category_reward_seed", ""),
+                "sigma_a": getattr(stoch, "sigma_a", ""),
+                "sigma_b": getattr(stoch, "sigma_b", ""),
+                "task_type": task_type,
+                "b_raw": float(baseline_raw[task_type]) if baseline_raw[task_type] != "" else "",
+                "b_standardized": (
+                    float(baseline_standardized[task_type])
+                    if baseline_standardized[task_type] != "" else ""
+                ),
+                "b_normalized": float(baselines[task_type]),
+                "reward_sum": float(reward_vec.sum()),
+                "reward_mean": float(reward_vec.mean()),
+                "reward_variance": float(reward_vec.var()),
+            }
+            for agent_idx in range(n_agents):
+                row[f"reward_agent_{agent_idx}"] = float(reward_vec[agent_idx])
+                row[f"a_offset_agent_{agent_idx}"] = float(offset_vec[agent_idx])
+            writer.writerow(row)
+    return path
+
+
 def finalize_logging(run_dir: Path, start_time: float) -> None:
     meta_path = run_dir / "metadata.yaml"
     with open(meta_path) as f:

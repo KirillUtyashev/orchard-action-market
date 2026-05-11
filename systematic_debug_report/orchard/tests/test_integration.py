@@ -70,6 +70,19 @@ def test_end_to_end_training_loop():
     # Check for metadata
     assert os.path.exists(os.path.join(run_dir, "metadata.yaml"))
 
+    # Check reward vector audit CSV
+    reward_vectors_path = os.path.join(run_dir, "reward_vectors.csv")
+    assert os.path.exists(reward_vectors_path)
+    with open(reward_vectors_path) as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        assert len(rows) == 2
+        assert "b_raw" in rows[0]
+        assert "b_standardized" in rows[0]
+        assert "b_normalized" in rows[0]
+        assert "reward_agent_0" in rows[0]
+        assert "a_offset_agent_0" in rows[0]
+
     # Check for metrics.csv and verify fields
     metrics_path = os.path.join(run_dir, "metrics.csv")
     assert os.path.exists(metrics_path)

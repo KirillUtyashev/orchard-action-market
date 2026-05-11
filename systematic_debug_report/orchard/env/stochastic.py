@@ -28,9 +28,15 @@ class StochasticEnv(BaseEnv):
 
         # Generate fixed per-category reward vectors from sigma_a, sigma_b and seed.
         # category_rewards[kappa] = r'^(kappa), shape (T, N).
-        seed = rng.randint(0, 2**31)
-        self.category_rewards: np.ndarray = self._generate_category_rewards(
-            seed,
+        self.category_reward_seed = rng.randint(0, 2**31)
+        (
+            self.category_rewards,
+            self.category_reward_baseline_raw,
+            self.category_reward_baseline_standardized,
+            self.category_reward_baselines,
+            self.category_reward_agent_offsets,
+        ) = self._generate_category_reward_components(
+            self.category_reward_seed,
             cfg.n_task_types,
             cfg.n_agents,
             cfg.stochastic.sigma_a,
@@ -46,7 +52,23 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
     ) -> np.ndarray:
-        """Generate r'^(kappa) for each category kappa. Returns (T, N) array.
+        return StochasticEnv._generate_category_reward_components(
+            seed,
+            T,
+            N,
+            sigma_a,
+            sigma_b,
+        )[0]
+
+    @staticmethod
+    def _generate_category_reward_components(
+        seed: int,
+        T: int,
+        N: int,
+        sigma_a: float,
+        sigma_b: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Generate reward components for each category kappa.
 
         Each r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
           b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b/N), shifted by 1/N
@@ -61,13 +83,17 @@ class StochasticEnv(BaseEnv):
                 b_raw = rng_np.standard_normal(T)
                 b_std = b_raw.std()
                 if b_std > 1e-10:
-                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / N) + 1.0 / N
+                    b_standardized = (b_raw - b_raw.mean()) / b_std
+                    b = b_standardized * (sigma_b / N) + 1.0 / N
                     break
         else:
+            b_raw = np.zeros(T, dtype=np.float64)
+            b_standardized = np.zeros(T, dtype=np.float64)
             b = np.full(T, 1.0 / N, dtype=np.float64)
 
         # Agent variance a: draw N samples per category, standardize
         rewards = np.zeros((T, N), dtype=np.float32)
+        agent_offsets = np.zeros((T, N), dtype=np.float32)
         for kappa in range(T):
             b_kappa = float(b[kappa])
             if sigma_a > 0:
@@ -79,9 +105,16 @@ class StochasticEnv(BaseEnv):
                         break
             else:
                 a = np.zeros(N)
+            agent_offsets[kappa] = a.astype(np.float32)
             rewards[kappa] = (a + b_kappa).astype(np.float32)
 
-        return rewards
+        return (
+            rewards,
+            b_raw.astype(np.float32),
+            b_standardized.astype(np.float32),
+            b.astype(np.float32),
+            agent_offsets,
+        )
 
     def set_eval_mode(
         self,
