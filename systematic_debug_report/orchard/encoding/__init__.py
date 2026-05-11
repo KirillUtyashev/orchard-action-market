@@ -25,13 +25,16 @@ def init_encoder(encoder_type: EncoderType, env, n_networks: int | None = None) 
     """
     global _encoder
     cfg = env.cfg
-    phi = env.phi
-    rel = env.relatedness
-    cr = env.category_rewards
 
     if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
+        phi = env.phi
+        rel = env.relatedness
+        cr = env.category_rewards
         _encoder = GeneralDecEncoder(cfg, phi, rel, cr)
     elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
+        phi = env.phi
+        rel = env.relatedness
+        cr = env.category_rewards
         _encoder = GeneralCenEncoder(cfg, phi, rel, cr)
     elif encoder_type == EncoderType.EVERYTHING_CNN_GRID:
         n = n_networks if n_networks is not None else cfg.n_agents
