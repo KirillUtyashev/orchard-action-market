@@ -208,7 +208,9 @@ def evaluate_checkpoint(
     from orchard.eval import evaluate_policy_metrics
     from orchard.policy import heuristic_action
     env = create_env(env_cfg)
-    encoding.init_encoder(model_cfg.encoder, env)
+    from orchard.enums import LearningType
+    n_networks = 1 if cfg.train.learning_type == LearningType.CENTRALIZED else cfg.env.n_agents
+    encoding.init_encoder(model_cfg.encoder, env, n_networks=n_networks)
     trainer = create_trainer(cfg, env)
 
     ckpt_path = _find_checkpoint(run_dir, checkpoint)

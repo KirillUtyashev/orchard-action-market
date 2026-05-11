@@ -23,17 +23,19 @@ class TestComputePickRewards:
         phi[i, kappa] = 1 iff i == kappa (specialization=0 → S=0 → |i-κ|<=0)
         R[i, j] = 1 iff i == j (clustering=0 → C=0 → |i-j|<=0)
         r'[kappa, j] = 1/N for all j (sigma_a=sigma_b=0)
-        So r_j = phi[actor, tau] * R[actor, j] * (1/N)
-        With actor=0, tau=0: phi[0,0]=1, R[0,0]=1, R[0,1]=0 → rewards=(1/N, 0)
+        norm[actor] = N / group_size = 2/1 = 2
+        So r_j = phi[actor, tau] * R[actor, j] * r'[tau,j] * norm
+        With actor=0, tau=0: phi[0,0]=1, R[0,0]=1, R[0,1]=0, norm=2 → rewards=(1, 0)
         """
         set_all_seeds(0)
         cfg = _make_pick_cfg(n_agents=2, n_task_types=2, clustering=0, specialization=0)
         env = StochasticEnv(cfg)
 
         rewards = env._compute_pick_rewards(actor=0, tau=0)
-        # phi[0, 0] = 1 (|0-0|<=0); R[0, 0]=1, R[0, 1]=0; r'[0, j]=1/2
+        # phi[0,0]=1, R[0,0]=1, R[0,1]=0, r'[0,j]=1/2, norm=2/1=2
+        # r_0 = 1*1*(1/2)*2 = 1.0; r_1 = 0
         assert len(rewards) == 2
-        assert pytest.approx(rewards[0], abs=1e-6) == 0.5  # picker gets 1/N
+        assert pytest.approx(rewards[0], abs=1e-6) == 1.0  # picker gets phi=1 (norm compensates)
         assert pytest.approx(rewards[1], abs=1e-6) == 0.0  # non-teammate gets 0
 
     def test_wrong_type_zero_reward(self):

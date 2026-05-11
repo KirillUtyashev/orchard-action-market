@@ -42,6 +42,7 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
         "general_dec_cnn_grid": EncoderType.GENERAL_DEC_CNN_GRID,
         "general_cen_cnn_grid": EncoderType.GENERAL_CEN_CNN_GRID,
+        "everything_cnn_grid": EncoderType.EVERYTHING_CNN_GRID,
     },
     "learning_type": {
         "decentralized": LearningType.DECENTRALIZED,

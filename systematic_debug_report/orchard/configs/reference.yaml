@@ -43,8 +43,22 @@ env:
 
 model:
   # Encoder: how the grid state is converted to neural network input
-  #   general_dec_cnn_grid:  decentralized; agent sees own phi, R, category_rewards
-  #   general_cen_cnn_grid:  centralized (single network); sees full joint state
+  #
+  #   general_dec_cnn_grid:  decentralized; each agent's encoding is personalised
+  #                          using its own phi, R, and category_rewards values.
+  #                          Grid: T+3 channels. Scalars: 3.
+  #
+  #   general_cen_cnn_grid:  centralized (single shared network); encoding
+  #                          contains the full joint state with optimal task values.
+  #                          Grid: T+N+1 channels. Scalars: N+1.
+  #
+  #   everything_cnn_grid:   raw binary positions only — no pre-calculated phi,
+  #                          R, or reward values appear anywhere in the encoding.
+  #                          Agents must discover structure entirely from the team
+  #                          reward signal. Compatible with both centralized and
+  #                          decentralized learning (n_networks is derived
+  #                          automatically from train.learning_type).
+  #                          Grid: T+N+1 channels. Scalars: N+1.
   encoder: general_dec_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer

@@ -328,12 +328,12 @@ def main() -> None:
 
     # --- Create env and encoder ---
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, env)
-
-    # --- Load checkpoint if provided ---
     from orchard.enums import LearningType, AlgorithmName
     centralized = cfg.train.learning_type == LearningType.CENTRALIZED
     n_networks = 1 if centralized else cfg.env.n_agents
+    encoding.init_encoder(cfg.model.encoder, env, n_networks=n_networks)
+
+    # --- Load checkpoint if provided ---
     use_actor_argmax = cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC
 
     networks: list[ValueNetwork] | None = None

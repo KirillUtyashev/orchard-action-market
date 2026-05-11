@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import GeneralDecEncoder, GeneralCenEncoder
+from orchard.encoding.grid import GeneralDecEncoder, GeneralCenEncoder, EverythingEncoder
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, State
 
@@ -14,11 +14,14 @@ from orchard.datatypes import EncoderOutput, State
 _encoder: BaseEncoder | None = None
 
 
-def init_encoder(encoder_type: EncoderType, env) -> None:
+def init_encoder(encoder_type: EncoderType, env, n_networks: int | None = None) -> None:
     """Initialize the global encoder singleton.
 
     env must be a StochasticEnv (or any BaseEnv subclass) with attributes:
       .cfg, .phi, .relatedness, .category_rewards
+
+    n_networks is required for EVERYTHING_CNN_GRID (pass 1 for centralized,
+    N for decentralized). It is ignored for all other encoder types.
     """
     global _encoder
     cfg = env.cfg
@@ -30,6 +33,9 @@ def init_encoder(encoder_type: EncoderType, env) -> None:
         _encoder = GeneralDecEncoder(cfg, phi, rel, cr)
     elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
         _encoder = GeneralCenEncoder(cfg, phi, rel, cr)
+    elif encoder_type == EncoderType.EVERYTHING_CNN_GRID:
+        n = n_networks if n_networks is not None else cfg.n_agents
+        _encoder = EverythingEncoder(cfg, n)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 

@@ -17,6 +17,7 @@ class Heuristic(Enum):
 class EncoderType(Enum):
     GENERAL_DEC_CNN_GRID = auto()   # dec: T+3 channels, 3 scalars
     GENERAL_CEN_CNN_GRID = auto()   # cen: T+N+1 channels, N+1 scalars
+    EVERYTHING_CNN_GRID = auto()    # cen and dec: T+N+1 channels, N+1 scalars; raw binary only
 
 
 class Activation(Enum):

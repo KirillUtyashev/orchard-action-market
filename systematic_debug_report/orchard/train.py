@@ -67,7 +67,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     # --- Setup ---
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, env)
+    from orchard.enums import LearningType
+    n_networks = 1 if cfg.train.learning_type == LearningType.CENTRALIZED else cfg.env.n_agents
+    encoding.init_encoder(cfg.model.encoder, env, n_networks=n_networks)
     trainer = create_trainer(cfg, env)
 
     if resume_checkpoint is not None:

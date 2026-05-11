@@ -130,15 +130,17 @@ class TestRewardFormula:
         assert all(r == 0.0 for r in rewards), f"Expected all zero, got {rewards}"
 
     def test_correct_pick_formula(self):
-        """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] computed correctly."""
+        """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor] computed correctly."""
         env = _make_env(n_agents=4, n_task_types=4, specialization=0,
                         sigma_a=0.0, sigma_b=0.0)
         # sigma_a=0, sigma_b=0 → r'[tau,j] = 1/4 for all j
         # S=0: phi[0, 0] = 1, phi[0, k≠0] = 0
-        # C=1: R[0, 0]=1, R[0, 1]=1, R[0, 2]=0, R[0, 3]=0
+        # C=1: R[0, 0]=1, R[0, 1]=1, R[0, 2]=0, R[0, 3]=0 → group_size=2, norm=4/2=2
+        group_size_0 = float(env.relatedness[0].sum())
+        norm_0 = env.cfg.n_agents / group_size_0
         rewards = env._compute_pick_rewards(actor=0, tau=0)
         for j in range(4):
-            expected = 1.0 * env.relatedness[0, j] * (1.0 / 4)
+            expected = 1.0 * env.relatedness[0, j] * (1.0 / 4) * norm_0
             assert abs(rewards[j] - expected) < 1e-5, f"j={j}: got {rewards[j]}, expected {expected}"
 
     def test_resolve_pick_removes_task(self):

@@ -1,7 +1,8 @@
 """Grid-based encoders for the general φ/R framework.
 
-GeneralDecEncoder: dec, T+3 channels, 3 scalars
-GeneralCenEncoder: cen, T+N+1 channels, N+1 scalars
+GeneralDecEncoder:  dec, T+3 channels, 3 scalars
+GeneralCenEncoder:  cen, T+N+1 channels, N+1 scalars
+EverythingEncoder:  cen and dec, T+N+1 channels, N+1 scalars; raw binary positions only
 """
 
 from __future__ import annotations
@@ -429,3 +430,174 @@ class GeneralCenEncoder(GridEncoder):
         out = self.encode_batch_for_actions(state, agent_idx=0, after_states=after_states)
         assert out.grid is not None and out.scalar is not None
         return out.grid.unsqueeze(0), out.scalar.unsqueeze(0)
+
+
+class EverythingEncoder(GridEncoder):
+    """Raw-binary encoder compatible with both centralized and decentralized learning.
+
+    The encoding contains no pre-calculated φ, R, or reward values. Agents must
+    learn the underlying structure purely from the team reward signal.
+
+    Grid channels (T+N+1):
+      0..T-1      — task presence: 1 if a task of type κ exists at (r, l)
+      T..T+N-1    — per-agent position: channel T+j has 1.0 at agent j's cell
+      T+N         — actor position: 1.0 at the acting agent's cell
+
+    Scalars (N+1):
+      0..N-1  — one-hot actor identity (e_c)
+      N       — 1[pick_phase]
+
+    Works for centralized (n_networks=1) and decentralized (n_networks=N).
+    encode_all_agents returns (n_networks, C, H, W): a single encoding
+    broadcast to n_networks copies so each network receives an identical view.
+    """
+
+    def __init__(self, env_cfg, n_networks: int) -> None:
+        super().__init__(env_cfg)
+        self._T = env_cfg.n_task_types
+        self._N = env_cfg.n_agents
+        self._n_networks = n_networks
+
+    def grid_channels(self) -> int:
+        return self._T + self._N + 1
+
+    def scalar_dim(self) -> int:
+        return self._N + 1
+
+    def encode(self, state: State, agent_idx: int) -> EncoderOutput:
+        T, N = self._T, self._N
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + N + 1
+        grid = torch.zeros(C, h, w, dtype=torch.float32)
+
+        # Ch 0..T-1: binary task presence by category
+        if state.task_positions and state.task_types is not None:
+            for pos, tau in zip(state.task_positions, state.task_types):
+                grid[tau, pos.row, pos.col] = 1.0
+
+        # Ch T..T+N-1: per-agent positions
+        for j, pos in enumerate(state.agent_positions):
+            grid[T + j, pos.row, pos.col] = 1.0
+
+        # Ch T+N: actor position
+        actor_pos = state.agent_positions[state.actor]
+        grid[T + N, actor_pos.row, actor_pos.col] = 1.0
+
+        # Scalars: one-hot actor identity + pick_phase flag
+        scalar = torch.zeros(N + 1, dtype=torch.float32)
+        scalar[state.actor] = 1.0
+        if state.pick_phase:
+            scalar[N] = 1.0
+
+        return EncoderOutput(grid=grid, scalar=scalar)
+
+    def encode_batch_for_actions(
+        self, state: State, agent_idx: int, after_states: list[State],
+    ) -> EncoderOutput:
+        T, N = self._T, self._N
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + N + 1
+        B = len(after_states)
+        actor = state.actor
+
+        # Build base: task channels + all non-actor agent channels (static across actions)
+        base = torch.zeros(C, h, w, dtype=torch.float32)
+        if state.task_positions and state.task_types is not None:
+            for pos, tau in zip(state.task_positions, state.task_types):
+                base[tau, pos.row, pos.col] = 1.0
+        for j, pos in enumerate(state.agent_positions):
+            if j != actor:
+                base[T + j, pos.row, pos.col] = 1.0
+
+        # Broadcast base to (B, C, H, W)
+        grids = base.unsqueeze(0).expand(B, -1, -1, -1).clone()
+
+        # Vectorized actor position update across all B actions
+        actor_rows = torch.tensor(
+            [s.agent_positions[actor].row for s in after_states], dtype=torch.long
+        )
+        actor_cols = torch.tensor(
+            [s.agent_positions[actor].col for s in after_states], dtype=torch.long
+        )
+        b_idx = torch.arange(B, dtype=torch.long)
+        grids[b_idx, T + actor, actor_rows, actor_cols] = 1.0
+        grids[b_idx, T + N, actor_rows, actor_cols] = 1.0
+
+        # Refresh task channels for pick after-states (task list changed)
+        changed = [k for k, s in enumerate(after_states)
+                   if s.task_positions != state.task_positions]
+        for k in changed:
+            grids[k, :T] = 0.0
+            s = after_states[k]
+            if s.task_positions and s.task_types is not None:
+                for pos, tau in zip(s.task_positions, s.task_types):
+                    grids[k, tau, pos.row, pos.col] = 1.0
+
+        # Scalars (B, N+1): base one-hot actor, then per-action pick_phase
+        scalar_base = torch.zeros(N + 1, dtype=torch.float32)
+        scalar_base[actor] = 1.0
+        scalars = scalar_base.unsqueeze(0).expand(B, -1).clone()
+        for k, s in enumerate(after_states):
+            if s.pick_phase:
+                scalars[k, N] = 1.0
+
+        return EncoderOutput(grid=grids, scalar=scalars)
+
+    def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
+        """Single encoding broadcast to n_networks copies for GPU Trainer."""
+        out = self.encode(state, agent_idx=0)
+        assert out.grid is not None and out.scalar is not None
+        grid = out.grid.unsqueeze(0).expand(self._n_networks, -1, -1, -1).clone()
+        scalar = out.scalar.unsqueeze(0).expand(self._n_networks, -1).clone()
+        return grid, scalar
+
+    def encode_all_agents_for_actions(
+        self, state: State, after_states: list[State],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        T, N = self._T, self._N
+        h, w = self.env_cfg.height, self.env_cfg.width
+        C = T + N + 1
+        B = len(after_states)
+        actor = state.actor
+
+        # Build base (B, C, H, W) — same as encode_batch_for_actions but vectorized
+        base = torch.zeros(C, h, w, dtype=torch.float32)
+        if state.task_positions and state.task_types is not None:
+            for pos, tau in zip(state.task_positions, state.task_types):
+                base[tau, pos.row, pos.col] = 1.0
+        for j, pos in enumerate(state.agent_positions):
+            if j != actor:
+                base[T + j, pos.row, pos.col] = 1.0
+
+        grids = base.unsqueeze(0).expand(B, -1, -1, -1).clone()
+
+        actor_rows = torch.tensor(
+            [s.agent_positions[actor].row for s in after_states], dtype=torch.long
+        )
+        actor_cols = torch.tensor(
+            [s.agent_positions[actor].col for s in after_states], dtype=torch.long
+        )
+        b_idx = torch.arange(B, dtype=torch.long)
+        grids[b_idx, T + actor, actor_rows, actor_cols] = 1.0
+        grids[b_idx, T + N, actor_rows, actor_cols] = 1.0
+
+        changed = [k for k, s in enumerate(after_states)
+                   if s.task_positions != state.task_positions]
+        for k in changed:
+            grids[k, :T] = 0.0
+            s = after_states[k]
+            if s.task_positions and s.task_types is not None:
+                for pos, tau in zip(s.task_positions, s.task_types):
+                    grids[k, tau, pos.row, pos.col] = 1.0
+
+        scalar_base = torch.zeros(N + 1, dtype=torch.float32)
+        scalar_base[actor] = 1.0
+        scalars = scalar_base.unsqueeze(0).expand(B, -1).clone()
+        for k, s in enumerate(after_states):
+            if s.pick_phase:
+                scalars[k, N] = 1.0
+
+        # Expand (B, C, H, W) → (n_networks, B, C, H, W)
+        grid_out = grids.unsqueeze(0).expand(self._n_networks, -1, -1, -1, -1).clone()
+        scalar_out = scalars.unsqueeze(0).expand(self._n_networks, -1, -1).clone()
+        return grid_out, scalar_out
