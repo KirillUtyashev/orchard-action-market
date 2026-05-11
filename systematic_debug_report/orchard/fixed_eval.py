@@ -236,8 +236,10 @@ def evaluate_checkpoint(
     metrics = {
         "greedy_rps": greedy_m["rps"],
         "greedy_team_rps": greedy_m["team_rps"],
+        "greedy_tasks_picked_per_step": greedy_m["tasks_picked_per_step"],
         f"{heuristic_name}_rps": baseline_m["rps"],
         f"{heuristic_name}_team_rps": baseline_m["team_rps"],
+        f"{heuristic_name}_tasks_picked_per_step": baseline_m["tasks_picked_per_step"],
     }
 
     # Write cache

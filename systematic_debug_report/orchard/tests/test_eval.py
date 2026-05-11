@@ -119,6 +119,7 @@ class TestEvaluatePolicyMetrics:
 
         assert "rps" in metrics
         assert "team_rps" in metrics
+        assert "tasks_picked_per_step" in metrics
         assert "correct_pps" not in metrics
         assert "wrong_pps" not in metrics
 
@@ -139,3 +140,42 @@ class TestEvaluatePolicyMetrics:
         metrics = evaluate_policy_metrics(s, zero_policy, env, n_steps=10)
         assert metrics["rps"] == pytest.approx(0.0)
         assert metrics["team_rps"] == pytest.approx(0.0)
+        assert metrics["tasks_picked_per_step"] == pytest.approx(0.0)
+
+    def test_successful_pick_counts_task_per_step(self):
+        set_all_seeds(0)
+        cfg = _make_eval_cfg()
+        env = StochasticEnv(cfg)
+
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(4, 4)),
+            task_positions=(Grid(0, 1),),
+            actor=0, task_types=(0,)
+        )
+
+        def pick_policy(state):
+            if state.pick_phase:
+                return make_pick_action(0)
+            return Action.RIGHT
+
+        metrics = evaluate_policy_metrics(s, pick_policy, env, n_steps=1)
+        assert metrics["tasks_picked_per_step"] == pytest.approx(1.0)
+
+    def test_stay_on_task_does_not_count_task_pick(self):
+        set_all_seeds(0)
+        cfg = _make_eval_cfg()
+        env = StochasticEnv(cfg)
+
+        s = State(
+            agent_positions=(Grid(0, 0), Grid(4, 4)),
+            task_positions=(Grid(0, 1),),
+            actor=0, task_types=(0,)
+        )
+
+        def stay_policy(state):
+            if state.pick_phase:
+                return Action.STAY
+            return Action.RIGHT
+
+        metrics = evaluate_policy_metrics(s, stay_policy, env, n_steps=1)
+        assert metrics["tasks_picked_per_step"] == pytest.approx(0.0)

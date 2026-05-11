@@ -157,12 +157,15 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
             print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
-                  f"Team RPS: {metrics['greedy_team_rps']:.4f}")
+                  f"Team RPS: {metrics['greedy_team_rps']:.4f}  "
+                  f"Tasks/step: {metrics['greedy_tasks_picked_per_step']:.4f}")
             h_rps_key = f"{heuristic_name}_rps"
             h_team_key = f"{heuristic_name}_team_rps"
+            h_tasks_key = f"{heuristic_name}_tasks_picked_per_step"
             if h_rps_key in metrics:
                 print(f"  {heuristic_name} RPS: {metrics[h_rps_key]:.4f}  "
-                      f"Team RPS: {metrics[h_team_key]:.4f}")
+                      f"Team RPS: {metrics[h_team_key]:.4f}  "
+                      f"Tasks/step: {metrics[h_tasks_key]:.4f}")
 
             if stopper.check(t, metrics):
                 break

@@ -51,8 +51,10 @@ class TestFieldnames:
         assert "step" in fields
         assert "greedy_rps" in fields
         assert "greedy_team_rps" in fields
+        assert "greedy_tasks_picked_per_step" in fields
         assert "nearest_rps" in fields
         assert "nearest_team_rps" in fields
+        assert "nearest_tasks_picked_per_step" in fields
         assert "td_loss_avg" in fields
         # No correct_pps/wrong_pps in new framework
         assert "greedy_correct_pps" not in fields

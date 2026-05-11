@@ -85,9 +85,11 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
             "slurm_array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID", None),
         },
     }
+    cpu_count = multiprocessing.cpu_count()
+    get_affinity = getattr(os, "sched_getaffinity", None)
     hw: dict[str, Any] = {
-        "cpu_logical_cores": multiprocessing.cpu_count(),
-        "cpu_affinity_cores": len(os.sched_getaffinity(0)),
+        "cpu_logical_cores": cpu_count,
+        "cpu_affinity_cores": len(get_affinity(0)) if get_affinity is not None else cpu_count,
     }
     try:
         import pynvml
@@ -134,7 +136,9 @@ def build_main_csv_fieldnames(
     fields = [
         "step", "wall_time",
         "greedy_rps", "greedy_team_rps",
+        "greedy_tasks_picked_per_step",
         f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
+        f"{heuristic_name}_tasks_picked_per_step",
         "td_loss_avg",
     ]
     if actor_critic:

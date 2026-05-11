@@ -73,16 +73,20 @@ def evaluate_policy_metrics(
     env: BaseEnv,
     n_steps: int,
 ) -> dict[str, float]:
-    """Compute rps, team_rps over a rollout."""
+    """Compute reward and successful task-pick rates over a rollout."""
     total_reward = 0.0
     total_team_reward = 0.0
+    tasks_picked = 0
 
     for t in rollout_trajectory(start_state, policy_fn, env, n_steps):
         actor = t.s_t.actor
         total_reward += t.rewards[actor]
         total_team_reward += sum(t.rewards)
+        if t.action.is_pick() and len(t.s_t_after.task_positions) < len(t.s_t.task_positions):
+            tasks_picked += 1
 
     return {
         "rps": total_reward / n_steps if n_steps > 0 else 0.0,
         "team_rps": total_team_reward / n_steps if n_steps > 0 else 0.0,
+        "tasks_picked_per_step": tasks_picked / n_steps if n_steps > 0 else 0.0,
     }

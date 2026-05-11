@@ -481,8 +481,10 @@ class ValueTrainerBase(TrainerBase):
             return {
                 "greedy_rps": greedy_metrics["rps"],
                 "greedy_team_rps": greedy_metrics["team_rps"],
+                "greedy_tasks_picked_per_step": greedy_metrics["tasks_picked_per_step"],
                 f"{heuristic_name}_rps": baseline_metrics["rps"],
                 f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
+                f"{heuristic_name}_tasks_picked_per_step": baseline_metrics["tasks_picked_per_step"],
             }
         finally:
             env.set_eval_mode(False)
