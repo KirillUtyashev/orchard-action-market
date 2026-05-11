@@ -14,6 +14,8 @@ env:
 
   # Reward structure (φ/R framework):
   #
+  #   structure=id_distance (default):
+  #
   #   R[i,j] = 1[ |i - j| <= clustering ]
   #     — who shares reward with whom. clustering=0: each agent rewards only itself.
   #       clustering=N-1: all agents share each other's rewards.
@@ -22,12 +24,19 @@ env:
   #     — which task types agent i can profitably pick. specialization=0: agent i
   #       can only pick type i (mod T). specialization=T-1: any agent can pick any type.
   #
+  #   structure=disjoint_groups:
+  #     R is block-diagonal by structure_group_size agents. phi assigns each agent
+  #     group to n_tasks_per_group contiguous task types.
+  #
   #   category_rewards r'[κ,j]: stochastic T×N reward matrix, sampled once at env
-  #     construction from Normal(1, sigma_b²) + agent noise Normal(0, sigma_a²).
-  #     sigma_a=sigma_b=0 → r'[κ,j]=1 for all κ,j (homogeneous rewards).
+  #     construction. sigma_a=sigma_b=0 → r'[κ,j]=1/N for all κ,j.
   #
-  #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j]
+  #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j] * norm[actor]
+  #   where norm[actor] = N / sum_j R[actor,j].
   #
+  structure: id_distance            # "id_distance" or "disjoint_groups"
+  # structure_group_size: 2         # agents per group; required for disjoint_groups
+  # n_tasks_per_group: 2            # task types per group; defaults to structure_group_size
   clustering: 0                    # C: reward-sharing radius; 0 = no sharing
   specialization: 0                # S: task-type eligibility radius; 0 = strict assignment
 

@@ -5,7 +5,7 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType
+from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType, StructureType
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -69,6 +69,31 @@ class TestConfigParsing:
         assert cfg.env.clustering == 1
         assert cfg.env.specialization == 2
         assert cfg.env.n_task_types == 4
+        os.unlink(path)
+
+    def test_structure_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "n_agents: 2",
+            "n_agents: 4\n  n_task_types: 4\n  structure: disjoint_groups\n  structure_group_size: 2",
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.structure == StructureType.DISJOINT_GROUPS
+        assert cfg.env.structure_group_size == 2
+        assert cfg.env.n_tasks_per_group is None
+        os.unlink(path)
+
+    def test_n_tasks_per_group_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "n_agents: 2",
+            (
+                "n_agents: 4\n  n_task_types: 2\n  structure: disjoint_groups\n"
+                "  structure_group_size: 2\n  n_tasks_per_group: 1"
+            ),
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.n_tasks_per_group == 1
         os.unlink(path)
 
     def test_sigma_a_sigma_b_parse(self):

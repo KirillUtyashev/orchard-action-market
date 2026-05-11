@@ -14,6 +14,11 @@ class Heuristic(Enum):
     NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
 
 
+class StructureType(Enum):
+    ID_DISTANCE = auto()
+    DISJOINT_GROUPS = auto()
+
+
 class EncoderType(Enum):
     GENERAL_DEC_CNN_GRID = auto()   # dec: T+3 channels, 3 scalars
     GENERAL_CEN_CNN_GRID = auto()   # cen: T+N+1 channels, N+1 scalars

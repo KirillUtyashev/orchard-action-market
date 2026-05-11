@@ -17,6 +17,7 @@ from orchard.enums import (
     LearningType,
     Schedule,
     StoppingCondition,
+    StructureType,
     WeightInit,
 )
 
@@ -151,6 +152,9 @@ class EnvConfig:
     n_task_types: int = 1
     clustering: int = 0             # C: R(i,j) = 1[|i-j| <= C]
     specialization: int = 0         # S: phi(i,kappa) = 1[|i-kappa| <= S]
+    structure: StructureType = StructureType.ID_DISTANCE
+    structure_group_size: int | None = None
+    n_tasks_per_group: int | None = None
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
 

@@ -16,6 +16,7 @@ from orchard.enums import (
     LearningType,
     Schedule,
     StoppingCondition,
+    StructureType,
     WeightInit,
 )
 from orchard.datatypes import (
@@ -77,6 +78,10 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "none": DespawnMode.NONE,
         "probability": DespawnMode.PROBABILITY,
     },
+    "structure": {
+        "id_distance": StructureType.ID_DISTANCE,
+        "disjoint_groups": StructureType.DISJOINT_GROUPS,
+    },
 }
 
 
@@ -129,6 +134,13 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         n_task_types=n_task_types,
         clustering=int(d.get("clustering", 0)),
         specialization=int(d.get("specialization", 0)),
+        structure=_enum(d.get("structure", "id_distance"), "structure"),
+        structure_group_size=(
+            int(d["structure_group_size"]) if d.get("structure_group_size") is not None else None
+        ),
+        n_tasks_per_group=(
+            int(d["n_tasks_per_group"]) if d.get("n_tasks_per_group") is not None else None
+        ),
         max_tasks_per_type=int(d.get("max_tasks_per_type", 3)),
         stochastic=stochastic_cfg,
     )

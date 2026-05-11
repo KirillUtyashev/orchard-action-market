@@ -10,6 +10,7 @@ import torch
 
 from orchard.enums import Action
 from orchard.datatypes import EnvConfig, Grid, State, Transition, sort_tasks
+from orchard.structure import build_structure
 
 
 class BaseEnv(ABC):
@@ -19,20 +20,8 @@ class BaseEnv(ABC):
         self.cfg = cfg
         N = cfg.n_agents
         T = cfg.n_task_types
-        C = cfg.clustering
-        S = cfg.specialization
 
-        # phi[i, kappa] = 1 if |i - kappa| <= S else 0  (N x T)
-        self.phi: np.ndarray = np.array(
-            [[1.0 if abs(i - kappa) <= S else 0.0 for kappa in range(T)] for i in range(N)],
-            dtype=np.float32,
-        )
-
-        # relatedness[i, j] = 1 if |i - j| <= C else 0  (N x N), diagonal always 1
-        self.relatedness: np.ndarray = np.array(
-            [[1.0 if abs(i - j) <= C else 0.0 for j in range(N)] for i in range(N)],
-            dtype=np.float32,
-        )
+        self.phi, self.relatedness = build_structure(cfg)
 
         # teammate_mask[i, j] = relatedness[i,j] > 0  (N x N bool)
         self.teammate_mask: np.ndarray = self.relatedness > 0

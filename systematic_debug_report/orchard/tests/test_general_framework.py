@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from orchard.datatypes import EnvConfig, StochasticConfig
-from orchard.enums import DespawnMode, EncoderType, Heuristic
+from orchard.enums import DespawnMode, EncoderType, Heuristic, StructureType
 from orchard.env import create_env
 from orchard.eval import evaluate_policy_metrics
 from orchard.policy import nearest_action, get_phase2_actions, heuristic_action
@@ -25,6 +25,9 @@ def _make_env(
     seed: int = 0,
     height: int = 5,
     width: int = 5,
+    structure: StructureType = StructureType.ID_DISTANCE,
+    structure_group_size: int | None = None,
+    n_tasks_per_group: int | None = None,
 ):
     set_all_seeds(seed)
     cfg = EnvConfig(
@@ -32,6 +35,9 @@ def _make_env(
         n_agents=n_agents, n_tasks=2, gamma=0.99,
         n_task_types=n_task_types,
         clustering=clustering, specialization=specialization,
+        structure=structure,
+        structure_group_size=structure_group_size,
+        n_tasks_per_group=n_tasks_per_group,
         max_tasks_per_type=5,
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
@@ -82,6 +88,99 @@ class TestPhiAndRelatedness:
             expected = frozenset(k for k in range(4) if env.phi[i, k] > 0)
             assert env.phi_positive_types[i] == expected
 
+    def test_disjoint_groups_relatedness_is_block_diagonal(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=5,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=2,
+        )
+        expected = np.array(
+            [
+                [1, 1, 0, 0, 0],
+                [1, 1, 0, 0, 0],
+                [0, 0, 1, 1, 0],
+                [0, 0, 1, 1, 0],
+                [0, 0, 0, 0, 1],
+            ],
+            dtype=np.float32,
+        )
+        assert np.array_equal(env.relatedness, expected)
+
+    def test_disjoint_groups_proficiency_matches_task_groups(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=5,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=2,
+        )
+        expected = np.array(
+            [
+                [1, 1, 0, 0, 0],
+                [1, 1, 0, 0, 0],
+                [0, 0, 1, 1, 0],
+                [0, 0, 1, 1, 0],
+                [0, 0, 0, 0, 1],
+            ],
+            dtype=np.float32,
+        )
+        assert np.array_equal(env.phi, expected)
+        assert env.phi_positive_types[0] == frozenset({0, 1})
+        assert env.phi_positive_types[2] == frozenset({2, 3})
+        assert env.phi_positive_types[4] == frozenset({4})
+
+    def test_disjoint_groups_can_set_task_types_per_group(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=3,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=2,
+            n_tasks_per_group=1,
+        )
+        expected = np.array(
+            [
+                [1, 0, 0],
+                [1, 0, 0],
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 0, 1],
+            ],
+            dtype=np.float32,
+        )
+        assert np.array_equal(env.phi, expected)
+        assert env.phi_positive_types[0] == frozenset({0})
+        assert env.phi_positive_types[2] == frozenset({1})
+        assert env.phi_positive_types[4] == frozenset({2})
+
+    def test_disjoint_groups_require_positive_group_size(self):
+        cfg = EnvConfig(
+            height=5, width=5,
+            n_agents=4, n_tasks=2, gamma=0.99,
+            n_task_types=4,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=0,
+            stochastic=StochasticConfig(
+                spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
+            ),
+        )
+        with pytest.raises(ValueError, match="structure_group_size must be positive"):
+            create_env(cfg)
+
+    def test_disjoint_groups_require_positive_tasks_per_group(self):
+        cfg = EnvConfig(
+            height=5, width=5,
+            n_agents=4, n_tasks=2, gamma=0.99,
+            n_task_types=4,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=2,
+            n_tasks_per_group=0,
+            stochastic=StochasticConfig(
+                spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
+            ),
+        )
+        with pytest.raises(ValueError, match="n_tasks_per_group must be positive"):
+            create_env(cfg)
+
 
 # ---------------------------------------------------------------------------
 # Category reward generation
@@ -115,9 +214,23 @@ class TestCategoryRewards:
         env = _make_env()
         assert env.category_rewards.dtype == np.float32
 
+    def test_sigma_b_sets_team_sum_variance(self):
+        sigma_b = 1.25
+        env = _make_env(n_agents=4, n_task_types=8, sigma_a=0.7, sigma_b=sigma_b)
+        team_sums = env.category_rewards.sum(axis=1)
+        assert team_sums.mean() == pytest.approx(1.0, abs=1e-5)
+        assert team_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
+
+    def test_sigma_a_sets_within_category_agent_variance(self):
+        sigma_a = 0.4
+        env = _make_env(n_agents=5, n_task_types=6, sigma_a=sigma_a, sigma_b=0.0)
+        row_vars = env.category_rewards.var(axis=1)
+        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
+        assert np.allclose(env.category_rewards.mean(axis=1), 1.0 / 5, atol=1e-5)
+
 
 # ---------------------------------------------------------------------------
-# Reward formula: r_j = phi[actor,tau] * R[actor,j] * r'[tau,j]
+# Reward formula: r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor]
 # ---------------------------------------------------------------------------
 
 class TestRewardFormula:
@@ -130,18 +243,86 @@ class TestRewardFormula:
         assert all(r == 0.0 for r in rewards), f"Expected all zero, got {rewards}"
 
     def test_correct_pick_formula(self):
-        """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor] computed correctly."""
+        """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm computed correctly."""
         env = _make_env(n_agents=4, n_task_types=4, specialization=0,
                         sigma_a=0.0, sigma_b=0.0)
         # sigma_a=0, sigma_b=0 → r'[tau,j] = 1/4 for all j
         # S=0: phi[0, 0] = 1, phi[0, k≠0] = 0
-        # C=1: R[0, 0]=1, R[0, 1]=1, R[0, 2]=0, R[0, 3]=0 → group_size=2, norm=4/2=2
-        group_size_0 = float(env.relatedness[0].sum())
-        norm_0 = env.cfg.n_agents / group_size_0
+        # C=1: R[0, 0]=1, R[0, 1]=1, R[0, 2]=0, R[0, 3]=0
         rewards = env._compute_pick_rewards(actor=0, tau=0)
+        norm = env.cfg.n_agents / env.relatedness[0].sum()
         for j in range(4):
-            expected = 1.0 * env.relatedness[0, j] * (1.0 / 4) * norm_0
+            expected = 1.0 * env.relatedness[0, j] * (1.0 / 4) * norm
             assert abs(rewards[j] - expected) < 1e-5, f"j={j}: got {rewards[j]}, expected {expected}"
+
+    def test_full_relatedness_pick_sum_variance_matches_sigma_b(self):
+        sigma_b = 1.1
+        env = _make_env(
+            n_agents=4,
+            n_task_types=8,
+            clustering=10,
+            specialization=10,
+            sigma_a=0.6,
+            sigma_b=sigma_b,
+        )
+        reward_sums = np.array([sum(env._compute_pick_rewards(actor=0, tau=tau)) for tau in range(8)])
+        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
+        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
+
+    def test_partial_relatedness_pick_sum_variance_matches_sigma_b_without_agent_noise(self):
+        sigma_b = 0.8
+        env = _make_env(
+            n_agents=6,
+            n_task_types=8,
+            clustering=1,
+            specialization=10,
+            sigma_a=0.0,
+            sigma_b=sigma_b,
+        )
+        reward_sums = np.array([sum(env._compute_pick_rewards(actor=0, tau=tau)) for tau in range(8)])
+        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
+        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
+
+    def test_partial_relatedness_pick_sums_include_masked_agent_noise(self):
+        env = _make_env(
+            n_agents=6,
+            n_task_types=8,
+            clustering=1,
+            specialization=10,
+            sigma_a=0.5,
+            sigma_b=0.0,
+        )
+        actor = 0
+        norm = env.cfg.n_agents / env.relatedness[actor].sum()
+        expected = np.array([
+            norm * float((env.relatedness[actor] * env.category_rewards[tau]).sum())
+            for tau in range(env.cfg.n_task_types)
+        ])
+        reward_sums = np.array([
+            sum(env._compute_pick_rewards(actor=actor, tau=tau))
+            for tau in range(env.cfg.n_task_types)
+        ])
+        assert np.allclose(reward_sums, expected, atol=1e-5)
+        assert reward_sums.var() > 0.0
+
+    def test_disjoint_relatedness_pick_sum_variance_matches_sigma_b_without_agent_noise(self):
+        sigma_b = 0.9
+        env = _make_env(
+            n_agents=6,
+            n_task_types=6,
+            structure=StructureType.DISJOINT_GROUPS,
+            structure_group_size=2,
+            n_tasks_per_group=2,
+            sigma_a=0.0,
+            sigma_b=sigma_b,
+        )
+        reward_sums = []
+        for tau in range(env.cfg.n_task_types):
+            actor = (tau // env.cfg.n_tasks_per_group) * env.cfg.structure_group_size
+            reward_sums.append(sum(env._compute_pick_rewards(actor=actor, tau=tau)))
+        reward_sums = np.array(reward_sums)
+        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
+        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
 
     def test_resolve_pick_removes_task(self):
         """After resolve_pick, the picked task is removed from state."""
