@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from orchard.enums import DespawnMode
+from orchard.enums import DespawnMode, RewardGeneration
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
@@ -41,6 +41,7 @@ class StochasticEnv(BaseEnv):
             cfg.n_agents,
             cfg.stochastic.sigma_a,
             cfg.stochastic.sigma_b,
+            cfg.stochastic.reward_generation,
         )
         self._precompute_pick_rewards()
 
@@ -51,6 +52,7 @@ class StochasticEnv(BaseEnv):
         N: int,
         sigma_a: float,
         sigma_b: float,
+        reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
     ) -> np.ndarray:
         return StochasticEnv._generate_category_reward_components(
             seed,
@@ -58,6 +60,7 @@ class StochasticEnv(BaseEnv):
             N,
             sigma_a,
             sigma_b,
+            reward_generation,
         )[0]
 
     @staticmethod
@@ -67,15 +70,25 @@ class StochasticEnv(BaseEnv):
         N: int,
         sigma_a: float,
         sigma_b: float,
+        reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Generate reward components for each category kappa.
 
-        Each r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
+        BASELINE_OFFSET: r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
           b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b/N), shifted by 1/N
                       so that team reward std = N * std(b) = sigma_b
           a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
+
+        SAMPLED_MEAN: r'^(kappa) preserves the empirical mean of samples from
+        Normal(1, sigma_a^2), while forcing empirical row std to sigma_a.
+        sigma_b is intentionally unused in this mode.
         """
         rng_np = np.random.default_rng(seed)
+
+        if reward_generation == RewardGeneration.SAMPLED_MEAN:
+            return StochasticEnv._generate_sampled_mean_reward_components(
+                rng_np, T, N, sigma_a
+            )
 
         # Baseline b: draw T samples, standardize to std=sigma_b/N so team reward std=sigma_b
         if sigma_b > 0:
@@ -113,6 +126,50 @@ class StochasticEnv(BaseEnv):
             b_raw.astype(np.float32),
             b_standardized.astype(np.float32),
             b.astype(np.float32),
+            agent_offsets,
+        )
+
+    @staticmethod
+    def _generate_sampled_mean_reward_components(
+        rng_np: np.random.Generator,
+        T: int,
+        N: int,
+        sigma_a: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Generate reward rows with sampled mean near 1 and exact std sigma_a."""
+        if sigma_a > 0 and N < 2:
+            raise ValueError("sampled_mean reward generation requires n_agents >= 2 when sigma_a > 0")
+
+        rewards = np.zeros((T, N), dtype=np.float32)
+        baselines = np.zeros(T, dtype=np.float32)
+        baseline_raw = np.zeros(T, dtype=np.float32)
+        baseline_standardized = np.zeros(T, dtype=np.float32)
+        agent_offsets = np.zeros((T, N), dtype=np.float32)
+
+        for kappa in range(T):
+            if sigma_a > 0:
+                while True:
+                    z = rng_np.normal(loc=1.0, scale=sigma_a, size=N)
+                    z_std = z.std()
+                    if z_std > 1e-10:
+                        z_mean = float(z.mean())
+                        row = z_mean + sigma_a * (z - z_mean) / z_std
+                        break
+            else:
+                z_mean = 1.0
+                row = np.ones(N, dtype=np.float64)
+
+            row = row.astype(np.float32)
+            rewards[kappa] = row
+            baselines[kappa] = float(row.mean())
+            baseline_raw[kappa] = z_mean
+            agent_offsets[kappa] = row - baselines[kappa]
+
+        return (
+            rewards,
+            baseline_raw,
+            baseline_standardized,
+            baselines,
             agent_offsets,
         )
 

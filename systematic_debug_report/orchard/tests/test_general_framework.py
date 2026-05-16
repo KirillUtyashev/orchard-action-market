@@ -7,7 +7,7 @@ import pytest
 import torch
 
 from orchard.datatypes import EnvConfig, StochasticConfig
-from orchard.enums import DespawnMode, EncoderType, Heuristic, StructureType
+from orchard.enums import DespawnMode, EncoderType, Heuristic, RewardGeneration, StructureType
 from orchard.env import create_env
 from orchard.eval import evaluate_policy_metrics
 from orchard.policy import nearest_action, get_phase2_actions, heuristic_action
@@ -28,6 +28,7 @@ def _make_env(
     structure: StructureType = StructureType.ID_DISTANCE,
     structure_group_size: int | None = None,
     n_tasks_per_group: int | None = None,
+    reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
 ):
     set_all_seeds(seed)
     cfg = EnvConfig(
@@ -41,7 +42,7 @@ def _make_env(
         max_tasks_per_type=5,
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
-            sigma_a=sigma_a, sigma_b=sigma_b,
+            sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
         ),
     )
     return create_env(cfg)
@@ -238,6 +239,52 @@ class TestCategoryRewards:
         row_vars = env.category_rewards.var(axis=1)
         assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
         assert np.allclose(env.category_rewards.mean(axis=1), 1.0 / 5, atol=1e-5)
+
+    def test_sampled_mean_generation_forces_agent_variance(self):
+        sigma_a = 0.4
+        env = _make_env(
+            n_agents=5,
+            n_task_types=6,
+            sigma_a=sigma_a,
+            sigma_b=2.0,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+        )
+
+        row_means = env.category_rewards.mean(axis=1)
+        row_vars = env.category_rewards.var(axis=1)
+
+        assert np.allclose(row_means, env.category_reward_baselines, atol=1e-6)
+        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
+        assert np.allclose(
+            env.category_reward_agent_offsets,
+            env.category_rewards - row_means[:, np.newaxis],
+            atol=1e-6,
+        )
+
+    def test_sampled_mean_generation_preserves_random_row_mean_near_one(self):
+        sigma_a = 0.8
+        env = _make_env(
+            n_agents=5,
+            n_task_types=20,
+            sigma_a=sigma_a,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+        )
+
+        reward_sums = env.category_rewards.sum(axis=1)
+
+        assert np.allclose(reward_sums, env.cfg.n_agents * env.category_reward_baselines, atol=1e-5)
+        assert abs(float(env.category_rewards.mean()) - 1.0) < 0.25
+        assert float(reward_sums.var()) > 0.0
+
+    def test_sampled_mean_generation_zero_sigma_gives_ones(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=6,
+            sigma_a=0.0,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+        )
+        assert np.allclose(env.category_rewards, 1.0, atol=1e-6)
+        assert np.allclose(env.category_reward_agent_offsets, 0.0, atol=1e-6)
 
 
 # ---------------------------------------------------------------------------

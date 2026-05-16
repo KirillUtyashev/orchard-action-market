@@ -15,6 +15,7 @@ from orchard.enums import (
     EncoderType,
     Heuristic,
     LearningType,
+    RewardGeneration,
     Schedule,
     StoppingCondition,
     StructureType,
@@ -138,6 +139,7 @@ class StochasticConfig:
     despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
     sigma_a: float = 0.0        # std of agent-variance component within a task category
     sigma_b: float = 0.0        # std of baseline reward across task categories
+    reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET
     spawn_on_agent_cells: bool = False
     spawn_at_round_end: bool = False
 

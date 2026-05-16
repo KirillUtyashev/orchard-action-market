@@ -137,6 +137,7 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
         "reward_seed",
         "sigma_a",
         "sigma_b",
+        "reward_generation",
         "task_type",
         "b_raw",
         "b_standardized",
@@ -159,6 +160,11 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
                 "reward_seed": getattr(env, "category_reward_seed", ""),
                 "sigma_a": getattr(stoch, "sigma_a", ""),
                 "sigma_b": getattr(stoch, "sigma_b", ""),
+                "reward_generation": (
+                    getattr(getattr(stoch, "reward_generation", ""), "name", "")
+                    .lower()
+                    .strip()
+                ),
                 "task_type": task_type,
                 "b_raw": float(baseline_raw[task_type]) if baseline_raw[task_type] != "" else "",
                 "b_standardized": (

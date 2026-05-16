@@ -5,7 +5,7 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType, StructureType
+from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType, RewardGeneration, StructureType
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -43,6 +43,7 @@ class TestConfigParsing:
         assert cfg.train.total_steps == 100
         assert cfg.train.comm_only_teammates is False
         assert cfg.train.batch_forced_actor_updates is True
+        assert cfg.env.stochastic.reward_generation == RewardGeneration.BASELINE_OFFSET
 
         os.unlink(path)
 
@@ -104,6 +105,15 @@ class TestConfigParsing:
         cfg = load_config(path)
         assert cfg.env.stochastic.sigma_a == pytest.approx(0.3)
         assert cfg.env.stochastic.sigma_b == pytest.approx(0.5)
+        os.unlink(path)
+
+    def test_reward_generation_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "spawn_prob: 0.1", "spawn_prob: 0.1\n    reward_generation: sampled_mean"
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
         os.unlink(path)
 
     def test_actor_critic_nested_blocks_parse(self):

@@ -10,6 +10,11 @@ class DespawnMode(Enum):
     PROBABILITY = auto()
 
 
+class RewardGeneration(Enum):
+    BASELINE_OFFSET = auto()
+    SAMPLED_MEAN = auto()
+
+
 class Heuristic(Enum):
     NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
 

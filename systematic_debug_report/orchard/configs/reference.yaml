@@ -30,6 +30,9 @@ env:
   #
   #   category_rewards r'[κ,j]: stochastic T×N reward matrix, sampled once at env
   #     construction. sigma_a=sigma_b=0 → r'[κ,j]=1/N for all κ,j.
+  #     reward_generation=baseline_offset keeps the historical b[κ] + a[κ,j]
+  #     construction. reward_generation=sampled_mean samples each row around mean
+  #     1, preserves that empirical mean, and forces row variance to sigma_a^2.
   #
   #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j] * norm[actor]
   #   where norm[actor] = N / sum_j R[actor,j].
@@ -49,6 +52,7 @@ env:
     spawn_at_round_end: false      # if true, spawn/despawn only fires after the last agent acts
     sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
+    reward_generation: baseline_offset  # "baseline_offset" or "sampled_mean"
 
 model:
   # Encoder: how the grid state is converted to neural network input

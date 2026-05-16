@@ -14,6 +14,7 @@ from orchard.enums import (
     EncoderType,
     Heuristic,
     LearningType,
+    RewardGeneration,
     Schedule,
     StoppingCondition,
     StructureType,
@@ -78,6 +79,13 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "none": DespawnMode.NONE,
         "probability": DespawnMode.PROBABILITY,
     },
+    "reward_generation": {
+        "baseline_offset": RewardGeneration.BASELINE_OFFSET,
+        "sampled_mean": RewardGeneration.SAMPLED_MEAN,
+        # Backward-compatible aliases from the initial design notes.
+        "keep_b": RewardGeneration.BASELINE_OFFSET,
+        "scale_b_w_n": RewardGeneration.SAMPLED_MEAN,
+    },
     "structure": {
         "id_distance": StructureType.ID_DISTANCE,
         "disjoint_groups": StructureType.DISJOINT_GROUPS,
@@ -121,6 +129,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
+        reward_generation=_enum(sd.get("reward_generation", "baseline_offset"), "reward_generation"),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
     )
