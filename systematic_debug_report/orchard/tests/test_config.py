@@ -109,11 +109,19 @@ class TestConfigParsing:
 
     def test_reward_generation_parse(self):
         yaml_str = VALID_YAML.replace(
-            "spawn_prob: 0.1", "spawn_prob: 0.1\n    reward_generation: sampled_mean"
+            "spawn_prob: 0.1",
+            (
+                "spawn_prob: 0.1\n"
+                "    reward_generation: sampled_mean\n"
+                "    require_positive_diagonal_rewards: true\n"
+                "    reward_seed_max_attempts: 123"
+            ),
         )
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
         assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
+        assert cfg.env.stochastic.require_positive_diagonal_rewards is True
+        assert cfg.env.stochastic.reward_seed_max_attempts == 123
         os.unlink(path)
 
     def test_actor_critic_nested_blocks_parse(self):

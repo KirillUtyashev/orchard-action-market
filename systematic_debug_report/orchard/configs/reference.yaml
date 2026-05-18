@@ -53,6 +53,8 @@ env:
     sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
     reward_generation: baseline_offset  # "baseline_offset" or "sampled_mean"
+    require_positive_diagonal_rewards: false  # retry reward seeds until r'[i,i] > 0 for all diagonal entries
+    reward_seed_max_attempts: 10000  # guardrail for diagonal-positive retry loop
 
 model:
   # Encoder: how the grid state is converted to neural network input

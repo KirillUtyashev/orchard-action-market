@@ -9,6 +9,7 @@ import torch
 from orchard.datatypes import EnvConfig, StochasticConfig
 from orchard.enums import DespawnMode, EncoderType, Heuristic, RewardGeneration, StructureType
 from orchard.env import create_env
+from orchard.env.stochastic import StochasticEnv
 from orchard.eval import evaluate_policy_metrics
 from orchard.policy import nearest_action, get_phase2_actions, heuristic_action
 from orchard.seed import set_all_seeds
@@ -29,6 +30,8 @@ def _make_env(
     structure_group_size: int | None = None,
     n_tasks_per_group: int | None = None,
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+    require_positive_diagonal_rewards: bool = False,
+    reward_seed_max_attempts: int = 10000,
 ):
     set_all_seeds(seed)
     cfg = EnvConfig(
@@ -43,6 +46,8 @@ def _make_env(
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
             sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
+            require_positive_diagonal_rewards=require_positive_diagonal_rewards,
+            reward_seed_max_attempts=reward_seed_max_attempts,
         ),
     )
     return create_env(cfg)
@@ -286,6 +291,68 @@ class TestCategoryRewards:
         assert np.allclose(env.category_rewards, 1.0, atol=1e-6)
         assert np.allclose(env.category_reward_agent_offsets, 0.0, atol=1e-6)
 
+    def test_positive_diagonal_reward_requirement_retries_seed(self, monkeypatch):
+        calls = []
+
+        def fake_components(seed, T, N, sigma_a, sigma_b, reward_generation):
+            calls.append(seed)
+            rewards = np.ones((T, N), dtype=np.float32)
+            if len(calls) == 1:
+                rewards[0, 0] = -0.5
+            baselines = rewards.mean(axis=1).astype(np.float32)
+            offsets = rewards - baselines[:, np.newaxis]
+            return (
+                rewards,
+                np.zeros(T, dtype=np.float32),
+                np.zeros(T, dtype=np.float32),
+                baselines,
+                offsets.astype(np.float32),
+            )
+
+        monkeypatch.setattr(
+            StochasticEnv,
+            "_generate_category_reward_components",
+            staticmethod(fake_components),
+        )
+        env = _make_env(
+            n_agents=3,
+            n_task_types=3,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+            require_positive_diagonal_rewards=True,
+        )
+
+        assert env.category_reward_seed_attempts == 2
+        assert len(calls) == 2
+        assert np.all(np.diag(env.category_rewards) > 0.0)
+
+    def test_positive_diagonal_reward_requirement_fails_after_max_attempts(self, monkeypatch):
+        def fake_components(seed, T, N, sigma_a, sigma_b, reward_generation):
+            rewards = np.ones((T, N), dtype=np.float32)
+            rewards[0, 0] = -0.5
+            baselines = rewards.mean(axis=1).astype(np.float32)
+            offsets = rewards - baselines[:, np.newaxis]
+            return (
+                rewards,
+                np.zeros(T, dtype=np.float32),
+                np.zeros(T, dtype=np.float32),
+                baselines,
+                offsets.astype(np.float32),
+            )
+
+        monkeypatch.setattr(
+            StochasticEnv,
+            "_generate_category_reward_components",
+            staticmethod(fake_components),
+        )
+        with pytest.raises(ValueError, match="strictly positive diagonal"):
+            _make_env(
+                n_agents=3,
+                n_task_types=3,
+                reward_generation=RewardGeneration.SAMPLED_MEAN,
+                require_positive_diagonal_rewards=True,
+                reward_seed_max_attempts=2,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Reward formula: r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor]
@@ -381,6 +448,35 @@ class TestRewardFormula:
         reward_sums = np.array(reward_sums)
         assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
         assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
+
+    def test_sampled_mean_pick_rewards_skip_normalization_for_self_reward(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=5,
+            clustering=0,
+            specialization=0,
+            sigma_a=1.0,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+        )
+
+        for actor in range(env.cfg.n_agents):
+            rewards = np.array(env._compute_pick_rewards(actor=actor, tau=actor))
+            expected = np.zeros(env.cfg.n_agents, dtype=np.float32)
+            expected[actor] = env.category_rewards[actor, actor]
+            assert np.allclose(rewards, expected, atol=1e-6)
+
+    def test_sampled_mean_pick_rewards_skip_normalization_for_full_share(self):
+        env = _make_env(
+            n_agents=5,
+            n_task_types=5,
+            clustering=10,
+            specialization=10,
+            sigma_a=1.0,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+        )
+
+        rewards = np.array(env._compute_pick_rewards(actor=0, tau=0))
+        assert np.allclose(rewards, env.category_rewards[0], atol=1e-6)
 
     def test_resolve_pick_removes_task(self):
         """After resolve_pick, the picked task is removed from state."""

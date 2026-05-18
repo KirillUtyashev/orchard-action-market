@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from orchard.enums import Action
+from orchard.enums import Action, RewardGeneration
 from orchard.datatypes import EnvConfig, Grid, State, Transition, sort_tasks
 from orchard.structure import build_structure
 
@@ -47,13 +47,18 @@ class BaseEnv(ABC):
     def _precompute_pick_rewards(self) -> None:
         """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
 
-        norm[actor] = N / group_size[actor] so that sum_j pick_rewards[actor,tau,j] = phi[actor,tau]
-        regardless of clustering (team total always sums to 1 when a task is picked).
+        For the default BASELINE_OFFSET generator, norm[actor] = N / group_size[actor]
+        preserves the historical scale where rewards have mean 1/N. SAMPLED_MEAN
+        already lives on raw reward scale, so it skips this normalization.
         """
         # phi: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
-        # norm: (N,1,1) — N / sum_j relatedness[actor, j]
-        group_sizes = self.relatedness.sum(axis=1)  # (N,)
-        norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
+        stoch = self.cfg.stochastic
+        if stoch is not None and stoch.reward_generation == RewardGeneration.SAMPLED_MEAN:
+            norm = 1.0
+        else:
+            # norm: (N,1,1) — N / sum_j relatedness[actor, j]
+            group_sizes = self.relatedness.sum(axis=1)  # (N,)
+            norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
         self._pick_rewards = (
             self.phi[:, :, np.newaxis]
             * self.relatedness[:, np.newaxis, :]

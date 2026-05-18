@@ -130,6 +130,8 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
         reward_generation=_enum(sd.get("reward_generation", "baseline_offset"), "reward_generation"),
+        require_positive_diagonal_rewards=bool(sd.get("require_positive_diagonal_rewards", False)),
+        reward_seed_max_attempts=int(sd.get("reward_seed_max_attempts", 10000)),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
     )

@@ -26,24 +26,57 @@ class StochasticEnv(BaseEnv):
         self._eval_mode: bool = False
         self._saved_rng_state = None
 
-        # Generate fixed per-category reward vectors from sigma_a, sigma_b and seed.
-        # category_rewards[kappa] = r'^(kappa), shape (T, N).
-        self.category_reward_seed = rng.randint(0, 2**31)
-        (
-            self.category_rewards,
-            self.category_reward_baseline_raw,
-            self.category_reward_baseline_standardized,
-            self.category_reward_baselines,
-            self.category_reward_agent_offsets,
-        ) = self._generate_category_reward_components(
-            self.category_reward_seed,
-            cfg.n_task_types,
-            cfg.n_agents,
-            cfg.stochastic.sigma_a,
-            cfg.stochastic.sigma_b,
-            cfg.stochastic.reward_generation,
-        )
+        self.category_reward_seed_attempts = 0
+        self._initialize_category_rewards()
         self._precompute_pick_rewards()
+
+    def _initialize_category_rewards(self) -> None:
+        """Generate fixed per-category reward vectors, retrying seeds if configured."""
+        assert self.cfg.stochastic is not None
+        stoch = self.cfg.stochastic
+        max_attempts = max(1, stoch.reward_seed_max_attempts)
+
+        for attempt in range(1, max_attempts + 1):
+            seed = rng.randint(0, 2**31)
+            (
+                rewards,
+                baseline_raw,
+                baseline_standardized,
+                baselines,
+                agent_offsets,
+            ) = self._generate_category_reward_components(
+                seed,
+                self.cfg.n_task_types,
+                self.cfg.n_agents,
+                stoch.sigma_a,
+                stoch.sigma_b,
+                stoch.reward_generation,
+            )
+            if (
+                not stoch.require_positive_diagonal_rewards
+                or self._diagonal_rewards_are_positive(rewards)
+            ):
+                self.category_reward_seed = seed
+                self.category_reward_seed_attempts = attempt
+                self.category_rewards = rewards
+                self.category_reward_baseline_raw = baseline_raw
+                self.category_reward_baseline_standardized = baseline_standardized
+                self.category_reward_baselines = baselines
+                self.category_reward_agent_offsets = agent_offsets
+                return
+
+        raise ValueError(
+            "Failed to generate strictly positive diagonal reward entries "
+            f"after {max_attempts} attempts"
+        )
+
+    @staticmethod
+    def _diagonal_rewards_are_positive(rewards: np.ndarray) -> bool:
+        diagonal_len = min(rewards.shape)
+        if diagonal_len == 0:
+            return True
+        diag = rewards[np.arange(diagonal_len), np.arange(diagonal_len)]
+        return bool(np.all(diag > 0.0))
 
     @staticmethod
     def _generate_category_rewards(

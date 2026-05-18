@@ -140,6 +140,8 @@ class StochasticConfig:
     sigma_a: float = 0.0        # std of agent-variance component within a task category
     sigma_b: float = 0.0        # std of baseline reward across task categories
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET
+    require_positive_diagonal_rewards: bool = False
+    reward_seed_max_attempts: int = 10000
     spawn_on_agent_cells: bool = False
     spawn_at_round_end: bool = False
 

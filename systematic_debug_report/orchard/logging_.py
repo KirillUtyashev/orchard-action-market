@@ -138,6 +138,7 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
         "sigma_a",
         "sigma_b",
         "reward_generation",
+        "reward_seed_attempts",
         "task_type",
         "b_raw",
         "b_standardized",
@@ -165,6 +166,7 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
                     .lower()
                     .strip()
                 ),
+                "reward_seed_attempts": getattr(env, "category_reward_seed_attempts", ""),
                 "task_type": task_type,
                 "b_raw": float(baseline_raw[task_type]) if baseline_raw[task_type] != "" else "",
                 "b_standardized": (
