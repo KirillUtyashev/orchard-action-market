@@ -149,8 +149,8 @@ class EnvConfig:
     n_tasks: int                    # initial tasks per type
     gamma: float
     n_task_types: int = 1
-    clustering: int = 0             # C: R(i,j) = 1[|i-j| <= C]
-    specialization: int = 0         # S: phi(i,kappa) = 1[|i-kappa| <= S]
+    relatedness_width: int = 0       # w_R: R(i,j) = 1[|i-j| <= w_R]
+    proficiency_width: int = 0      # w_P: proficiency(i,kappa) = 1[|i-kappa| <= w_P]
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
 

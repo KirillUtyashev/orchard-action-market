@@ -19,11 +19,11 @@ class BaseEnv(ABC):
         self.cfg = cfg
         N = cfg.n_agents
         T = cfg.n_task_types
-        C = cfg.clustering
-        S = cfg.specialization
+        C = cfg.relatedness_width
+        S = cfg.proficiency_width
 
-        # phi[i, kappa] = 1 if |i - kappa| <= S else 0  (N x T)
-        self.phi: np.ndarray = np.array(
+        # proficiency[i, kappa] = 1 if |i - kappa| <= S else 0  (N x T)
+        self.proficiency: np.ndarray = np.array(
             [[1.0 if abs(i - kappa) <= S else 0.0 for kappa in range(T)] for i in range(N)],
             dtype=np.float32,
         )
@@ -37,15 +37,15 @@ class BaseEnv(ABC):
         # teammate_mask[i, j] = relatedness[i,j] > 0  (N x N bool)
         self.teammate_mask: np.ndarray = self.relatedness > 0
 
-        # phi_positive_types[i] = frozenset of kappa where phi[i, kappa] > 0
-        self.phi_positive_types: tuple[frozenset[int], ...] = tuple(
-            frozenset(kappa for kappa in range(T) if self.phi[i, kappa] > 0)
+        # proficiency_positive_types[i] = frozenset of kappa where proficiency[i, kappa] > 0
+        self.proficiency_positive_types: tuple[frozenset[int], ...] = tuple(
+            frozenset(kappa for kappa in range(T) if self.proficiency[i, kappa] > 0)
             for i in range(N)
         )
 
         # Torch tensors for use in encoders
-        self._phi_t: torch.Tensor = torch.from_numpy(self.phi)       # (N, T)
-        self._rel_t: torch.Tensor = torch.from_numpy(self.relatedness)  # (N, N)
+        self._proficiency_t: torch.Tensor = torch.from_numpy(self.proficiency)  # (N, T)
+        self._rel_t: torch.Tensor = torch.from_numpy(self.relatedness)           # (N, N)
 
         # category_rewards is set by StochasticEnv after super().__init__
         # Shape: (T, N) — category_rewards[kappa, j] = r'_j^(kappa)
@@ -56,17 +56,17 @@ class BaseEnv(ABC):
         self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
 
     def _precompute_pick_rewards(self) -> None:
-        """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
+        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
 
-        norm[actor] = N / group_size[actor] so that sum_j pick_rewards[actor,tau,j] = phi[actor,tau]
-        regardless of clustering (team total always sums to 1 when a task is picked).
+        norm[actor] = N / group_size[actor] so that sum_j pick_rewards[actor,tau,j] = proficiency[actor,tau]
+        regardless of relatedness_width (team total always sums to 1 when a task is picked).
         """
-        # phi: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
+        # proficiency: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
         # norm: (N,1,1) — N / sum_j relatedness[actor, j]
         group_sizes = self.relatedness.sum(axis=1)  # (N,)
         norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
         self._pick_rewards = (
-            self.phi[:, :, np.newaxis]
+            self.proficiency[:, :, np.newaxis]
             * self.relatedness[:, np.newaxis, :]
             * self.category_rewards[np.newaxis, :, :]
             * norm

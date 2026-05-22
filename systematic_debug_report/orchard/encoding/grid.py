@@ -29,7 +29,7 @@ class GeneralDecEncoder(GridEncoder):
       2 — 1[pick_phase]·1[c=i or R(c,i)>0]  (pick pending and I'm involved?)
     """
 
-    def __init__(self, env_cfg, phi: np.ndarray, relatedness: np.ndarray,
+    def __init__(self, env_cfg, proficiency: np.ndarray, relatedness: np.ndarray,
                  category_rewards: np.ndarray) -> None:
         super().__init__(env_cfg)
         T = env_cfg.n_task_types
@@ -37,22 +37,22 @@ class GeneralDecEncoder(GridEncoder):
         self._T = T
         self._N = N
 
-        # task_value[i, kappa] = phi[i,kappa] * sum_j R[i,j] * r'[kappa,j]
-        # = phi[i,kappa] * (R[i,:] @ category_rewards[kappa,:])
-        rel_t = torch.from_numpy(relatedness).float()   # (N, N)
-        phi_t = torch.from_numpy(phi).float()          # (N, T)
-        cr_t = torch.from_numpy(category_rewards).float()  # (T, N)
+        # task_value[i, kappa] = proficiency[i,kappa] * sum_j R[i,j] * r'[kappa,j]
+        # = proficiency[i,kappa] * (R[i,:] @ category_rewards[kappa,:])
+        rel_t = torch.from_numpy(relatedness).float()          # (N, N)
+        proficiency_t = torch.from_numpy(proficiency).float()  # (N, T)
+        cr_t = torch.from_numpy(category_rewards).float()      # (T, N)
         # R @ cr^T  → (N, T):  row i = sum_j R[i,j]*r'[kappa,j] for each kappa
-        rel_x_cr = rel_t @ cr_t.T                      # (N, T)
-        self._task_value: torch.Tensor = phi_t * rel_x_cr   # (N, T)
+        rel_x_cr = rel_t @ cr_t.T                              # (N, T)
+        self._task_value: torch.Tensor = proficiency_t * rel_x_cr   # (N, T)
 
         # Relatedness matrix for encoding
-        self._rel_t: torch.Tensor = rel_t              # (N, N)
-        self._phi_t: torch.Tensor = phi_t              # (N, T)
+        self._rel_t: torch.Tensor = rel_t                      # (N, N)
+        self._proficiency_t: torch.Tensor = proficiency_t      # (N, T)
 
         # Per-agent: which task channels are non-zero (for efficient masking)
-        # phi_mask[i, kappa] = True if phi[i, kappa] > 0
-        self._phi_mask: torch.Tensor = phi_t > 0       # (N, T) bool
+        # proficiency_mask[i, kappa] = True if proficiency[i, kappa] > 0
+        self._proficiency_mask: torch.Tensor = proficiency_t > 0   # (N, T) bool
 
     def grid_channels(self) -> int:
         return self._T + 3
@@ -331,7 +331,7 @@ class GeneralCenEncoder(GridEncoder):
       N       — 1[pick_phase]
     """
 
-    def __init__(self, env_cfg, phi: np.ndarray, relatedness: np.ndarray,
+    def __init__(self, env_cfg, proficiency: np.ndarray, relatedness: np.ndarray,
                  category_rewards: np.ndarray) -> None:
         super().__init__(env_cfg)
         T = env_cfg.n_task_types
@@ -339,11 +339,11 @@ class GeneralCenEncoder(GridEncoder):
         self._T = T
         self._N = N
 
-        # opt_val[kappa] = max_k(phi[k,kappa] * sum_j R[k,j] * r'[kappa,j])
+        # opt_val[kappa] = max_k(proficiency[k,kappa] * sum_j R[k,j] * r'[kappa,j])
         rel_t = torch.from_numpy(relatedness).float()
-        phi_t = torch.from_numpy(phi).float()
+        proficiency_t = torch.from_numpy(proficiency).float()
         cr_t = torch.from_numpy(category_rewards).float()
-        per_agent_val = phi_t * (rel_t @ cr_t.T)   # (N, T): value if agent k picks kappa
+        per_agent_val = proficiency_t * (rel_t @ cr_t.T)   # (N, T): value if agent k picks kappa
         opt_val, _ = per_agent_val.max(dim=0)       # (T,): best possible value per category
         self._opt_val: torch.Tensor = opt_val        # (T,)
 

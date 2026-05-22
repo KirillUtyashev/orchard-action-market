@@ -18,21 +18,21 @@ def init_encoder(encoder_type: EncoderType, env, n_networks: int | None = None) 
     """Initialize the global encoder singleton.
 
     env must be a StochasticEnv (or any BaseEnv subclass) with attributes:
-      .cfg, .phi, .relatedness, .category_rewards
+      .cfg, .proficiency, .relatedness, .category_rewards
 
     n_networks is required for EVERYTHING_CNN_GRID (pass 1 for centralized,
     N for decentralized). It is ignored for all other encoder types.
     """
     global _encoder
     cfg = env.cfg
-    phi = env.phi
+    proficiency = env.proficiency
     rel = env.relatedness
     cr = env.category_rewards
 
     if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
-        _encoder = GeneralDecEncoder(cfg, phi, rel, cr)
+        _encoder = GeneralDecEncoder(cfg, proficiency, rel, cr)
     elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
-        _encoder = GeneralCenEncoder(cfg, phi, rel, cr)
+        _encoder = GeneralCenEncoder(cfg, proficiency, rel, cr)
     elif encoder_type == EncoderType.EVERYTHING_CNN_GRID:
         n = n_networks if n_networks is not None else cfg.n_agents
         _encoder = EverythingEncoder(cfg, n)

@@ -127,8 +127,8 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         n_tasks=int(d.get("n_tasks", d.get("n_apples", 3))),
         gamma=float(d["gamma"]),
         n_task_types=n_task_types,
-        clustering=int(d.get("clustering", 0)),
-        specialization=int(d.get("specialization", 0)),
+        relatedness_width=int(d.get("relatedness_width", 0)),
+        proficiency_width=int(d.get("proficiency_width", 0)),
         max_tasks_per_type=int(d.get("max_tasks_per_type", 3)),
         stochastic=stochastic_cfg,
     )

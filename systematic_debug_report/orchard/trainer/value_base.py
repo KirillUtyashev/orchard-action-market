@@ -250,7 +250,7 @@ class ValueTrainerBase(TrainerBase):
 
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
-        _my_types = self._env.phi_positive_types[s_moved.actor]
+        _my_types = self._env.proficiency_positive_types[s_moved.actor]
         on_task = s_moved.is_agent_on_task(s_moved.actor, _my_types)
         self._timer.stop()
 
@@ -357,7 +357,7 @@ class ValueTrainerBase(TrainerBase):
 
         after_states: list[State] = []
         immediate_rewards: list[float] = []
-        _actor_types = self._env.phi_positive_types[state.actor]
+        _actor_types = self._env.proficiency_positive_types[state.actor]
         self._timer.start(TimerSection.ACTION_ENV)
         for a in all_actions:
             if phase2 and a.is_pick():

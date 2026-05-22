@@ -68,7 +68,7 @@ def generate_frames(
                 _, tau = next(iter(removed))
                 picked_task_type = tau
                 actor = transition.s_t.actor
-                eligible = env.phi_positive_types[actor]
+                eligible = env.proficiency_positive_types[actor]
                 picked_correct = (tau in eligible)
                 if picked_correct:
                     total_correct_picks += 1

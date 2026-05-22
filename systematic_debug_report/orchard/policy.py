@@ -22,7 +22,7 @@ def get_phase2_actions(state: State, env) -> list[Action]:
     Offers STAY + pick(κ) for each task type κ present at the actor's cell
     where phi(actor, κ) > 0 (actor has non-zero proficiency).
 
-    env must be a BaseEnv with phi_positive_types attribute.
+    env must be a BaseEnv with proficiency_positive_types attribute.
     """
     actor = state.actor
     actor_pos = state.agent_positions[actor]
@@ -30,7 +30,7 @@ def get_phase2_actions(state: State, env) -> list[Action]:
     if not tasks_here:
         return []
 
-    eligible_types = env.phi_positive_types[actor]
+    eligible_types = env.proficiency_positive_types[actor]
     types_here = sorted({tau for _, tau in tasks_here if tau in eligible_types})
     if not types_here:
         return [Action.STAY]
@@ -50,7 +50,7 @@ def nearest_action(state: State, env) -> Action:
              Ties broken by Manhattan distance, then ACTION_PRIORITY.
     Phase 2: pick argmax-value eligible type present; STAY if none eligible.
 
-    env must be a BaseEnv with phi, relatedness, category_rewards, phi_positive_types.
+    env must be a BaseEnv with proficiency, relatedness, category_rewards, proficiency_positive_types.
     """
     actor = state.actor
 
@@ -58,13 +58,13 @@ def nearest_action(state: State, env) -> Action:
         # Phase 2: pick the highest-value eligible task type at this cell
         actor_pos = state.agent_positions[actor]
         tasks_here = state.tasks_at(actor_pos)
-        eligible = env.phi_positive_types[actor]
+        eligible = env.proficiency_positive_types[actor]
         best_tau = None
         best_val = -float("inf")
         for _, tau in tasks_here:
             if tau not in eligible:
                 continue
-            val = float(env.phi[actor, tau]) * float(
+            val = float(env.proficiency[actor, tau]) * float(
                 (env.relatedness[actor] * env.category_rewards[tau]).sum()
             )
             if val > best_val:
@@ -78,13 +78,13 @@ def nearest_action(state: State, env) -> Action:
     if not state.task_positions or state.task_types is None:
         return Action.STAY
 
-    # task_val[k] = phi[actor, tau_k] * sum_j R[actor,j] * r'[tau_k, j]
+    # task_val[k] = proficiency[actor, tau_k] * sum_j R[actor,j] * r'[tau_k, j]
     task_vals = []
     for pos, tau in zip(state.task_positions, state.task_types):
-        phi_val = float(env.phi[actor, tau])
+        proficiency_val = float(env.proficiency[actor, tau])
         r_prime = env.category_rewards[tau]           # (N,)
         rel_row = env.relatedness[actor]              # (N,)
-        val = phi_val * float((rel_row * r_prime).sum())
+        val = proficiency_val * float((rel_row * r_prime).sum())
         task_vals.append((val, pos))
 
     # Find the best target: argmax value, then min distance

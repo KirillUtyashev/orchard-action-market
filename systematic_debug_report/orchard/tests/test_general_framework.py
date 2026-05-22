@@ -18,8 +18,8 @@ import orchard.encoding as encoding
 def _make_env(
     n_agents: int = 4,
     n_task_types: int = 4,
-    clustering: int = 1,
-    specialization: int = 1,
+    relatedness_width: int = 1,
+    proficiency_width: int = 1,
     sigma_a: float = 0.0,
     sigma_b: float = 0.0,
     seed: int = 0,
@@ -31,7 +31,7 @@ def _make_env(
         height=height, width=width,
         n_agents=n_agents, n_tasks=2, gamma=0.99,
         n_task_types=n_task_types,
-        clustering=clustering, specialization=specialization,
+        relatedness_width=relatedness_width, proficiency_width=proficiency_width,
         max_tasks_per_type=5,
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
@@ -48,39 +48,39 @@ def _make_env(
 class TestPhiAndRelatedness:
     def test_phi_diagonal_always_one(self):
         """phi[i, i] = 1 when S >= 0 and T = N."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         # With S=0: phi[i, kappa] = 1 iff i == kappa
         for i in range(4):
-            assert env.phi[i, i] == 1.0
+            assert env.proficiency[i, i] == 1.0
 
-    def test_phi_zero_outside_specialization(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=1)
+    def test_phi_zero_outside_proficiency_width(self):
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=1)
         # phi[0, 3] = 1[|0-3|<=1] = 0
-        assert env.phi[0, 3] == 0.0
+        assert env.proficiency[0, 3] == 0.0
         # phi[0, 1] = 1[|0-1|<=1] = 1
-        assert env.phi[0, 1] == 1.0
+        assert env.proficiency[0, 1] == 1.0
 
     def test_relatedness_self_always_one(self):
-        env = _make_env(clustering=1)
+        env = _make_env(relatedness_width=1)
         for i in range(4):
             assert env.relatedness[i, i] == 1.0
 
-    def test_relatedness_clustering_structure(self):
-        env = _make_env(n_agents=4, clustering=1)
+    def test_relatedness_relatedness_width_structure(self):
+        env = _make_env(n_agents=4, relatedness_width=1)
         # R(0, 1) = 1[|0-1|<=1] = 1
         assert env.relatedness[0, 1] == 1.0
         # R(0, 2) = 1[|0-2|<=1] = 0
         assert env.relatedness[0, 2] == 0.0
 
     def test_full_relatedness_when_C_ge_N(self):
-        env = _make_env(n_agents=4, clustering=10)
+        env = _make_env(n_agents=4, relatedness_width=10)
         assert np.all(env.relatedness == 1.0)
 
-    def test_phi_positive_types_consistent_with_phi(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=1)
+    def test_proficiency_positive_types_consistent_with_phi(self):
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=1)
         for i in range(4):
-            expected = frozenset(k for k in range(4) if env.phi[i, k] > 0)
-            assert env.phi_positive_types[i] == expected
+            expected = frozenset(k for k in range(4) if env.proficiency[i, k] > 0)
+            assert env.proficiency_positive_types[i] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ class TestCategoryRewards:
 class TestRewardFormula:
     def test_zero_phi_means_zero_reward(self):
         """If actor has no proficiency in task type, all rewards are zero."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         # With S=0: agent 0 can only do type 0. Picking type 1 → phi[0,1]=0 → all r=0
         state = env.init_state()
         rewards = env._compute_pick_rewards(actor=0, tau=1)
@@ -131,7 +131,7 @@ class TestRewardFormula:
 
     def test_correct_pick_formula(self):
         """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor] computed correctly."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0,
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0,
                         sigma_a=0.0, sigma_b=0.0)
         # sigma_a=0, sigma_b=0 → r'[tau,j] = 1/4 for all j
         # S=0: phi[0, 0] = 1, phi[0, k≠0] = 0
@@ -145,13 +145,13 @@ class TestRewardFormula:
 
     def test_resolve_pick_removes_task(self):
         """After resolve_pick, the picked task is removed from state."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=10)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=10)
         state = env.init_state()
         # Find a state where actor is on an eligible task
         from orchard.enums import Action
         for _ in range(100):
             actor = state.actor
-            eligible = env.phi_positive_types[actor]
+            eligible = env.proficiency_positive_types[actor]
             if state.is_agent_on_task(actor, eligible):
                 n_tasks_before = len(state.task_positions)
                 new_state, rewards = env.resolve_pick(state, pick_type=list(eligible)[0] if eligible else None)
@@ -167,7 +167,7 @@ class TestRewardFormula:
 
 class TestPhase2Actions:
     def test_stay_always_offered(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         state = env.init_state()
         # Even if no eligible tasks at cell, STAY is offered
         from orchard.datatypes import State, Grid
@@ -180,7 +180,7 @@ class TestPhase2Actions:
         assert Action.STAY in actions or len(actions) == 0
 
     def test_ineligible_types_not_offered(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         from orchard.datatypes import State, Grid
         from orchard.enums import Action, make_pick_action
         state = env.init_state()
@@ -197,7 +197,7 @@ class TestPhase2Actions:
 
 class TestGeneralDecEncoder:
     def setup_method(self):
-        self.env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1,
+        self.env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1,
                               sigma_a=0.0, sigma_b=0.0)
         encoding.init_encoder(EncoderType.GENERAL_DEC_CNN_GRID, self.env)
         self.state = self.env.init_state()
@@ -249,7 +249,7 @@ class TestGeneralDecEncoder:
 
 class TestGeneralCenEncoder:
     def setup_method(self):
-        self.env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1)
+        self.env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1)
         encoding.init_encoder(EncoderType.GENERAL_CEN_CNN_GRID, self.env)
         self.state = self.env.init_state()
 
@@ -280,7 +280,7 @@ class TestHeuristic:
     def test_heuristic_prefers_high_value_type(self):
         """With sigma_b>0, heuristic should tend toward higher-value task types."""
         set_all_seeds(0)
-        env = _make_env(n_agents=4, n_task_types=4, clustering=10, specialization=10,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=10, proficiency_width=10,
                         sigma_a=0.0, sigma_b=2.0, seed=0)
         # With C=N-1, S=T-1: all phi=1, all R=1
         # Task values differ by category → heuristic is value-aware
@@ -307,11 +307,11 @@ class TestHeuristic:
         """In pick phase with eligible task, heuristic picks it."""
         from orchard.datatypes import State, Grid
         from orchard.enums import Action, make_pick_action
-        env = _make_env(n_agents=4, n_task_types=4, specialization=10)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=10)
         state = env.init_state()
         actor = state.actor
         # Manually place actor on a task cell of type the actor can do
-        eligible_types = env.phi_positive_types[actor]
+        eligible_types = env.proficiency_positive_types[actor]
         if not eligible_types:
             pytest.skip("No eligible types for actor")
         tau = next(iter(eligible_types))
@@ -340,7 +340,7 @@ class TestHeuristic:
 
 class TestIntegration:
     def test_rollout_metrics_run(self):
-        env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1,
                         sigma_a=0.0, sigma_b=1.0, seed=42)
         state = env.init_state()
         metrics = evaluate_policy_metrics(
@@ -355,7 +355,7 @@ class TestIntegration:
 
     def test_team_rps_non_negative(self):
         """With sigma_b > 0 and non-trivial phi, heuristic should achieve positive team RPS."""
-        env = _make_env(n_agents=4, n_task_types=4, clustering=10, specialization=10,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=10, proficiency_width=10,
                         sigma_a=0.0, sigma_b=0.5, seed=1)
         state = env.init_state()
         metrics = evaluate_policy_metrics(
@@ -368,7 +368,7 @@ class TestIntegration:
 
     def test_zero_phi_gives_zero_reward(self):
         """Fully isolated agents (C=0, S=0) only get reward for their own type."""
-        env = _make_env(n_agents=4, n_task_types=4, clustering=0, specialization=0,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=0, proficiency_width=0,
                         sigma_a=0.0, sigma_b=0.0, seed=0)
         # With C=0: R(i,j) = 1[i==j] → only actor gets reward
         # With sigma_b=0: r'[tau,j] = 1/4 for all j

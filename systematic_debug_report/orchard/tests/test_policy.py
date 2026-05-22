@@ -13,10 +13,10 @@ from orchard.policy import (
 from orchard.seed import set_all_seeds
 
 
-def _make_cfg(n_agents=4, n_task_types=2, clustering=0, specialization=0) -> EnvConfig:
+def _make_cfg(n_agents=4, n_task_types=2, relatedness_width=0, proficiency_width=0) -> EnvConfig:
     return EnvConfig(
         height=5, width=5, n_agents=n_agents, n_tasks=2, gamma=0.99,
-        n_task_types=n_task_types, clustering=clustering, specialization=specialization,
+        n_task_types=n_task_types, relatedness_width=relatedness_width, proficiency_width=proficiency_width,
         max_tasks_per_type=2,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0)
     )
@@ -47,8 +47,8 @@ class TestActionMasking:
         assert actions == []
 
     def test_get_phase2_actions_on_task_with_phi_match(self):
-        # specialization=4 → all agents have phi > 0 for all types
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        # proficiency_width=4 → all agents have phi > 0 for all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=4)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(2, 2), Grid(0, 1)),
@@ -60,9 +60,9 @@ class TestActionMasking:
         assert make_pick_action(0) in actions
 
     def test_get_phase2_actions_no_phi_match_returns_stay_only(self):
-        # Agent 0 has specialization=0 → phi[0, κ]=1 only for κ=0
+        # Agent 0 has proficiency_width=0 → phi[0, κ]=1 only for κ=0
         # Task type=1 → phi[0,1]=0 → not eligible → only STAY
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=0)
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=0)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(2, 2), Grid(0, 1)),
@@ -74,8 +74,8 @@ class TestActionMasking:
         assert actions == [Action.STAY]
 
     def test_get_phase2_actions_stacked_tasks(self):
-        # specialization=4 → all agents see all types
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        # proficiency_width=4 → all agents see all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=4)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(2, 2), Grid(0, 1)),
@@ -92,8 +92,8 @@ class TestActionMasking:
 
 class TestNearestAction:
     def test_moves_toward_eligible_task(self):
-        # specialization=4 → agent 0 eligible for all types
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        # proficiency_width=4 → agent 0 eligible for all types
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=4)
         env = _make_env(cfg)
 
         # Actor 0 at (0,0), task at (0,1): nearest is RIGHT
@@ -106,7 +106,7 @@ class TestNearestAction:
         assert action == Action.RIGHT
 
     def test_stays_when_no_tasks(self):
-        cfg = _make_cfg(n_agents=2, n_task_types=1, specialization=0)
+        cfg = _make_cfg(n_agents=2, n_task_types=1, proficiency_width=0)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(1, 1), Grid(2, 2)),
@@ -117,8 +117,8 @@ class TestNearestAction:
         assert action == Action.STAY
 
     def test_phase2_picks_eligible_type(self):
-        # specialization=4 → phi[0,0]=phi[0,1]=1
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        # proficiency_width=4 → phi[0,0]=phi[0,1]=1
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=4)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(2, 2), Grid(0, 0)),
@@ -130,9 +130,9 @@ class TestNearestAction:
         assert action == make_pick_action(0)
 
     def test_phase2_stays_when_no_eligible_type(self):
-        # specialization=0 → phi[0, kappa]=1 only for kappa=0
+        # proficiency_width=0 → phi[0, kappa]=1 only for kappa=0
         # Task at actor's cell is type 1 → not eligible → STAY
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=0)
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=0)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(2, 2), Grid(0, 0)),
@@ -144,7 +144,7 @@ class TestNearestAction:
         assert action == Action.STAY
 
     def test_heuristic_dispatch(self):
-        cfg = _make_cfg(n_agents=2, n_task_types=2, specialization=4)
+        cfg = _make_cfg(n_agents=2, n_task_types=2, proficiency_width=4)
         env = _make_env(cfg)
         s = State(
             agent_positions=(Grid(0, 0), Grid(4, 4)),

@@ -132,7 +132,7 @@ def _greedy_actor_action(
     """Greedy action via actor network argmax (no critic involved)."""
     actor_id = state.actor
     enc = encoding.encode(state, actor_id)
-    legal_mask = build_phase2_legal_mask(state, env.cfg, env.phi_positive_types) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
+    legal_mask = build_phase2_legal_mask(state, env.cfg, env.proficiency_positive_types) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
     with torch.no_grad():
         probs = actor_networks[actor_id].get_action_probabilities(enc, legal_mask)
     return policy_index_to_action(int(np.argmax(probs)))
@@ -149,7 +149,7 @@ def _greedy_action_batched(
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
-    _actor_types = env.phi_positive_types[state.actor]
+    _actor_types = env.proficiency_positive_types[state.actor]
     for a in all_actions:
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
@@ -374,7 +374,7 @@ def main() -> None:
 
     # Print config info (always)
     print(f"  T={n_task_types}, N={cfg.env.n_agents}, grid={cfg.env.height}x{cfg.env.width}")
-    print(f"  C={cfg.env.clustering}, S={cfg.env.specialization}")
+    print(f"  w_R={cfg.env.relatedness_width}, w_P={cfg.env.proficiency_width}")
 
     # --- Generate primary rollout ---
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
@@ -539,11 +539,11 @@ def main() -> None:
         compare_frames=compare_frames,
         compare_svgs=compare_svgs,
         n_task_types=n_task_types,
-        phi=env.phi,
+        proficiency=env.proficiency,
         relatedness=env.relatedness,
         category_rewards=env.category_rewards,
-        clustering=cfg.env.clustering,
-        specialization=cfg.env.specialization,
+        relatedness_width=cfg.env.relatedness_width,
+        proficiency_width=cfg.env.proficiency_width,
         encoder_type=cfg.model.encoder if args.show_encoding else None,
         n_agents=cfg.env.n_agents,
     )

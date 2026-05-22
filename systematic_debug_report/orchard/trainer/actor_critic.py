@@ -253,7 +253,7 @@ class ActorCriticTrainerBase(TrainerBase):
         return mask
 
     def _actor_task_types(self, actor_id: int) -> frozenset[int]:
-        return self._env.phi_positive_types[actor_id]
+        return self._env.proficiency_positive_types[actor_id]
 
     # ------------------------------------------------------------------
     # Abstract critic hooks
@@ -542,7 +542,7 @@ class ActorCriticTrainerBase(TrainerBase):
 
     def _legal_mask(self, state: State) -> np.ndarray:
         if state.pick_phase:
-            return build_phase2_legal_mask(state, self._env.cfg, self._env.phi_positive_types)
+            return build_phase2_legal_mask(state, self._env.cfg, self._env.proficiency_positive_types)
         return build_phase1_legal_mask(state, self._env.cfg)
 
     def _actor_probabilities(self, state: State) -> np.ndarray:
@@ -1137,7 +1137,7 @@ class ActorCriticTrainerBase(TrainerBase):
             for idx, (label, state) in enumerate(self._phase2_eval_states):
                 probs = self._actor_probabilities(state)
                 self._phase2_logger.log(
-                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg, self._env.phi_positive_types)
+                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg, self._env.proficiency_positive_types)
                 )
         for idx, state in enumerate(self._following_states):
             logger = self._following_loggers.get(idx)

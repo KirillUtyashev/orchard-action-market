@@ -12,24 +12,24 @@ env:
   max_tasks_per_type: 10           # cap: spawning stops when this many of type τ exist
   gamma: 0.99                      # discount factor for move turns (pick turns use γ=1)
 
-  # Reward structure (φ/R framework):
+  # Reward structure (proficiency/relatedness framework):
   #
-  #   R[i,j] = 1[ |i - j| <= clustering ]
-  #     — who shares reward with whom. clustering=0: each agent rewards only itself.
-  #       clustering=N-1: all agents share each other's rewards.
+  #   R[i,j] = 1[ |i - j| <= relatedness_width ]
+  #     — who shares reward with whom. relatedness_width=0: each agent rewards only itself.
+  #       relatedness_width=N-1: all agents share each other's rewards.
   #
-  #   phi[i,κ] = 1[ |i - κ| <= specialization ]
-  #     — which task types agent i can profitably pick. specialization=0: agent i
-  #       can only pick type i (mod T). specialization=T-1: any agent can pick any type.
+  #   proficiency[i,κ] = 1[ |i - κ| <= proficiency_width ]
+  #     — which task types agent i can profitably pick. proficiency_width=0: agent i
+  #       can only pick type i (mod T). proficiency_width=T-1: any agent can pick any type.
   #
   #   category_rewards r'[κ,j]: stochastic T×N reward matrix, sampled once at env
   #     construction from Normal(1, sigma_b²) + agent noise Normal(0, sigma_a²).
   #     sigma_a=sigma_b=0 → r'[κ,j]=1 for all κ,j (homogeneous rewards).
   #
-  #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j]
+  #   Pick reward formula: r_j = proficiency[actor,κ] * R[actor,j] * r'[κ,j]
   #
-  clustering: 0                    # C: reward-sharing radius; 0 = no sharing
-  specialization: 0                # S: task-type eligibility radius; 0 = strict assignment
+  relatedness_width: 0             # w_R: reward-sharing radius; 0 = no sharing
+  proficiency_width: 0             # w_P: task-type eligibility radius; 0 = strict assignment
 
   # Stochastic spawning/despawning (required):
   stochastic:

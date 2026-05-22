@@ -162,11 +162,11 @@ def _build_frame_info_html(frame: Frame, n_task_types: int = 1) -> str:
 def _build_legend_html(
     n_task_types: int,
     n_agents: int,
-    phi: np.ndarray,
-    clustering: int,
-    specialization: int,
+    proficiency: np.ndarray,
+    relatedness_width: int,
+    proficiency_width: int,
 ) -> str:
-    """Legend showing task types and φ/R structure."""
+    """Legend showing task types and proficiency/relatedness structure."""
     pills: list[str] = []
     max_show = 16  # show at most 16 type pills before truncating
 
@@ -176,8 +176,8 @@ def _build_legend_html(
             f'<span style="display:inline-block;width:12px;height:12px;'
             f'background:{hex_c};border-radius:2px;flex-shrink:0;vertical-align:middle"></span>'
         )
-        # Show which agents specialize in this type (phi > 0)
-        specialists = [i for i in range(n_agents) if phi[i, tau] > 0]
+        # Show which agents are proficient in this type (proficiency > 0)
+        specialists = [i for i in range(n_agents) if proficiency[i, tau] > 0]
         if len(specialists) > 4:
             ag_str = f"A{specialists[0]}–A{specialists[-1]}"
         elif specialists:
@@ -208,7 +208,7 @@ def _build_legend_html(
         )
 
     items = "".join(pills)
-    params_str = f"C={clustering} (relatedness)&nbsp;&nbsp;&nbsp;S={specialization} (specialization)"
+    params_str = f"w_R={relatedness_width}&nbsp;&nbsp;&nbsp;w_P={proficiency_width}"
     return (
         f'<div style="background:#22223a;border:1px solid #333;border-radius:8px;'
         f'padding:8px 12px;margin-top:12px;width:min(90vw,800px);overflow-x:hidden">'
@@ -244,11 +244,11 @@ def build_html(
     n_task_types: int = 1,
     task_assignments: tuple | None = None,   # ignored, kept for compat
     pick_mode=None,                          # ignored, kept for compat
-    phi: np.ndarray | None = None,
+    proficiency: np.ndarray | None = None,
     relatedness: np.ndarray | None = None,
     category_rewards: np.ndarray | None = None,
-    clustering: int = 0,
-    specialization: int = 0,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
     encoder_type=None,
     n_agents: int = 1,
 ) -> None:
@@ -277,20 +277,20 @@ def build_html(
     n_compare = len(compare_frames) if is_compare and compare_frames else 0
     max_slider = n - 1
 
-    # Embed phi/rel/cr as JS arrays (round to 4 decimal places to keep file size down)
+    # Embed proficiency/rel/cr as JS arrays (round to 4 decimal places to keep file size down)
     def _mat_to_js(m: np.ndarray | None, default_val: float = 0.0) -> str:
         if m is None:
             return "null"
         return json.dumps([[round(float(v), 4) for v in row] for row in m])
 
-    phi_js = _mat_to_js(phi)
+    proficiency_js = _mat_to_js(proficiency)
     rel_js = _mat_to_js(relatedness)
     cr_js = _mat_to_js(category_rewards)  # shape (T, N)
 
     legend_html = _build_legend_html(
         n_task_types, n_agents,
-        phi if phi is not None else np.zeros((n_agents, n_task_types)),
-        clustering, specialization,
+        proficiency if proficiency is not None else np.zeros((n_agents, n_task_types)),
+        relatedness_width, proficiency_width,
     )
 
     task_type_colors_js = json.dumps(TASK_TYPE_HEX)
@@ -550,8 +550,8 @@ const actorPerFrame = {actor_per_frame_js};
 const TASK_TYPE_COLORS = {task_type_colors_js};
 const AGENT_COLORS = {agent_colors_js};
 
-// phi[i][kappa], rel[i][j], cr[kappa][j]
-const PHI = {phi_js};   // (N_AGENTS x N_TASK_TYPES) or null
+// proficiency[i][kappa], rel[i][j], cr[kappa][j]
+const PHI = {proficiency_js};   // (N_AGENTS x N_TASK_TYPES) or null
 const REL = {rel_js};   // (N_AGENTS x N_AGENTS) or null
 const CR  = {cr_js};    // (N_TASK_TYPES x N_AGENTS) or null
 

@@ -60,14 +60,14 @@ class TestConfigParsing:
             load_config(path)
         os.unlink(path)
 
-    def test_clustering_specialization_parse(self):
+    def test_relatedness_width_proficiency_width_parse(self):
         yaml_str = VALID_YAML.replace(
-            "n_agents: 2", "n_agents: 4\n  n_task_types: 4\n  clustering: 1\n  specialization: 2"
+            "n_agents: 2", "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 1\n  proficiency_width: 2"
         )
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
-        assert cfg.env.clustering == 1
-        assert cfg.env.specialization == 2
+        assert cfg.env.relatedness_width == 1
+        assert cfg.env.proficiency_width == 2
         assert cfg.env.n_task_types == 4
         os.unlink(path)
 
