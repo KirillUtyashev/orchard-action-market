@@ -685,7 +685,7 @@ class TestActorCriticTrainingLoop:
         )
 
     def test_gpu_comm_only_teammates_masks_non_teammates_without_following_rates(self):
-        # n_agents=4, relatedness_width=1 → agent 0's teammates are {0,1}; non-teammates are {2,3}
+        # n_agents=4, relatedness_width=1 → circular topology → agent 0's teammates are {0,1,3}; non-teammate is {2}
         _, _, gpu_trainer = _make_dual_actor_critic_trainers(
             n_agents=4,
             n_task_types=2,
@@ -716,7 +716,8 @@ class TestActorCriticTrainingLoop:
 
         expected = (
             rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
-            rewards_t[:, 1] + 0.5 * after_values_t[:, 1]
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1] +
+            rewards_t[:, 3] + 0.5 * after_values_t[:, 3]
         )
         torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
 
@@ -786,15 +787,18 @@ class TestActorCriticTrainingLoop:
             discount=1.0,
         )
 
-        teammate_weight = 1.0 - np.exp(-0.7)
+        # circular topology: agent 0's teammates are {0,1,3}; agent 2 excluded
+        weight_1 = 1.0 - np.exp(-0.7)
+        weight_3 = 1.0 - np.exp(-2.0)
         expected = torch.tensor(
-            [1.0 + teammate_weight * 11.0],
+            [1.0 + weight_1 * 11.0 + weight_3 * 1003.0],
             dtype=torch.float32,
         )
         torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
 
     def test_fixed_following_rates_dual_budgets_initialize_expected_rates(self):
-        # n_agents=4, relatedness_width=1: agent 0's non-self teammates={1}, non-teammates={2,3}
+        # n_agents=4, relatedness_width=1, circular topology:
+        # agent 0's non-self teammates={1,3}, non-teammates={2}
         # agent 2's non-self teammates={1,3}, non-teammates={0}
         _, trainer = _make_single_actor_critic_trainer(
             n_agents=4,
@@ -811,13 +815,13 @@ class TestActorCriticTrainingLoop:
             ),
         )
 
-        # Agent 0: 1 non-self teammate (agent 1) → rate=2.0; 2 non-teammates → rate=3.0 each
+        # Agent 0: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({2}) → rate=6.0
         np.testing.assert_allclose(
             trainer._following_states[0].following_rates,
-            np.array([0.0, 2.0, 3.0, 3.0]),
+            np.array([0.0, 1.0, 6.0, 1.0]),
             atol=1e-6,
         )
-        # Agent 2: 2 non-self teammates (1,3) → rate=1.0 each; 1 non-teammate (0) → rate=6.0
+        # Agent 2: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({0}) → rate=6.0
         np.testing.assert_allclose(
             trainer._following_states[2].following_rates,
             np.array([6.0, 1.0, 0.0, 1.0]),

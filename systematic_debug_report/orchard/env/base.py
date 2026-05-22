@@ -22,15 +22,15 @@ class BaseEnv(ABC):
         C = cfg.relatedness_width
         S = cfg.proficiency_width
 
-        # proficiency[i, kappa] = 1 if |i - kappa| <= S else 0  (N x T)
+        # proficiency[i, kappa] = 1 if circular_dist(i, kappa) <= S else 0  (N x T)
         self.proficiency: np.ndarray = np.array(
-            [[1.0 if abs(i - kappa) <= S else 0.0 for kappa in range(T)] for i in range(N)],
+            [[1.0 if min(abs(i - kappa), T - abs(i - kappa)) <= S else 0.0 for kappa in range(T)] for i in range(N)],
             dtype=np.float32,
         )
 
-        # relatedness[i, j] = 1 if |i - j| <= C else 0  (N x N), diagonal always 1
+        # relatedness[i, j] = 1 if circular_dist(i, j) <= C else 0  (N x N), diagonal always 1
         self.relatedness: np.ndarray = np.array(
-            [[1.0 if abs(i - j) <= C else 0.0 for j in range(N)] for i in range(N)],
+            [[1.0 if min(abs(i - j), N - abs(i - j)) <= C else 0.0 for j in range(N)] for i in range(N)],
             dtype=np.float32,
         )
 
@@ -56,20 +56,11 @@ class BaseEnv(ABC):
         self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
 
     def _precompute_pick_rewards(self) -> None:
-        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
-
-        norm[actor] = N / group_size[actor] so that sum_j pick_rewards[actor,tau,j] = proficiency[actor,tau]
-        regardless of relatedness_width (team total always sums to 1 when a task is picked).
-        """
-        # proficiency: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
-        # norm: (N,1,1) — N / sum_j relatedness[actor, j]
-        group_sizes = self.relatedness.sum(axis=1)  # (N,)
-        norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
+        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau]*R[actor,j]*r'[tau,j]."""
         self._pick_rewards = (
             self.proficiency[:, :, np.newaxis]
             * self.relatedness[:, np.newaxis, :]
             * self.category_rewards[np.newaxis, :, :]
-            * norm
         ).astype(np.float32)
 
     def set_eval_mode(

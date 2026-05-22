@@ -35,40 +35,43 @@ class StochasticEnv(BaseEnv):
             cfg.n_agents,
             cfg.stochastic.sigma_a,
             cfg.stochastic.sigma_b,
+            cfg.relatedness_width,
         )
         self._precompute_pick_rewards()
 
     @staticmethod
     def _generate_category_rewards(
         seed: int,
-        T: int,
+        n_task_types: int,
         N: int,
         sigma_a: float,
         sigma_b: float,
+        relatedness_width: int,
     ) -> np.ndarray:
-        """Generate r'^(kappa) for each category kappa. Returns (T, N) array.
+        """Generate r'^(kappa) for each category kappa. Returns (n_task_types, N) array.
 
         Each r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
-          b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b/N), shifted by 1/N
-                      so that team reward std = N * std(b) = sigma_b
+          b^(kappa) — scalar baseline: n_task_types values standardized to (mean=0, std=sigma_b/g),
+                      shifted by 1/g, where g = min(2*relatedness_width+1, N)
           a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
         """
+        g = min(2 * relatedness_width + 1, N)
         rng_np = np.random.default_rng(seed)
 
-        # Baseline b: draw T samples, standardize to std=sigma_b/N so team reward std=sigma_b
+        # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g
         if sigma_b > 0:
             while True:
-                b_raw = rng_np.standard_normal(T)
+                b_raw = rng_np.standard_normal(n_task_types)
                 b_std = b_raw.std()
                 if b_std > 1e-10:
-                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / N) + 1.0 / N
+                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / g) + 1.0 / g
                     break
         else:
-            b = np.full(T, 1.0 / N, dtype=np.float64)
+            b = np.full(n_task_types, 1.0 / g, dtype=np.float64)
 
         # Agent variance a: draw N samples per category, standardize
-        rewards = np.zeros((T, N), dtype=np.float32)
-        for kappa in range(T):
+        rewards = np.zeros((n_task_types, N), dtype=np.float32)
+        for kappa in range(n_task_types):
             b_kappa = float(b[kappa])
             if sigma_a > 0:
                 while True:
