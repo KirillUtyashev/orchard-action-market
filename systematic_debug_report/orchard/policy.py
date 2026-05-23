@@ -60,7 +60,7 @@ def nearest_action(state: State, env) -> Action:
         tasks_here = state.tasks_at(actor_pos)
         eligible = env.proficiency_positive_types[actor]
         best_tau = None
-        best_val = -float("inf")
+        best_val = 0.0
         for _, tau in tasks_here:
             if tau not in eligible:
                 continue
@@ -90,7 +90,7 @@ def nearest_action(state: State, env) -> Action:
     # Find the best target: argmax value, then min distance
     ar, ac = state.agent_positions[actor]
     best_action = Action.STAY
-    best_val = -float("inf")
+    best_val = 0.0
     best_dist = float("inf")
 
     for action in ACTION_PRIORITY:
