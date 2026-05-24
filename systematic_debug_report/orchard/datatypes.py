@@ -11,6 +11,7 @@ from orchard.enums import (
     Action,
     Activation,
     AlgorithmName,
+    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -225,6 +226,7 @@ class TrainConfig:
     warmup_steps: int = 0
     train_only_teammates: bool = False  # train only agents j where R(actor,j) > 0
     discount_method: str = "team_steps"
+    decentralized_reward_target: DecentralizedRewardTarget = DecentralizedRewardTarget.INDIVIDUAL
 
 
 @dataclass(frozen=True)

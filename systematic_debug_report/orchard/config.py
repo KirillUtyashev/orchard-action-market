@@ -10,6 +10,7 @@ import yaml
 from orchard.enums import (
     Activation,
     AlgorithmName,
+    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -49,6 +50,11 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "learning_type": {
         "decentralized": LearningType.DECENTRALIZED,
         "centralized": LearningType.CENTRALIZED,
+    },
+    "decentralized_reward_target": {
+        "individual": DecentralizedRewardTarget.INDIVIDUAL,
+        "team_mean": DecentralizedRewardTarget.TEAM_MEAN,
+        "team_sum": DecentralizedRewardTarget.TEAM_SUM,
     },
     "algorithm_name": {
         "value": AlgorithmName.VALUE,
@@ -306,6 +312,10 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         warmup_steps=warmup_steps,
         train_only_teammates=bool(d.get("train_only_teammates", False)),
         discount_method=discount_method,
+        decentralized_reward_target=_enum(
+            d.get("decentralized_reward_target", "individual"),
+            "decentralized_reward_target",
+        ),
     )
 
 

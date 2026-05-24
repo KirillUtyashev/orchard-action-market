@@ -3,7 +3,13 @@
 import pytest
 import torch
 
-from orchard.enums import EncoderType, Heuristic, LearningType, DespawnMode
+from orchard.enums import (
+    DecentralizedRewardTarget,
+    DespawnMode,
+    EncoderType,
+    Heuristic,
+    LearningType,
+)
 from orchard.datatypes import (
     EnvConfig, ModelConfig, ScheduleConfig, StochasticConfig,
     State, Grid, TrainConfig, StoppingConfig
@@ -15,7 +21,7 @@ from orchard.trainer.cpu import CpuTrainer
 from orchard.seed import set_all_seeds
 
 
-def _setup_cpu_trainer(n_agents=2):
+def _setup_cpu_trainer(n_agents=2, decentralized_reward_target=DecentralizedRewardTarget.INDIVIDUAL):
     set_all_seeds(0)
     env_cfg = EnvConfig(
         height=3, width=3, n_agents=n_agents, n_tasks=1,
@@ -44,6 +50,7 @@ def _setup_cpu_trainer(n_agents=2):
         network_list=networks, env=env, gamma=0.99,
         epsilon_schedule=eps_cfg, lr_schedule=lr_cfg,
         total_steps=100, heuristic=Heuristic.NEAREST,
+        decentralized_reward_target=decentralized_reward_target,
     )
     return env, networks, trainer
 
@@ -72,3 +79,37 @@ class TestCpuTrainerTDStep:
         trainer.train_pick(s_picked, rewards=(1.0, 0.0), t=1)
 
         assert trainer._td_loss_accum > 0.0
+
+    @pytest.mark.parametrize(
+        "reward_target, expected",
+        [
+            (DecentralizedRewardTarget.TEAM_MEAN, (0.5, 0.5)),
+            (DecentralizedRewardTarget.TEAM_SUM, (1.0, 1.0)),
+        ],
+    )
+    def test_train_pick_can_use_shared_team_reward_target(self, monkeypatch, reward_target, expected):
+        _, _, trainer = _setup_cpu_trainer(
+            n_agents=2,
+            decentralized_reward_target=reward_target,
+        )
+        captured = {}
+
+        monkeypatch.setattr(trainer, "_encode_all", lambda state: ["current_0", "current_1"])
+
+        def fake_td_step(prev, rewards, discount, current, t, teammate_indices=None):
+            captured["prev"] = prev
+            captured["rewards"] = rewards
+            captured["discount"] = discount
+            captured["current"] = current
+            return 0.0
+
+        monkeypatch.setattr(trainer, "_td_step", fake_td_step)
+        trainer._move = ["prev_0", "prev_1"]
+
+        s_picked = State(agent_positions=(Grid(0, 0), Grid(2, 2)), task_positions=(), actor=0, task_types=())
+        trainer.train_pick(s_picked, rewards=(2.0, -1.0), t=1)
+
+        assert captured["prev"] == ["prev_0", "prev_1"]
+        assert captured["current"] == ["current_0", "current_1"]
+        assert captured["discount"] == 1.0
+        assert captured["rewards"] == expected

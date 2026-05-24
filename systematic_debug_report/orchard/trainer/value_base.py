@@ -18,7 +18,7 @@ from typing import Any
 import torch
 
 from orchard.datatypes import EvalConfig, ScheduleConfig, State
-from orchard.enums import Action, Heuristic
+from orchard.enums import Action, DecentralizedRewardTarget, Heuristic
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.policy import get_all_actions, get_phase2_actions, heuristic_action
@@ -46,6 +46,7 @@ class ValueTrainerBase(TrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         discount_method: str = "team_steps",
+        decentralized_reward_target: DecentralizedRewardTarget = DecentralizedRewardTarget.INDIVIDUAL,
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -58,6 +59,7 @@ class ValueTrainerBase(TrainerBase):
         self._total_steps = total_steps
         self._heuristic = heuristic
         self._timer = timer or Timer()
+        self._decentralized_reward_target = decentralized_reward_target
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
         self._agent_rngs = None  # no per-agent RNGs
@@ -445,7 +447,16 @@ class ValueTrainerBase(TrainerBase):
         pick_enc = self._encode_all(s_picked)
         self._timer.stop()
 
-        train_rewards = (sum(rewards),) if self._centralized else rewards
+        if self._centralized:
+            train_rewards = (sum(rewards),)
+        elif self._decentralized_reward_target == DecentralizedRewardTarget.TEAM_MEAN:
+            team_mean = float(sum(rewards)) / float(self._n_agents)
+            train_rewards = tuple(team_mean for _ in range(self._n_networks))
+        elif self._decentralized_reward_target == DecentralizedRewardTarget.TEAM_SUM:
+            team_sum = float(sum(rewards))
+            train_rewards = tuple(team_sum for _ in range(self._n_networks))
+        else:
+            train_rewards = rewards
 
         self._timer.start(TimerSection.TRAIN)
         loss = self._td_step(self._move, train_rewards, 1.0, pick_enc, t, teammate_indices)

@@ -5,7 +5,15 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType, RewardGeneration, StructureType
+from orchard.enums import (
+    AlgorithmName,
+    DecentralizedRewardTarget,
+    EncoderType,
+    Heuristic,
+    LearningType,
+    RewardGeneration,
+    StructureType,
+)
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -43,6 +51,7 @@ class TestConfigParsing:
         assert cfg.train.total_steps == 100
         assert cfg.train.comm_only_teammates is False
         assert cfg.train.batch_forced_actor_updates is True
+        assert cfg.train.decentralized_reward_target == DecentralizedRewardTarget.INDIVIDUAL
         assert cfg.env.stochastic.reward_generation == RewardGeneration.BASELINE_OFFSET
 
         os.unlink(path)
@@ -122,6 +131,16 @@ class TestConfigParsing:
         assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
         assert cfg.env.stochastic.require_positive_diagonal_rewards is True
         assert cfg.env.stochastic.reward_seed_max_attempts == 123
+        os.unlink(path)
+
+    def test_decentralized_reward_target_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "total_steps: 100",
+            "total_steps: 100\n  decentralized_reward_target: team_mean",
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.decentralized_reward_target == DecentralizedRewardTarget.TEAM_MEAN
         os.unlink(path)
 
     def test_actor_critic_nested_blocks_parse(self):

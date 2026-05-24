@@ -46,6 +46,12 @@ class LearningType(Enum):
     CENTRALIZED = auto()
 
 
+class DecentralizedRewardTarget(Enum):
+    INDIVIDUAL = auto()
+    TEAM_MEAN = auto()
+    TEAM_SUM = auto()
+
+
 class AlgorithmName(Enum):
     VALUE = auto()
     ACTOR_CRITIC = auto()

@@ -103,6 +103,13 @@ train:
   #   centralized: 1 network shared by all agents (sees full state)
   learning_type: decentralized
 
+  # Value-learning ablation for decentralized runs:
+  #   individual: critic i trains on its own r_i (default historical behavior)
+  #   team_mean:  every critic trains on mean_j r_j, removing component cancellation
+  #   team_sum:   every critic trains on sum_j r_j
+  # Only affects algorithm.name=value and decentralized training.
+  decentralized_reward_target: individual
+
   # Device: true=GPU (BatchedTrainer + vmap), false=CPU (sequential forwards)
   use_gpu: false
 

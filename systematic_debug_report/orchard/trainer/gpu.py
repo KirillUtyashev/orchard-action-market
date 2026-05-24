@@ -9,7 +9,7 @@ import torch
 import orchard.encoding as encoding
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import ScheduleConfig, State
-from orchard.enums import Heuristic
+from orchard.enums import DecentralizedRewardTarget, Heuristic
 from orchard.env.base import BaseEnv
 from orchard.model import ValueNetwork
 from orchard.schedule import compute_schedule_value
@@ -37,6 +37,7 @@ class GpuTrainer(ValueTrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         discount_method: str = "team_steps",
+        decentralized_reward_target: DecentralizedRewardTarget = DecentralizedRewardTarget.INDIVIDUAL,
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
@@ -44,6 +45,7 @@ class GpuTrainer(ValueTrainerBase):
             total_steps=total_steps, heuristic=heuristic, timer=timer,
             train_only_teammates=train_only_teammates,
             discount_method=discount_method,
+            decentralized_reward_target=decentralized_reward_target,
         )
         self._bt = bt
 
