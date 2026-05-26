@@ -31,6 +31,7 @@ def _make_env(
     n_tasks_per_group: int | None = None,
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
     require_positive_diagonal_rewards: bool = False,
+    require_no_negative_dominates_positive: bool = False,
     reward_seed_max_attempts: int = 10000,
 ):
     set_all_seeds(seed)
@@ -47,6 +48,7 @@ def _make_env(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
             sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
             require_positive_diagonal_rewards=require_positive_diagonal_rewards,
+            require_no_negative_dominates_positive=require_no_negative_dominates_positive,
             reward_seed_max_attempts=reward_seed_max_attempts,
         ),
     )
@@ -245,6 +247,32 @@ class TestCategoryRewards:
         assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
         assert np.allclose(env.category_rewards.mean(axis=1), 1.0 / 5, atol=1e-5)
 
+    def test_negative_dominance_constraint_preserves_baseline_offset_stats(self):
+        sigma_a = 1.0
+        sigma_b = 0.0
+        env = _make_env(
+            n_agents=12,
+            n_task_types=12,
+            sigma_a=sigma_a,
+            sigma_b=sigma_b,
+            require_no_negative_dominates_positive=True,
+        )
+
+        rewards = env.category_rewards
+        team_sums = rewards.sum(axis=1)
+        row_vars = rewards.var(axis=1)
+
+        assert np.allclose(team_sums, 1.0, atol=1e-5)
+        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
+
+        for row in rewards:
+            negatives = row[row < 0.0]
+            positives = row[row > 0.0]
+            if len(negatives) == 0:
+                continue
+            assert len(positives) > 0
+            assert -float(negatives.min()) <= float(positives.min()) + 1e-6
+
     def test_sampled_mean_generation_forces_agent_variance(self):
         sigma_a = 0.4
         env = _make_env(
@@ -294,7 +322,15 @@ class TestCategoryRewards:
     def test_positive_diagonal_reward_requirement_retries_seed(self, monkeypatch):
         calls = []
 
-        def fake_components(seed, T, N, sigma_a, sigma_b, reward_generation):
+        def fake_components(
+            seed,
+            T,
+            N,
+            sigma_a,
+            sigma_b,
+            reward_generation,
+            require_no_negative_dominates_positive=False,
+        ):
             calls.append(seed)
             rewards = np.ones((T, N), dtype=np.float32)
             if len(calls) == 1:
@@ -326,7 +362,15 @@ class TestCategoryRewards:
         assert np.all(np.diag(env.category_rewards) > 0.0)
 
     def test_positive_diagonal_reward_requirement_fails_after_max_attempts(self, monkeypatch):
-        def fake_components(seed, T, N, sigma_a, sigma_b, reward_generation):
+        def fake_components(
+            seed,
+            T,
+            N,
+            sigma_a,
+            sigma_b,
+            reward_generation,
+            require_no_negative_dominates_positive=False,
+        ):
             rewards = np.ones((T, N), dtype=np.float32)
             rewards[0, 0] = -0.5
             baselines = rewards.mean(axis=1).astype(np.float32)

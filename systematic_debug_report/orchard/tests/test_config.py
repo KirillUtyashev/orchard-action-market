@@ -123,6 +123,7 @@ class TestConfigParsing:
                 "spawn_prob: 0.1\n"
                 "    reward_generation: sampled_mean\n"
                 "    require_positive_diagonal_rewards: true\n"
+                "    require_no_negative_dominates_positive: true\n"
                 "    reward_seed_max_attempts: 123"
             ),
         )
@@ -130,6 +131,7 @@ class TestConfigParsing:
         cfg = load_config(path)
         assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
         assert cfg.env.stochastic.require_positive_diagonal_rewards is True
+        assert cfg.env.stochastic.require_no_negative_dominates_positive is True
         assert cfg.env.stochastic.reward_seed_max_attempts == 123
         os.unlink(path)
 

@@ -51,6 +51,7 @@ class StochasticEnv(BaseEnv):
                 stoch.sigma_a,
                 stoch.sigma_b,
                 stoch.reward_generation,
+                stoch.require_no_negative_dominates_positive,
             )
             if (
                 not stoch.require_positive_diagonal_rewards
@@ -86,6 +87,7 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+        require_no_negative_dominates_positive: bool = False,
     ) -> np.ndarray:
         return StochasticEnv._generate_category_reward_components(
             seed,
@@ -94,6 +96,7 @@ class StochasticEnv(BaseEnv):
             sigma_a,
             sigma_b,
             reward_generation,
+            require_no_negative_dominates_positive,
         )[0]
 
     @staticmethod
@@ -104,6 +107,7 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+        require_no_negative_dominates_positive: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Generate reward components for each category kappa.
 
@@ -142,17 +146,24 @@ class StochasticEnv(BaseEnv):
         agent_offsets = np.zeros((T, N), dtype=np.float32)
         for kappa in range(T):
             b_kappa = float(b[kappa])
-            if sigma_a > 0:
-                while True:
+            while True:
+                if sigma_a > 0:
                     a_raw = rng_np.standard_normal(N)
                     a_std = a_raw.std()
                     if a_std > 1e-10:
                         a = (a_raw - a_raw.mean()) / a_std * sigma_a
-                        break
-            else:
-                a = np.zeros(N)
+                    else:
+                        continue
+                else:
+                    a = np.zeros(N)
+                row = a + b_kappa
+                if (
+                    not require_no_negative_dominates_positive
+                    or StochasticEnv._no_negative_dominates_positive(row)
+                ):
+                    break
             agent_offsets[kappa] = a.astype(np.float32)
-            rewards[kappa] = (a + b_kappa).astype(np.float32)
+            rewards[kappa] = row.astype(np.float32)
 
         return (
             rewards,
@@ -161,6 +172,17 @@ class StochasticEnv(BaseEnv):
             b.astype(np.float32),
             agent_offsets,
         )
+
+    @staticmethod
+    def _no_negative_dominates_positive(row: np.ndarray) -> bool:
+        """Return True if the largest negative magnitude is no bigger than any positive entry."""
+        negatives = row[row < 0.0]
+        if len(negatives) == 0:
+            return True
+        positives = row[row > 0.0]
+        if len(positives) == 0:
+            return False
+        return bool(-float(negatives.min()) <= float(positives.min()) + 1e-12)
 
     @staticmethod
     def _generate_sampled_mean_reward_components(
