@@ -52,6 +52,7 @@ class StochasticEnv(BaseEnv):
                 stoch.sigma_b,
                 stoch.reward_generation,
                 stoch.require_no_negative_dominates_positive,
+                stoch.positive_rewards_only,
             )
             if (
                 not stoch.require_positive_diagonal_rewards
@@ -88,6 +89,7 @@ class StochasticEnv(BaseEnv):
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
         require_no_negative_dominates_positive: bool = False,
+        positive_rewards_only: bool = False,
     ) -> np.ndarray:
         return StochasticEnv._generate_category_reward_components(
             seed,
@@ -97,6 +99,7 @@ class StochasticEnv(BaseEnv):
             sigma_b,
             reward_generation,
             require_no_negative_dominates_positive,
+            positive_rewards_only,
         )[0]
 
     @staticmethod
@@ -108,6 +111,7 @@ class StochasticEnv(BaseEnv):
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
         require_no_negative_dominates_positive: bool = False,
+        positive_rewards_only: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Generate reward components for each category kappa.
 
@@ -124,7 +128,7 @@ class StochasticEnv(BaseEnv):
 
         if reward_generation == RewardGeneration.SAMPLED_MEAN:
             return StochasticEnv._generate_sampled_mean_reward_components(
-                rng_np, T, N, sigma_a
+                rng_np, T, N, sigma_a, positive_rewards_only
             )
 
         # Baseline b: draw T samples, standardize to std=sigma_b/N so team reward std=sigma_b
@@ -190,6 +194,7 @@ class StochasticEnv(BaseEnv):
         T: int,
         N: int,
         sigma_a: float,
+        positive_rewards_only: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Generate reward rows with sampled mean near 1 and exact std sigma_a."""
         if sigma_a > 0 and N < 2:
@@ -209,7 +214,8 @@ class StochasticEnv(BaseEnv):
                     if z_std > 1e-10:
                         z_mean = float(z.mean())
                         row = z_mean + sigma_a * (z - z_mean) / z_std
-                        break
+                        if not positive_rewards_only or np.all(row > 0.0):
+                            break
             else:
                 z_mean = 1.0
                 row = np.ones(N, dtype=np.float64)

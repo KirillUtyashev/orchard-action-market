@@ -143,6 +143,7 @@ class StochasticConfig:
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET
     require_positive_diagonal_rewards: bool = False
     require_no_negative_dominates_positive: bool = False
+    positive_rewards_only: bool = False
     reward_seed_max_attempts: int = 10000
     spawn_on_agent_cells: bool = False
     spawn_at_round_end: bool = False

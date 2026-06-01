@@ -32,6 +32,7 @@ def _make_env(
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
     require_positive_diagonal_rewards: bool = False,
     require_no_negative_dominates_positive: bool = False,
+    positive_rewards_only: bool = False,
     reward_seed_max_attempts: int = 10000,
 ):
     set_all_seeds(seed)
@@ -49,6 +50,7 @@ def _make_env(
             sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
             require_positive_diagonal_rewards=require_positive_diagonal_rewards,
             require_no_negative_dominates_positive=require_no_negative_dominates_positive,
+            positive_rewards_only=positive_rewards_only,
             reward_seed_max_attempts=reward_seed_max_attempts,
         ),
     )
@@ -294,6 +296,26 @@ class TestCategoryRewards:
             atol=1e-6,
         )
 
+    def test_sampled_mean_positive_rewards_only_preserves_agent_variance(self):
+        sigma_a = 1.0
+        env = _make_env(
+            n_agents=12,
+            n_task_types=12,
+            sigma_a=sigma_a,
+            reward_generation=RewardGeneration.SAMPLED_MEAN,
+            positive_rewards_only=True,
+        )
+
+        row_vars = env.category_rewards.var(axis=1)
+
+        assert np.all(env.category_rewards > 0.0)
+        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
+        assert np.allclose(
+            env.category_rewards.mean(axis=1),
+            env.category_reward_baselines,
+            atol=1e-6,
+        )
+
     def test_sampled_mean_generation_preserves_random_row_mean_near_one(self):
         sigma_a = 0.8
         env = _make_env(
@@ -330,6 +352,7 @@ class TestCategoryRewards:
             sigma_b,
             reward_generation,
             require_no_negative_dominates_positive=False,
+            positive_rewards_only=False,
         ):
             calls.append(seed)
             rewards = np.ones((T, N), dtype=np.float32)
@@ -370,6 +393,7 @@ class TestCategoryRewards:
             sigma_b,
             reward_generation,
             require_no_negative_dominates_positive=False,
+            positive_rewards_only=False,
         ):
             rewards = np.ones((T, N), dtype=np.float32)
             rewards[0, 0] = -0.5

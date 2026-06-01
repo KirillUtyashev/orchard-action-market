@@ -55,6 +55,7 @@ env:
     reward_generation: baseline_offset  # "baseline_offset" or "sampled_mean"
     require_positive_diagonal_rewards: false  # retry reward seeds until r'[i,i] > 0 for all diagonal entries
     require_no_negative_dominates_positive: false  # for baseline_offset, resample rows until |most negative| <= smallest positive reward
+    positive_rewards_only: false  # for sampled_mean, resample rows until all reward entries are > 0
     reward_seed_max_attempts: 10000  # guardrail for diagonal-positive retry loop
 
 model:
