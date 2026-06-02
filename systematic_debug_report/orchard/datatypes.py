@@ -141,6 +141,8 @@ class StochasticConfig:
     sigma_a: float = 0.0        # std of agent-variance component within a task category
     sigma_b: float = 0.0        # std of baseline reward across task categories
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET
+    baseline_team_sum_mean: float = 1.0
+    deterministic_baseline_offsets: bool = False
     require_positive_diagonal_rewards: bool = False
     require_no_negative_dominates_positive: bool = False
     positive_rewards_only: bool = False

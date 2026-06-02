@@ -138,6 +138,8 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
         "sigma_a",
         "sigma_b",
         "reward_generation",
+        "baseline_team_sum_mean",
+        "deterministic_baseline_offsets",
         "require_no_negative_dominates_positive",
         "positive_rewards_only",
         "reward_seed_attempts",
@@ -167,6 +169,12 @@ def write_reward_vectors_csv(run_dir: Path, env: Any) -> Path | None:
                     getattr(getattr(stoch, "reward_generation", ""), "name", "")
                     .lower()
                     .strip()
+                ),
+                "baseline_team_sum_mean": getattr(stoch, "baseline_team_sum_mean", ""),
+                "deterministic_baseline_offsets": getattr(
+                    stoch,
+                    "deterministic_baseline_offsets",
+                    "",
                 ),
                 "require_no_negative_dominates_positive": getattr(
                     stoch,

@@ -122,6 +122,8 @@ class TestConfigParsing:
             (
                 "spawn_prob: 0.1\n"
                 "    reward_generation: sampled_mean\n"
+                "    baseline_team_sum_mean: 4.0\n"
+                "    deterministic_baseline_offsets: true\n"
                 "    require_positive_diagonal_rewards: true\n"
                 "    require_no_negative_dominates_positive: true\n"
                 "    positive_rewards_only: true\n"
@@ -131,6 +133,8 @@ class TestConfigParsing:
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
         assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
+        assert cfg.env.stochastic.baseline_team_sum_mean == pytest.approx(4.0)
+        assert cfg.env.stochastic.deterministic_baseline_offsets is True
         assert cfg.env.stochastic.require_positive_diagonal_rewards is True
         assert cfg.env.stochastic.require_no_negative_dominates_positive is True
         assert cfg.env.stochastic.positive_rewards_only is True

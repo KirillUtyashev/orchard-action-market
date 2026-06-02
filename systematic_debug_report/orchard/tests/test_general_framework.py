@@ -30,6 +30,8 @@ def _make_env(
     structure_group_size: int | None = None,
     n_tasks_per_group: int | None = None,
     reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+    baseline_team_sum_mean: float = 1.0,
+    deterministic_baseline_offsets: bool = False,
     require_positive_diagonal_rewards: bool = False,
     require_no_negative_dominates_positive: bool = False,
     positive_rewards_only: bool = False,
@@ -48,6 +50,8 @@ def _make_env(
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
             sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
+            baseline_team_sum_mean=baseline_team_sum_mean,
+            deterministic_baseline_offsets=deterministic_baseline_offsets,
             require_positive_diagonal_rewards=require_positive_diagonal_rewards,
             require_no_negative_dominates_positive=require_no_negative_dominates_positive,
             positive_rewards_only=positive_rewards_only,
@@ -242,6 +246,43 @@ class TestCategoryRewards:
         assert team_sums.mean() == pytest.approx(1.0, abs=1e-5)
         assert team_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
 
+    def test_baseline_team_sum_mean_lifts_constant_task_sums(self):
+        sigma_a = 1.7
+        team_sum_mean = 8.0
+        env = _make_env(
+            n_agents=5,
+            n_task_types=6,
+            sigma_a=sigma_a,
+            sigma_b=0.0,
+            baseline_team_sum_mean=team_sum_mean,
+        )
+
+        team_sums = env.category_rewards.sum(axis=1)
+        row_vars = env.category_rewards.var(axis=1)
+
+        assert np.allclose(team_sums, team_sum_mean, atol=1e-5)
+        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
+        assert np.allclose(env.category_rewards.mean(axis=1), team_sum_mean / 5, atol=1e-5)
+
+    def test_deterministic_baseline_offsets_set_exact_task_sum_spread(self):
+        sigma_b = 2.5
+        team_sum_mean = 1.0
+        env = _make_env(
+            n_agents=4,
+            n_task_types=8,
+            sigma_a=0.6,
+            sigma_b=sigma_b,
+            baseline_team_sum_mean=team_sum_mean,
+            deterministic_baseline_offsets=True,
+        )
+
+        team_sums = env.category_rewards.sum(axis=1)
+
+        assert team_sums.mean() == pytest.approx(team_sum_mean, abs=1e-5)
+        assert team_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
+        assert np.all(np.diff(env.category_reward_baseline_raw) > 0.0)
+        assert np.all(np.diff(team_sums) > 0.0)
+
     def test_sigma_a_sets_within_category_agent_variance(self):
         sigma_a = 0.4
         env = _make_env(n_agents=5, n_task_types=6, sigma_a=sigma_a, sigma_b=0.0)
@@ -351,6 +392,8 @@ class TestCategoryRewards:
             sigma_a,
             sigma_b,
             reward_generation,
+            baseline_team_sum_mean=1.0,
+            deterministic_baseline_offsets=False,
             require_no_negative_dominates_positive=False,
             positive_rewards_only=False,
         ):
@@ -392,6 +435,8 @@ class TestCategoryRewards:
             sigma_a,
             sigma_b,
             reward_generation,
+            baseline_team_sum_mean=1.0,
+            deterministic_baseline_offsets=False,
             require_no_negative_dominates_positive=False,
             positive_rewards_only=False,
         ):

@@ -136,6 +136,8 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
         reward_generation=_enum(sd.get("reward_generation", "baseline_offset"), "reward_generation"),
+        baseline_team_sum_mean=float(sd.get("baseline_team_sum_mean", 1.0)),
+        deterministic_baseline_offsets=bool(sd.get("deterministic_baseline_offsets", False)),
         require_positive_diagonal_rewards=bool(sd.get("require_positive_diagonal_rewards", False)),
         require_no_negative_dominates_positive=bool(sd.get("require_no_negative_dominates_positive", False)),
         positive_rewards_only=bool(sd.get("positive_rewards_only", False)),

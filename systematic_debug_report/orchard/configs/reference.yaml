@@ -53,6 +53,8 @@ env:
     sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
     reward_generation: baseline_offset  # "baseline_offset" or "sampled_mean"
+    baseline_team_sum_mean: 1.0    # for baseline_offset, mean of task reward sums
+    deterministic_baseline_offsets: false  # for baseline_offset, use a fixed standardized b ladder instead of random b samples
     require_positive_diagonal_rewards: false  # retry reward seeds until r'[i,i] > 0 for all diagonal entries
     require_no_negative_dominates_positive: false  # for baseline_offset, resample rows until |most negative| <= smallest positive reward
     positive_rewards_only: false  # for sampled_mean, resample rows until all reward entries are > 0

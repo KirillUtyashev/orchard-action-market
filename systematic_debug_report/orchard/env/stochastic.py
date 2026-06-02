@@ -51,6 +51,8 @@ class StochasticEnv(BaseEnv):
                 stoch.sigma_a,
                 stoch.sigma_b,
                 stoch.reward_generation,
+                stoch.baseline_team_sum_mean,
+                stoch.deterministic_baseline_offsets,
                 stoch.require_no_negative_dominates_positive,
                 stoch.positive_rewards_only,
             )
@@ -88,6 +90,8 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+        baseline_team_sum_mean: float = 1.0,
+        deterministic_baseline_offsets: bool = False,
         require_no_negative_dominates_positive: bool = False,
         positive_rewards_only: bool = False,
     ) -> np.ndarray:
@@ -98,6 +102,8 @@ class StochasticEnv(BaseEnv):
             sigma_a,
             sigma_b,
             reward_generation,
+            baseline_team_sum_mean,
+            deterministic_baseline_offsets,
             require_no_negative_dominates_positive,
             positive_rewards_only,
         )[0]
@@ -110,14 +116,18 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
+        baseline_team_sum_mean: float = 1.0,
+        deterministic_baseline_offsets: bool = False,
         require_no_negative_dominates_positive: bool = False,
         positive_rewards_only: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Generate reward components for each category kappa.
 
         BASELINE_OFFSET: r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
-          b^(kappa) — scalar baseline: T values standardized to (mean=0, std=sigma_b/N), shifted by 1/N
-                      so that team reward std = N * std(b) = sigma_b
+          b^(kappa) — scalar baseline: T values standardized to
+                      (mean=0, std=sigma_b/N), shifted by
+                      baseline_team_sum_mean/N so that task reward sums have
+                      mean=baseline_team_sum_mean and std=sigma_b.
           a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
 
         SAMPLED_MEAN: r'^(kappa) preserves the empirical mean of samples from
@@ -131,19 +141,31 @@ class StochasticEnv(BaseEnv):
                 rng_np, T, N, sigma_a, positive_rewards_only
             )
 
-        # Baseline b: draw T samples, standardize to std=sigma_b/N so team reward std=sigma_b
+        baseline_mean = float(baseline_team_sum_mean) / N
+
+        # Baseline b: draw or deterministically build T samples, standardize to
+        # std=sigma_b/N so team reward std=sigma_b.
         if sigma_b > 0:
-            while True:
-                b_raw = rng_np.standard_normal(T)
-                b_std = b_raw.std()
-                if b_std > 1e-10:
-                    b_standardized = (b_raw - b_raw.mean()) / b_std
-                    b = b_standardized * (sigma_b / N) + 1.0 / N
-                    break
+            if deterministic_baseline_offsets:
+                if T < 2:
+                    raise ValueError(
+                        "deterministic_baseline_offsets with sigma_b>0 requires n_task_types >= 2"
+                    )
+                b_raw = np.linspace(-1.0, 1.0, T, dtype=np.float64)
+                b_standardized = (b_raw - b_raw.mean()) / b_raw.std()
+                b = b_standardized * (sigma_b / N) + baseline_mean
+            else:
+                while True:
+                    b_raw = rng_np.standard_normal(T)
+                    b_std = b_raw.std()
+                    if b_std > 1e-10:
+                        b_standardized = (b_raw - b_raw.mean()) / b_std
+                        b = b_standardized * (sigma_b / N) + baseline_mean
+                        break
         else:
             b_raw = np.zeros(T, dtype=np.float64)
             b_standardized = np.zeros(T, dtype=np.float64)
-            b = np.full(T, 1.0 / N, dtype=np.float64)
+            b = np.full(T, baseline_mean, dtype=np.float64)
 
         # Agent variance a: draw N samples per category, standardize
         rewards = np.zeros((T, N), dtype=np.float32)
