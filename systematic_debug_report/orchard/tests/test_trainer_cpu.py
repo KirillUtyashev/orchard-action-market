@@ -23,7 +23,7 @@ def _setup_cpu_trainer(n_agents=2):
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0)
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(16,),
     )
     lr_cfg = ScheduleConfig(start=0.01, end=0.01)

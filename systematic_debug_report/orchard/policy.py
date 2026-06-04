@@ -46,11 +46,12 @@ def get_phase2_actions(state: State, env) -> list[Action]:
 def nearest_action(state: State, env) -> Action:
     """Document's greedy-optimal heuristic.
 
-    Phase 1: move toward (q*, κ*) = argmax_{tasks} φ(i,κ)·Σ_j R(i,j)·r'_j
+    Phase 1: move toward (q*, κ*) = argmax_{tasks} φ(actor,κ)·Σ_j r'^(κ)_j
+             (team reward of picking κ; r'^(κ) carries the C^(κ) mask).
              Ties broken by Manhattan distance, then ACTION_PRIORITY.
-    Phase 2: pick argmax-value eligible type present; STAY if none eligible.
+    Phase 2: pick argmax-value eligible type present; STAY if none positive.
 
-    env must be a BaseEnv with proficiency, relatedness, category_rewards, proficiency_positive_types.
+    env must be a BaseEnv with proficiency, category_rewards, proficiency_positive_types.
     """
     actor = state.actor
 
@@ -64,9 +65,8 @@ def nearest_action(state: State, env) -> Action:
         for _, tau in tasks_here:
             if tau not in eligible:
                 continue
-            val = float(env.proficiency[actor, tau]) * float(
-                (env.relatedness[actor] * env.category_rewards[tau]).sum()
-            )
+            # Team reward = sum over caring agents; r'[tau] already carries the C^(tau) mask.
+            val = float(env.proficiency[actor, tau]) * float(env.category_rewards[tau].sum())
             if val > best_val:
                 best_val = val
                 best_tau = tau
@@ -78,13 +78,12 @@ def nearest_action(state: State, env) -> Action:
     if not state.task_positions or state.task_types is None:
         return Action.STAY
 
-    # task_val[k] = proficiency[actor, tau_k] * sum_j R[actor,j] * r'[tau_k, j]
+    # task_val[k] = proficiency[actor, tau_k] * sum_j r'[tau_k, j]  (team reward;
+    # r'[tau] already carries the C^(tau) mask, so the sum is over caring agents)
     task_vals = []
     for pos, tau in zip(state.task_positions, state.task_types):
         proficiency_val = float(env.proficiency[actor, tau])
-        r_prime = env.category_rewards[tau]           # (N,)
-        rel_row = env.relatedness[actor]              # (N,)
-        val = proficiency_val * float((rel_row * r_prime).sum())
+        val = proficiency_val * float(env.category_rewards[tau].sum())
         task_vals.append((val, pos))
 
     # Find the best target: argmax value, then min distance

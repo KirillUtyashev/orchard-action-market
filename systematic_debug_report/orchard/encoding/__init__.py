@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import GeneralDecEncoder, GeneralCenEncoder, EverythingEncoder
+from orchard.encoding.grid import EverythingEncoder, FilteredDecEncoder
 from orchard.enums import EncoderType
 from orchard.datatypes import EncoderOutput, State
 
@@ -17,25 +17,21 @@ _encoder: BaseEncoder | None = None
 def init_encoder(encoder_type: EncoderType, env, n_networks: int | None = None) -> None:
     """Initialize the global encoder singleton.
 
-    env must be a StochasticEnv (or any BaseEnv subclass) with attributes:
-      .cfg, .proficiency, .relatedness, .category_rewards
+    env must be a StochasticEnv (or any BaseEnv subclass) with a .cfg attribute.
 
-    n_networks is required for EVERYTHING_CNN_GRID (pass 1 for centralized,
-    N for decentralized). It is ignored for all other encoder types.
+    n_networks selects centralized vs decentralized: pass 1 for centralized,
+    N for decentralized. EVERYTHING_CNN_GRID accepts either; FILTERED_DEC_CNN_GRID
+    is decentralized only and requires n_networks == N.
     """
     global _encoder
     cfg = env.cfg
-    proficiency = env.proficiency
-    rel = env.relatedness
-    cr = env.category_rewards
 
-    if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
-        _encoder = GeneralDecEncoder(cfg, proficiency, rel, cr)
-    elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
-        _encoder = GeneralCenEncoder(cfg, proficiency, rel, cr)
-    elif encoder_type == EncoderType.EVERYTHING_CNN_GRID:
+    if encoder_type == EncoderType.EVERYTHING_CNN_GRID:
         n = n_networks if n_networks is not None else cfg.n_agents
         _encoder = EverythingEncoder(cfg, n)
+    elif encoder_type == EncoderType.FILTERED_DEC_CNN_GRID:
+        n = n_networks if n_networks is not None else cfg.n_agents
+        _encoder = FilteredDecEncoder(cfg, n)
     else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
 

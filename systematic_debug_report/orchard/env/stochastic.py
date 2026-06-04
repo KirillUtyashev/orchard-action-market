@@ -48,18 +48,29 @@ class StochasticEnv(BaseEnv):
         sigma_b: float,
         relatedness_width: int,
     ) -> np.ndarray:
-        """Generate r'^(kappa) for each category kappa. Returns (n_task_types, N) array.
+        """Generate the task reward vectors r'^(k). Returns (n_task_types, N) array.
 
-        Each r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
-          b^(kappa) — scalar baseline: n_task_types values standardized to (mean=0, std=sigma_b/g),
-                      shifted by 1/g, where g = min(2*relatedness_width+1, N)
-          a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
+        Implements the spec directly: r'^(k)_j = I[j ∈ C^(k)] · (b^(k) + a^(k)_j),
+        where C^(k) = {j : circular_dist(k, j) ≤ relatedness_width} is the set of
+        agents that care about task k (size g = min(2*relatedness_width+1, N)),
+        keyed on the TASK k (not the actor). With T=N, task k lives on the agent
+        ring, so this circular distance is the same one used for relatedness.
+
+          b^(k) — per-task baseline: mean 1/g, std sigma_b/g over tasks.
+          a^(k) — per-agent deviation: mean 0, std sigma_a over j ∈ C^(k) (the
+                  caring agents only); entries for j ∉ C^(k) are exactly 0.
+
+        Baking the C^(k) mask into r' means the pick reward needs no separate
+        relatedness factor: r_j(actor, k) = proficiency[actor, k] · r'^(k)_j.
         """
         g = min(2 * relatedness_width + 1, N)
         rng_np = np.random.default_rng(seed)
 
-        # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g
-        if sigma_b > 0:
+        # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g.
+        # With a single task type there is no across-task spread to impose, so b
+        # is just the baseline 1/g (a one-element std is identically 0, and the
+        # reject loop below could never satisfy std>0).
+        if sigma_b > 0 and n_task_types >= 2:
             while True:
                 b_raw = rng_np.standard_normal(n_task_types)
                 b_std = b_raw.std()
@@ -69,20 +80,28 @@ class StochasticEnv(BaseEnv):
         else:
             b = np.full(n_task_types, 1.0 / g, dtype=np.float64)
 
-        # Agent variance a: draw N samples per category, standardize
         rewards = np.zeros((n_task_types, N), dtype=np.float32)
         for kappa in range(n_task_types):
             b_kappa = float(b[kappa])
-            if sigma_a > 0:
+            # C^(kappa): agents that care about task kappa (circular distance on the ring).
+            caring = [j for j in range(N) if min(abs(kappa - j), N - abs(kappa - j)) <= relatedness_width]
+
+            # a^(kappa): zero-mean, std sigma_a over the caring agents only.
+            # A single carer (g=1, e.g. relatedness_width=0) has no within-set
+            # spread to impose — a=0 is the only consistent value (and a
+            # one-element std is identically 0, so the reject loop can't proceed).
+            if sigma_a > 0 and len(caring) >= 2:
                 while True:
-                    a_raw = rng_np.standard_normal(N)
+                    a_raw = rng_np.standard_normal(len(caring))
                     a_std = a_raw.std()
                     if a_std > 1e-10:
                         a = (a_raw - a_raw.mean()) / a_std * sigma_a
                         break
             else:
-                a = np.zeros(N)
-            rewards[kappa] = (a + b_kappa).astype(np.float32)
+                a = np.zeros(len(caring))
+
+            for idx, j in enumerate(caring):
+                rewards[kappa, j] = np.float32(b_kappa + a[idx])
 
         return rewards
 

@@ -1,8 +1,10 @@
 """HTML builder: assemble self-contained HTML trajectory viewer.
 
 Frames are rendered as inline SVGs. Task squares are clickable and show
-a per-agent reward breakdown popup: r_j = φ(actor,κ)·R(actor,j)·r'[κ,j].
-Two dropdowns in the popup: select task type κ and select actor agent.
+a per-agent reward breakdown popup: r_j = φ(actor,κ)·r'^(κ)_j, where the
+task reward vector r'^(κ) already carries the C^(κ) mask (r'^(κ)_j = 0 for
+agents that do not care about task κ). Two dropdowns in the popup: select
+task type κ and select actor agent.
 """
 
 from __future__ import annotations
@@ -219,15 +221,18 @@ def _build_legend_html(
     )
 
 
-def _enc_labels(encoder_type, T: int, N: int) -> tuple[list[str], list[str]]:
+def _enc_labels(encoder_type, T: int, N: int,
+                relatedness_width: int = 0, proficiency_width: int = 0,
+                ) -> tuple[list[str], list[str]]:
     """Return (channel_labels, scalar_labels) for the given encoder type."""
     from orchard.enums import EncoderType
-    if encoder_type == EncoderType.GENERAL_DEC_CNN_GRID:
-        ch = [f"task-val κ{k}" for k in range(T)] + ["self pos", "teammates (R-wtd)", "actor pos (R-wtd)"]
-        sc = ["is_actor", "R(actor→i)", "pick_signal"]
-    elif encoder_type == EncoderType.GENERAL_CEN_CNN_GRID:
-        ch = [f"opt-val κ{k}" for k in range(T)] + [f"agent {j} pos" for j in range(N)] + ["actor pos"]
-        sc = [f"actor={j}" for j in range(N)] + ["pick_phase"]
+    if encoder_type == EncoderType.FILTERED_DEC_CNN_GRID:
+        # FilteredDecEncoder masks to R_i (KR task channels) and W_i (KW agent
+        # channels); both are i-independent by circular symmetry.
+        KR = min(N, 2 * relatedness_width + 1)
+        KW = min(N, 2 * (relatedness_width + proficiency_width) + 1)
+        ch = [f"task (R_i) {t}" for t in range(KR)] + [f"agent (W_i) {s}" for s in range(KW)] + ["actor pos"]
+        sc = [f"actor-local {s}" for s in range(KW)] + ["pick_phase"]
     else:  # EVERYTHING_CNN_GRID
         ch = [f"task κ{k} present" for k in range(T)] + [f"agent {j} pos" for j in range(N)] + ["actor pos"]
         sc = [f"actor={j}" for j in range(N)] + ["pick_phase"]
@@ -284,8 +289,7 @@ def build_html(
         return json.dumps([[round(float(v), 4) for v in row] for row in m])
 
     proficiency_js = _mat_to_js(proficiency)
-    rel_js = _mat_to_js(relatedness)
-    cr_js = _mat_to_js(category_rewards)  # shape (T, N)
+    cr_js = _mat_to_js(category_rewards)  # shape (T, N); already C^(κ)-masked
 
     legend_html = _build_legend_html(
         n_task_types, n_agents,
@@ -310,7 +314,10 @@ def build_html(
         # stores N separate grids (one per network), so the dropdown is shown.
         is_dec = len(frames[0].encoding_grids) > 1
         is_dec_js = "true" if is_dec else "false"
-        ch_labels, sc_labels = _enc_labels(encoder_type, n_task_types, n_agents)
+        ch_labels, sc_labels = _enc_labels(
+            encoder_type, n_task_types, n_agents,
+            relatedness_width, proficiency_width,
+        )
         enc_channel_labels_js = json.dumps(ch_labels)
         enc_scalar_labels_js = json.dumps(sc_labels)
 
@@ -518,7 +525,7 @@ def build_html(
     <thead>
       <tr>
         <th>Agent j</th>
-        <th>R(actor,j)</th>
+        <th>cares? (j∈C<sup>κ</sup>)</th>
         <th>r&#39;[κ,j]</th>
         <th>reward r_j</th>
       </tr>
@@ -550,9 +557,8 @@ const actorPerFrame = {actor_per_frame_js};
 const TASK_TYPE_COLORS = {task_type_colors_js};
 const AGENT_COLORS = {agent_colors_js};
 
-// proficiency[i][kappa], rel[i][j], cr[kappa][j]
+// proficiency[i][kappa], cr[kappa][j] (cr already carries the C^(κ) mask)
 const PHI = {proficiency_js};   // (N_AGENTS x N_TASK_TYPES) or null
-const REL = {rel_js};   // (N_AGENTS x N_AGENTS) or null
 const CR  = {cr_js};    // (N_TASK_TYPES x N_AGENTS) or null
 
 // ---- Task reward popup ----
@@ -623,9 +629,12 @@ function updateTaskPopupTable() {{
   let team_total = 0;
 
   for (let j = 0; j < N_AGENTS; j++) {{
-    const r_val = REL ? REL[actor][j] : (actor === j ? 1.0 : 0.0);
+    // r'^(κ)_j already carries the C^(κ) mask: it is 0 iff agent j does not care
+    // about task κ. The pick reward is simply φ(actor,κ)·r'^(κ)_j (no relatedness
+    // multiply — that masking lives inside r').
     const rp_val = CR ? CR[tau][j] : (1.0 / N_AGENTS);
-    const reward = phi_val * r_val * rp_val;
+    const cares = Math.abs(rp_val) > 1e-9;
+    const reward = phi_val * rp_val;
     team_total += reward;
 
     const agent_color = AGENT_COLORS[j % AGENT_COLORS.length];
@@ -637,7 +646,7 @@ function updateTaskPopupTable() {{
     tr.style.cssText = row_style;
     tr.innerHTML =
       `<td style="color:${{zero ? '#555' : agent_color}};padding:2px 6px">A${{j}}</td>` +
-      `<td style="padding:2px 6px">${{r_val.toFixed(2)}}</td>` +
+      `<td style="padding:2px 6px">${{cares ? '✓' : '·'}}</td>` +
       `<td style="padding:2px 6px">${{rp_val.toFixed(4)}}</td>` +
       `<td style="color:${{reward_color}};padding:2px 6px;font-weight:${{zero?'normal':'bold'}}">` +
       `${{reward >= 0 ? '+' : ''}}${{reward.toFixed(4)}}</td>`;

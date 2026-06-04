@@ -35,7 +35,7 @@ def _make_env_cfg(n_task_types: int = 3) -> EnvConfig:
 
 def _make_model_cfg() -> ModelConfig:
     return ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(16,),
         conv_specs=((4, 3),),
         activation=Activation.RELU,

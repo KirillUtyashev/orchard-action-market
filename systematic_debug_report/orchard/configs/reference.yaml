@@ -7,7 +7,7 @@ env:
   height: 9                        # grid rows
   width: 9                         # grid columns
   n_agents: 4                      # total agents N
-  n_task_types: 2                  # T: number of distinct task types
+  n_task_types: 4                  # T: number of distinct task types (must equal N: shared id space)
   n_tasks: 10                      # initial tasks spawned per type at env.init_state()
   max_tasks_per_type: 10           # cap: spawning stops when this many of type τ exist
   gamma: 0.99                      # discount factor for move turns (pick turns use γ=1)
@@ -42,24 +42,21 @@ env:
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
 
 model:
-  # Encoder: how the grid state is converted to neural network input
+  # Encoder: how the grid state is converted to neural network input.
+  # Both encoders use raw binary positions only — no pre-calculated phi, R, or
+  # reward values appear anywhere; agents discover structure from the team reward.
   #
-  #   general_dec_cnn_grid:  decentralized; each agent's encoding is personalised
-  #                          using its own phi, R, and category_rewards values.
-  #                          Grid: T+3 channels. Scalars: 3.
+  #   everything_cnn_grid:   full unmasked view. Compatible with both centralized
+  #                          and decentralized learning (n_networks derived from
+  #                          train.learning_type). Grid: T+N+1 channels. Scalars: N+1.
   #
-  #   general_cen_cnn_grid:  centralized (single shared network); encoding
-  #                          contains the full joint state with optimal task values.
-  #                          Grid: T+N+1 channels. Scalars: N+1.
-  #
-  #   everything_cnn_grid:   raw binary positions only — no pre-calculated phi,
-  #                          R, or reward values appear anywhere in the encoding.
-  #                          Agents must discover structure entirely from the team
-  #                          reward signal. Compatible with both centralized and
-  #                          decentralized learning (n_networks is derived
-  #                          automatically from train.learning_type).
-  #                          Grid: T+N+1 channels. Scalars: N+1.
-  encoder: general_dec_cnn_grid
+  #   filtered_dec_cnn_grid: decentralized only. Network i sees only the tasks it
+  #                          cares about (R_i, |R_i|=2*relatedness_width+1) and the
+  #                          agents within reach (W_i, |W_i|=2*(relatedness_width+
+  #                          proficiency_width)+1, capped at N), on the shared id
+  #                          ring (requires T=N). Grid: |R_i|+|W_i|+1 channels.
+  #                          Scalars: |W_i|+1.
+  encoder: everything_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer
   # Padding is always kernel_size // 2 (same-padding), so spatial dims don't shrink

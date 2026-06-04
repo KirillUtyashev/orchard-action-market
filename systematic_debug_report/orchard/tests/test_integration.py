@@ -28,7 +28,7 @@ env:
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:

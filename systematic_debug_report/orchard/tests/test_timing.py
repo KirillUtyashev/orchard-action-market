@@ -129,12 +129,13 @@ env:
   height: 3
   width: 3
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -159,12 +160,13 @@ env:
   height: 3
   width: 3
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -199,7 +201,7 @@ env:
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
   conv_specs: [[4, 3]]
 train:

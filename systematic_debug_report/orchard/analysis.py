@@ -27,22 +27,6 @@ import yaml
 # Channel name definitions per encoder type
 # ---------------------------------------------------------------------------
 
-def _dec_channels(T: int, N: int) -> tuple[list[str], list[str]]:
-    grid = [f"task_type_{k}" for k in range(T)] + [
-        "self_pos", "teammate_pos_weighted", "actor_pos_weighted"
-    ]
-    scalar = ["is_actor", "actor_relatedness", "pick_phase"]
-    return grid, scalar
-
-
-def _cen_channels(T: int, N: int) -> tuple[list[str], list[str]]:
-    grid = [f"task_type_{k}" for k in range(T)] + [
-        f"agent_{j}_pos" for j in range(N)
-    ] + ["actor_pos"]
-    scalar = [f"actor_is_{j}" for j in range(N)] + ["pick_phase"]
-    return grid, scalar
-
-
 def _everything_channels(T: int, N: int) -> tuple[list[str], list[str]]:
     grid = [f"task_presence_{k}" for k in range(T)] + [
         f"agent_{j}_pos" for j in range(N)
@@ -51,27 +35,19 @@ def _everything_channels(T: int, N: int) -> tuple[list[str], list[str]]:
     return grid, scalar
 
 
+def _filtered_dec_channels(KR: int, KW: int) -> tuple[list[str], list[str]]:
+    grid = [f"task_R_{t}" for t in range(KR)] + [
+        f"agent_W_{s}" for s in range(KW)
+    ] + ["actor_pos"]
+    scalar = [f"actor_local_{s}" for s in range(KW)] + ["pick_phase"]
+    return grid, scalar
+
+
 _CHANNEL_FNS: dict[str, object] = {
-    "general_dec_cnn_grid": _dec_channels,
-    "general_cen_cnn_grid": _cen_channels,
     "everything_cnn_grid": _everything_channels,
 }
 
 # Channel groups for plotting: (group_label, [channel_names])
-def _dec_groups(T: int, N: int) -> list[tuple[str, list[str]]]:
-    return [
-        ("task channels",     [f"task_type_{k}" for k in range(T)]),
-        ("position channels", ["self_pos", "teammate_pos_weighted", "actor_pos_weighted"]),
-        ("scalar channels",   ["is_actor", "actor_relatedness", "pick_phase"]),
-    ]
-
-def _cen_groups(T: int, N: int) -> list[tuple[str, list[str]]]:
-    return [
-        ("task channels",     [f"task_type_{k}" for k in range(T)]),
-        ("position channels", [f"agent_{j}_pos" for j in range(N)] + ["actor_pos"]),
-        ("scalar channels",   [f"actor_is_{j}" for j in range(N)] + ["pick_phase"]),
-    ]
-
 def _everything_groups(T: int, N: int) -> list[tuple[str, list[str]]]:
     return [
         ("task channels",     [f"task_presence_{k}" for k in range(T)]),
@@ -79,9 +55,14 @@ def _everything_groups(T: int, N: int) -> list[tuple[str, list[str]]]:
         ("scalar channels",   [f"actor_is_{j}" for j in range(N)] + ["pick_phase"]),
     ]
 
+def _filtered_dec_groups(KR: int, KW: int) -> list[tuple[str, list[str]]]:
+    return [
+        ("task channels",     [f"task_R_{t}" for t in range(KR)]),
+        ("position channels", [f"agent_W_{s}" for s in range(KW)] + ["actor_pos"]),
+        ("scalar channels",   [f"actor_local_{s}" for s in range(KW)] + ["pick_phase"]),
+    ]
+
 _GROUP_FNS = {
-    "general_dec_cnn_grid": _dec_groups,
-    "general_cen_cnn_grid": _cen_groups,
     "everything_cnn_grid":  _everything_groups,
 }
 
@@ -148,6 +129,12 @@ def _channel_names_from_meta_path(meta_path: Path) -> tuple[list[str], list[str]
     encoder = cfg["model"]["encoder"]
     T = cfg["env"]["n_task_types"]
     N = cfg["env"]["n_agents"]
+    if encoder == "filtered_dec_cnn_grid":
+        RR = cfg["env"].get("relatedness_width", 0)
+        PR = cfg["env"].get("proficiency_width", 0)
+        KR = min(N, 2 * RR + 1)
+        KW = min(N, 2 * (RR + PR) + 1)
+        return _filtered_dec_channels(KR, KW)
     fn = _CHANNEL_FNS.get(encoder)
     if fn is None:
         raise ValueError(f"Unknown encoder type: {encoder!r}")

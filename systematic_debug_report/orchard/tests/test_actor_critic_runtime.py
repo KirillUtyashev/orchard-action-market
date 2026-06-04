@@ -92,7 +92,7 @@ env:
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:
@@ -167,7 +167,7 @@ def _make_actor_critic_trainer(
         ),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -213,7 +213,7 @@ def _make_probability_count_trainer():
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -269,7 +269,7 @@ def _make_dual_actor_critic_trainers(
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -353,7 +353,7 @@ def _make_single_actor_critic_trainer(
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -535,7 +535,7 @@ class TestActorCriticTrainingLoop:
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -1066,7 +1066,7 @@ class TestActorCriticTrainingLoop:
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -1154,7 +1154,7 @@ class TestActorCriticTrainingLoop:
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -1507,7 +1507,7 @@ class TestActorCriticTrainingLoop:
             ),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(16,),
             conv_specs=((4, 3),),
         )
@@ -1550,13 +1550,13 @@ class TestActorCriticTrainingLoop:
             n_agents=2,
             n_tasks=1,
             gamma=0.99,
-            n_task_types=1,
+            n_task_types=2,
             relatedness_width=0,
             proficiency_width=0,
             max_tasks_per_type=1,
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
-        model_cfg = ModelConfig(encoder=EncoderType.GENERAL_DEC_CNN_GRID, mlp_dims=(16,))
+        model_cfg = ModelConfig(encoder=EncoderType.EVERYTHING_CNN_GRID, mlp_dims=(16,))
         train_cfg = TrainConfig(
             total_steps=5,
             seed=42,
@@ -1585,6 +1585,7 @@ env:
   width: 3
   n_agents: 2
   n_tasks: 1
+  n_task_types: 2
   gamma: 0.99
   relatedness_width: 0
   proficiency_width: 0
@@ -1593,7 +1594,7 @@ env:
     despawn_mode: none
     despawn_prob: 0.0
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
 train:
   learning_type: decentralized

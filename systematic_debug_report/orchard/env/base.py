@@ -22,6 +22,10 @@ class BaseEnv(ABC):
         C = cfg.relatedness_width
         S = cfg.proficiency_width
 
+        # The spec uses one shared id space (T=N): agent i's home task is task i,
+        # so task id τ and agent id share the same circle. This is enforced at
+        # config load (see config.py:_parse_env).
+
         # proficiency[i, kappa] = 1 if circular_dist(i, kappa) <= S else 0  (N x T)
         self.proficiency: np.ndarray = np.array(
             [[1.0 if min(abs(i - kappa), T - abs(i - kappa)) <= S else 0.0 for kappa in range(T)] for i in range(N)],
@@ -56,10 +60,14 @@ class BaseEnv(ABC):
         self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
 
     def _precompute_pick_rewards(self) -> None:
-        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau]*R[actor,j]*r'[tau,j]."""
+        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau] * r'[tau,j].
+
+        The relatedness/C^(tau) mask is already baked into category_rewards r'
+        (see StochasticEnv._generate_category_rewards), so no separate R factor
+        is needed here. r'[tau,j] is nonzero only for j in C^(tau).
+        """
         self._pick_rewards = (
             self.proficiency[:, :, np.newaxis]
-            * self.relatedness[:, np.newaxis, :]
             * self.category_rewards[np.newaxis, :, :]
         ).astype(np.float32)
 
@@ -111,7 +119,7 @@ class BaseEnv(ABC):
     def _compute_pick_rewards(
         self, actor: int, tau: int,
     ) -> tuple[float, ...]:
-        """Per-agent rewards: r_j = phi[actor, tau] * R[actor, j] * r'[tau, j]."""
+        """Per-agent rewards: r_j = phi[actor, tau] * r'[tau, j] (r' carries the C^(tau) mask)."""
         return tuple(self._pick_rewards[actor, tau].tolist())
 
     def resolve_pick(

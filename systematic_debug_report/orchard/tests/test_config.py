@@ -19,12 +19,13 @@ env:
   height: 5
   width: 5
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 train:
   total_steps: 100
@@ -39,7 +40,7 @@ class TestConfigParsing:
 
         assert cfg.env.height == 5
         assert cfg.env.gamma == 0.99
-        assert cfg.model.encoder == EncoderType.GENERAL_DEC_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         assert cfg.train.total_steps == 100
         assert cfg.train.comm_only_teammates is False
         assert cfg.train.batch_forced_actor_updates is True
@@ -54,7 +55,7 @@ class TestConfigParsing:
         os.unlink(path)
 
     def test_invalid_enum_raises(self):
-        bad_yaml = VALID_YAML.replace("general_dec_cnn_grid", "magic_encoder")
+        bad_yaml = VALID_YAML.replace("everything_cnn_grid", "magic_encoder")
         path = _write_yaml(bad_yaml)
         with pytest.raises(ValueError, match="Invalid encoder: 'magic_encoder'"):
             load_config(path)
@@ -62,13 +63,22 @@ class TestConfigParsing:
 
     def test_relatedness_width_proficiency_width_parse(self):
         yaml_str = VALID_YAML.replace(
-            "n_agents: 2", "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 1\n  proficiency_width: 2"
+            "n_agents: 2\n  n_task_types: 2",
+            "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 1\n  proficiency_width: 2",
         )
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
         assert cfg.env.relatedness_width == 1
         assert cfg.env.proficiency_width == 2
         assert cfg.env.n_task_types == 4
+        os.unlink(path)
+
+    def test_t_equals_n_raises(self):
+        # n_agents=2 but n_task_types=3 violates the shared id space T=N.
+        yaml_str = VALID_YAML.replace("n_task_types: 2", "n_task_types: 3")
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="shared id space"):
+            load_config(path)
         os.unlink(path)
 
     def test_sigma_a_sigma_b_parse(self):
@@ -93,10 +103,10 @@ env:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 actor_model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [32]
 train:
   total_steps: 100
@@ -144,7 +154,7 @@ class TestBackwardCompatibility:
         yaml_str = VALID_YAML.replace("encoder:", "input_type:")
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
-        assert cfg.model.encoder == EncoderType.GENERAL_DEC_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         os.unlink(path)
 
 class TestOverrides:

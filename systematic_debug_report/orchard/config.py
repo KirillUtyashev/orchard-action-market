@@ -40,9 +40,8 @@ from orchard.following_rates import get_supported_rate_solver_names, is_scipy_ra
 # ---------------------------------------------------------------------------
 _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
-        "general_dec_cnn_grid": EncoderType.GENERAL_DEC_CNN_GRID,
-        "general_cen_cnn_grid": EncoderType.GENERAL_CEN_CNN_GRID,
         "everything_cnn_grid": EncoderType.EVERYTHING_CNN_GRID,
+        "filtered_dec_cnn_grid": EncoderType.FILTERED_DEC_CNN_GRID,
     },
     "learning_type": {
         "decentralized": LearningType.DECENTRALIZED,
@@ -106,6 +105,12 @@ def _parse_schedule(d: dict[str, Any], name: str) -> ScheduleConfig:
 
 def _parse_env(d: dict[str, Any]) -> EnvConfig:
     n_task_types = int(d.get("n_task_types", 1))
+    n_agents = int(d["n_agents"])
+    if n_task_types != n_agents:
+        raise ValueError(
+            f"env.n_task_types ({n_task_types}) must equal env.n_agents ({n_agents}): "
+            "the spec uses one shared id space (T=N), where agent i's home task is task i."
+        )
 
     sd = d.get("stochastic")
     if sd is None:
@@ -123,7 +128,7 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
     return EnvConfig(
         height=int(d["height"]),
         width=int(d["width"]),
-        n_agents=int(d["n_agents"]),
+        n_agents=n_agents,
         n_tasks=int(d.get("n_tasks", d.get("n_apples", 3))),
         gamma=float(d["gamma"]),
         n_task_types=n_task_types,
