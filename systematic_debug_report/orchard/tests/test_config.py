@@ -56,6 +56,22 @@ class TestConfigParsing:
 
         os.unlink(path)
 
+    def test_eval_seed_parse(self):
+        yaml_str = VALID_YAML + """
+eval:
+  eval_steps: 7
+  n_test_states: 3
+  eval_seed: 123
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+
+        assert cfg.eval.eval_steps == 7
+        assert cfg.eval.n_test_states == 3
+        assert cfg.eval.eval_seed == 123
+
+        os.unlink(path)
+
     def test_missing_section_raises(self):
         bad_yaml = VALID_YAML.replace("env:", "environment:")
         path = _write_yaml(bad_yaml)
@@ -79,6 +95,19 @@ class TestConfigParsing:
         assert cfg.env.clustering == 1
         assert cfg.env.specialization == 2
         assert cfg.env.n_task_types == 4
+        os.unlink(path)
+
+    def test_relatedness_proficiency_width_aliases_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "n_agents: 2",
+            "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 3\n  proficiency_width: 1",
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+
+        assert cfg.env.clustering == 3
+        assert cfg.env.specialization == 1
+
         os.unlink(path)
 
     def test_structure_parse(self):

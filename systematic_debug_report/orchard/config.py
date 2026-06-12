@@ -153,8 +153,8 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         n_tasks=int(d.get("n_tasks", d.get("n_apples", 3))),
         gamma=float(d["gamma"]),
         n_task_types=n_task_types,
-        clustering=int(d.get("clustering", 0)),
-        specialization=int(d.get("specialization", 0)),
+        clustering=int(d.get("clustering", d.get("relatedness_width", 0))),
+        specialization=int(d.get("specialization", d.get("proficiency_width", 0))),
         structure=_enum(d.get("structure", "id_distance"), "structure"),
         structure_group_size=(
             int(d["structure_group_size"]) if d.get("structure_group_size") is not None else None
@@ -328,6 +328,7 @@ def _parse_eval(d: dict[str, Any]) -> EvalConfig:
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
         checkpoint_freq=int(d.get("checkpoint_freq", 0)),
+        eval_seed=(int(d["eval_seed"]) if d.get("eval_seed") is not None else None),
     )
 
 
