@@ -331,29 +331,137 @@ class FilteredDecEncoder(GridEncoder):
 
         return EncoderOutput(grid=grids, scalar=scalars)
 
+    # ------------------------------------------------------------------
+    # Vectorized all-agents encoders.
+    #
+    # These produce output bit-identical to looping encode() /
+    # encode_batch_for_actions() over the N networks (see
+    # TestFilteredDecVectorizedEquivalence), but build every agent's masked
+    # view in one shot with scatter ops instead of a Python N-loop. The N-loop
+    # was the dominant per-step cost when models are tiny (CPU-bound encode,
+    # idle GPU); collapsing it brings cost back near EverythingEncoder's.
+    # ------------------------------------------------------------------
+    def _scatter_task_channels(
+        self, grids: torch.Tensor, task_positions, task_types,
+    ) -> None:
+        """Set task-presence channels (0..KR-1) of grids (N, C, H, W), per-agent masked.
+
+        For every (viewer i, task t): channel = task_local[i, type_t]; if >= 0, mark a
+        1.0 at the task's cell. Tasks of a type outside R_i are skipped (channel -1).
+        """
+        if not task_positions or task_types is None:
+            return
+        N = self._N
+        taus = torch.as_tensor(task_types, dtype=torch.long)
+        rows = torch.tensor([p.row for p in task_positions], dtype=torch.long)
+        cols = torch.tensor([p.col for p in task_positions], dtype=torch.long)
+        chan = self._task_local[:, taus]               # (N, M); -1 where type ∉ R_i
+        M = taus.shape[0]
+        vi = torch.arange(N).view(N, 1).expand(N, M)
+        r = rows.view(1, M).expand(N, M)
+        c = cols.view(1, M).expand(N, M)
+        m = chan >= 0
+        grids[vi[m], chan[m], r[m], c[m]] = 1.0
+
+    def _scatter_agent_channels(
+        self, grids: torch.Tensor, agent_positions, skip_actor: int | None = None,
+    ) -> None:
+        """Set agent-position channels (KR..KR+KW-1) of grids (N, C, H, W), per-agent masked.
+
+        For every (viewer i, target j): channel = KR + agent_local[i, j]; if agent_local
+        >= 0, mark a 1.0 at agent j's cell. Agents outside W_i are skipped. When
+        skip_actor is given, that target column is omitted (its channel is written
+        per-after-state elsewhere).
+        """
+        N, KR = self._N, self._KR
+        arows = torch.tensor([p.row for p in agent_positions], dtype=torch.long)
+        acols = torch.tensor([p.col for p in agent_positions], dtype=torch.long)
+        chan_a = self._agent_local                     # (N_viewer, N_target); -1 where j ∉ W_i
+        Nt = chan_a.shape[1]
+        vi = torch.arange(N).view(N, 1).expand(N, Nt)
+        r = arows.view(1, Nt).expand(N, Nt)
+        c = acols.view(1, Nt).expand(N, Nt)
+        m = chan_a >= 0
+        if skip_actor is not None:
+            m = m & (torch.arange(Nt).view(1, Nt) != skip_actor)
+        grids[vi[m], KR + chan_a[m], r[m], c[m]] = 1.0
+
     def encode_all_agents(self, state: State) -> tuple[torch.Tensor, torch.Tensor]:
         N, KR, KW = self._N, self._KR, self._KW
         h, w = self.env_cfg.height, self.env_cfg.width
         grids = torch.zeros(N, KR + KW + 1, h, w, dtype=torch.float32)
+
+        self._scatter_task_channels(grids, state.task_positions, state.task_types)
+        self._scatter_agent_channels(grids, state.agent_positions)  # all agents (incl. actor)
+
+        # Actor-position channel: same cell for every viewer.
+        apos = state.agent_positions[state.actor]
+        grids[:, KR + KW, apos.row, apos.col] = 1.0
+
+        # Scalars: one-hot actor within W_i (zero if actor ∉ W_i) + pick_phase.
         scalars = torch.zeros(N, KW + 1, dtype=torch.float32)
-        for i in range(N):
-            out = self.encode(state, i)
-            assert out.grid is not None and out.scalar is not None
-            grids[i] = out.grid
-            scalars[i] = out.scalar
+        ac = self._agent_local[:, state.actor]         # (N,)
+        valid = ac >= 0
+        scalars[valid, ac[valid]] = 1.0
+        if state.pick_phase:
+            scalars[:, KW] = 1.0
         return grids, scalars
 
     def encode_all_agents_for_actions(
         self, state: State, after_states: list[State],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         N, KR, KW = self._N, self._KR, self._KW
+        C = KR + KW + 1
         B = len(after_states)
         h, w = self.env_cfg.height, self.env_cfg.width
-        grids = torch.zeros(N, B, KR + KW + 1, h, w, dtype=torch.float32)
+        actor = state.actor
+
+        # Static base per viewer: current-state task channels + non-actor agent channels.
+        base = torch.zeros(N, C, h, w, dtype=torch.float32)
+        self._scatter_task_channels(base, state.task_positions, state.task_types)
+        self._scatter_agent_channels(base, state.agent_positions, skip_actor=actor)
+
+        grids = base.unsqueeze(1).expand(N, B, C, h, w).clone()  # (N, B, C, H, W)
+
+        actor_c = self._agent_local[:, actor]          # (N,); -1 where actor ∉ W_i
+        if B > 0:
+            arows = torch.tensor([s.agent_positions[actor].row for s in after_states],
+                                 dtype=torch.long)
+            acols = torch.tensor([s.agent_positions[actor].col for s in after_states],
+                                 dtype=torch.long)
+            # Actor-position channel (KR+KW) for every (viewer, after-state).
+            vi = torch.arange(N).view(N, 1).expand(N, B).reshape(-1)
+            bi = torch.arange(B).view(1, B).expand(N, B).reshape(-1)
+            rr = arows.view(1, B).expand(N, B).reshape(-1)
+            cc = acols.view(1, B).expand(N, B).reshape(-1)
+            grids[vi, bi, KR + KW, rr, cc] = 1.0
+            # Actor's own agent channel (KR+actor_c[i]) where the actor is in W_i.
+            valid = actor_c >= 0
+            if bool(valid.any()):
+                vi2 = torch.arange(N)[valid]           # (V,)
+                ch2 = KR + actor_c[valid]              # (V,)
+                V = vi2.shape[0]
+                grids[vi2.view(V, 1).expand(V, B).reshape(-1),
+                      torch.arange(B).view(1, B).expand(V, B).reshape(-1),
+                      ch2.view(V, 1).expand(V, B).reshape(-1),
+                      arows.view(1, B).expand(V, B).reshape(-1),
+                      acols.view(1, B).expand(V, B).reshape(-1)] = 1.0
+
+        # Refresh task channels for pick after-states whose task list changed.
+        changed = [k for k, s in enumerate(after_states)
+                   if s.task_positions != state.task_positions]
+        for k in changed:
+            grids[:, k, :KR] = 0.0
+            s = after_states[k]
+            self._scatter_task_channels(grids[:, k], s.task_positions, s.task_types)
+
+        # Scalars (N, B, KW+1): one-hot actor within W_i (all B), then per-action pick_phase.
         scalars = torch.zeros(N, B, KW + 1, dtype=torch.float32)
-        for i in range(N):
-            out = self.encode_batch_for_actions(state, i, after_states)
-            assert out.grid is not None and out.scalar is not None
-            grids[i] = out.grid
-            scalars[i] = out.scalar
+        if B > 0:
+            valid = actor_c >= 0
+            if bool(valid.any()):
+                scalars[torch.arange(N)[valid], :, actor_c[valid]] = 1.0
+            pick_mask = torch.tensor([s.pick_phase for s in after_states], dtype=torch.bool)
+            if bool(pick_mask.any()):
+                scalars[:, pick_mask, KW] = 1.0
         return grids, scalars

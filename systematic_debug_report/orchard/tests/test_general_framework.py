@@ -323,6 +323,150 @@ class TestFilteredDecEncoder:
 
 
 # ---------------------------------------------------------------------------
+# FilteredDecEncoder: the vectorized all-agents methods must produce output
+# bit-identical to looping the (unchanged) single-agent encode/
+# encode_batch_for_actions. The single-agent methods are the correctness oracle.
+# ---------------------------------------------------------------------------
+
+class TestFilteredDecVectorizedEquivalence:
+    @staticmethod
+    def _encoder(n_agents, relatedness_width, proficiency_width, height=5, width=5, seed=0):
+        from orchard.encoding.grid import FilteredDecEncoder
+        env = _make_env(n_agents=n_agents, n_task_types=n_agents,
+                        relatedness_width=relatedness_width,
+                        proficiency_width=proficiency_width,
+                        sigma_a=0.0, sigma_b=0.0, seed=seed, height=height, width=width)
+        return FilteredDecEncoder(env.cfg, n_agents), env
+
+    @staticmethod
+    def _ref_all_agents(enc, state, N):
+        """Reference = stack of the unchanged single-agent encode()."""
+        outs = [enc.encode(state, i) for i in range(N)]
+        grids = torch.stack([o.grid for o in outs])
+        scalars = torch.stack([o.scalar for o in outs])
+        return grids, scalars
+
+    @staticmethod
+    def _ref_all_agents_for_actions(enc, state, after_states, N):
+        """Reference = stack of the unchanged single-agent encode_batch_for_actions()."""
+        outs = [enc.encode_batch_for_actions(state, i, after_states) for i in range(N)]
+        grids = torch.stack([o.grid for o in outs])
+        scalars = torch.stack([o.scalar for o in outs])
+        return grids, scalars
+
+    def _check_all_agents(self, enc, state, N):
+        g_ref, s_ref = self._ref_all_agents(enc, state, N)
+        g_vec, s_vec = enc.encode_all_agents(state)
+        assert g_vec.shape == g_ref.shape and g_vec.dtype == g_ref.dtype
+        assert s_vec.shape == s_ref.shape and s_vec.dtype == s_ref.dtype
+        assert torch.equal(g_vec, g_ref)
+        assert torch.equal(s_vec, s_ref)
+
+    def _check_for_actions(self, enc, state, after_states, N):
+        g_ref, s_ref = self._ref_all_agents_for_actions(enc, state, after_states, N)
+        g_vec, s_vec = enc.encode_all_agents_for_actions(state, after_states)
+        assert g_vec.shape == g_ref.shape and g_vec.dtype == g_ref.dtype
+        assert s_vec.shape == s_ref.shape and s_vec.dtype == s_ref.dtype
+        assert torch.equal(g_vec, g_ref)
+        assert torch.equal(s_vec, s_ref)
+
+    # --- configs spanning unsaturated/saturated KW and the real sweep shape ---
+    CONFIGS = [
+        dict(n_agents=4, relatedness_width=1, proficiency_width=1),   # KW=4 saturated
+        dict(n_agents=8, relatedness_width=1, proficiency_width=1),   # KW=5 unsaturated
+        dict(n_agents=11, relatedness_width=1, proficiency_width=5),  # sweep rel=1
+        dict(n_agents=11, relatedness_width=5, proficiency_width=5),  # sweep rel=5
+    ]
+
+    def _rand_state(self, env, rng, n_tasks):
+        """Random State: distinct agent cells, n_tasks random-typed tasks, random actor/phase."""
+        from orchard.datatypes import State, Grid
+        N = env.cfg.n_agents
+        h, w = env.cfg.height, env.cfg.width
+        cells = rng.permutation(h * w)
+        agent_pos = tuple(Grid(int(c) // w, int(c) % w) for c in cells[:N])
+        if n_tasks == 0:
+            task_pos, task_types = (), ()
+        else:
+            tcells = cells[N:N + n_tasks]
+            task_pos = tuple(Grid(int(c) // w, int(c) % w) for c in tcells)
+            task_types = tuple(int(rng.integers(0, env.cfg.n_task_types)) for _ in range(len(task_pos)))
+        actor = int(rng.integers(0, N))
+        pick = bool(rng.integers(0, 2))
+        return State(agent_positions=agent_pos, task_positions=task_pos,
+                     actor=actor, task_types=task_types, pick_phase=pick)
+
+    def test_encode_all_agents_random(self):
+        for cfg in self.CONFIGS:
+            enc, env = self._encoder(**cfg)
+            N = cfg["n_agents"]
+            rng = np.random.default_rng(123)
+            for n_tasks in (0, 1, 3, 5):
+                for _ in range(8):
+                    state = self._rand_state(env, rng, n_tasks)
+                    self._check_all_agents(enc, state, N)
+
+    def test_encode_all_agents_task_types_none(self):
+        from orchard.datatypes import State, Grid
+        enc, env = self._encoder(n_agents=8, relatedness_width=1, proficiency_width=1)
+        positions = tuple(Grid(k // 5, k % 5) for k in range(8))
+        state = State(agent_positions=positions, task_positions=(), actor=0, task_types=None)
+        self._check_all_agents(enc, state, 8)
+
+    def test_encode_all_agents_pick_phase_both(self):
+        from orchard.datatypes import State, Grid
+        enc, env = self._encoder(n_agents=11, relatedness_width=5, proficiency_width=5, seed=3)
+        rng = np.random.default_rng(7)
+        for pick in (False, True):
+            base = self._rand_state(env, rng, n_tasks=4)
+            state = State(agent_positions=base.agent_positions,
+                          task_positions=base.task_positions, actor=base.actor,
+                          task_types=base.task_types, pick_phase=pick)
+            self._check_all_agents(enc, state, 11)
+
+    def test_encode_all_agents_for_actions_moves(self):
+        """after_states are real env move transitions (task list unchanged)."""
+        from orchard.policy import get_all_actions
+        for cfg in self.CONFIGS:
+            enc, env = self._encoder(**cfg)
+            N = cfg["n_agents"]
+            state = env.init_state()
+            actions = get_all_actions(env.cfg)
+            after_states = [env.apply_action(state, a) for a in actions]
+            self._check_for_actions(enc, state, after_states, N)
+
+    def test_encode_all_agents_for_actions_pick_refresh(self):
+        """after_states include pick states with a CHANGED task list (refresh branch)."""
+        from orchard.datatypes import State, Grid
+        enc, env = self._encoder(n_agents=11, relatedness_width=5, proficiency_width=5, seed=5)
+        N = 11
+        rng = np.random.default_rng(99)
+        state = self._rand_state(env, rng, n_tasks=5)
+        # Build after_states: some moves (same tasks), some picks (one task removed) +
+        # one with the actor moved off-grid window edge. All synthetic but valid States.
+        actor = state.actor
+        afters = []
+        # plain moves: shift actor to a few distinct cells, keep tasks
+        h, w = env.cfg.height, env.cfg.width
+        for c in (0, 7, 13, 20):
+            ap = list(state.agent_positions)
+            ap[actor] = Grid(c // w, c % w)
+            afters.append(State(agent_positions=tuple(ap),
+                                task_positions=state.task_positions, actor=actor,
+                                task_types=state.task_types, pick_phase=False))
+        # pick states: drop the first task, mark pick_phase
+        if state.task_positions:
+            tp = state.task_positions[1:]
+            tt = state.task_types[1:]
+            for c in (3, 9):
+                ap = list(state.agent_positions)
+                ap[actor] = Grid(c // w, c % w)
+                afters.append(State(agent_positions=tuple(ap), task_positions=tp,
+                                    actor=actor, task_types=tt, pick_phase=True))
+        self._check_for_actions(enc, state, afters, N)
+
+
+# ---------------------------------------------------------------------------
 # Spec propositions: exact invariants from the math spec (Proposition 1, sizes,
 # support, proficiency gate, heuristic = team reward). Tolerances are tight
 # because the standardization is exact, not statistical.
