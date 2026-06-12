@@ -72,6 +72,12 @@ class Frame:
     # Per-agent cumulative picks
     agent_picks: dict[int, int] | None = None
 
+    # Optional: encoder grid/scalar snapshots (--show-encoding)
+    # encoding_grids[net_idx] = (C, H, W) as nested Python lists (float)
+    # encoding_scalars[net_idx] = (D,) as Python list (float)
+    encoding_grids: list | None = None
+    encoding_scalars: list | None = None
+
     # Backward compat aliases
     @property
     def apples_on_grid(self) -> int:

@@ -1,4 +1,4 @@
-"""Tests for the general phi/R framework: reward formula, encoders, heuristic."""
+"""Tests for the general proficiency/relatedness framework: reward formula, encoders, heuristic."""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ import pytest
 import torch
 
 from orchard.datatypes import EnvConfig, StochasticConfig
-from orchard.enums import DespawnMode, EncoderType, Heuristic, RewardGeneration, StructureType
+from orchard.enums import DespawnMode, EncoderType, Heuristic
 from orchard.env import create_env
-from orchard.env.stochastic import StochasticEnv
 from orchard.eval import evaluate_policy_metrics
 from orchard.policy import nearest_action, get_phase2_actions, heuristic_action
 from orchard.seed import set_all_seeds
@@ -19,181 +18,71 @@ import orchard.encoding as encoding
 def _make_env(
     n_agents: int = 4,
     n_task_types: int = 4,
-    clustering: int = 1,
-    specialization: int = 1,
+    relatedness_width: int = 1,
+    proficiency_width: int = 1,
     sigma_a: float = 0.0,
     sigma_b: float = 0.0,
     seed: int = 0,
     height: int = 5,
     width: int = 5,
-    structure: StructureType = StructureType.ID_DISTANCE,
-    structure_group_size: int | None = None,
-    n_tasks_per_group: int | None = None,
-    reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
-    baseline_team_sum_mean: float = 1.0,
-    deterministic_baseline_offsets: bool = False,
-    require_positive_diagonal_rewards: bool = False,
-    require_no_negative_dominates_positive: bool = False,
-    positive_rewards_only: bool = False,
-    reward_seed_max_attempts: int = 10000,
 ):
     set_all_seeds(seed)
     cfg = EnvConfig(
         height=height, width=width,
         n_agents=n_agents, n_tasks=2, gamma=0.99,
         n_task_types=n_task_types,
-        clustering=clustering, specialization=specialization,
-        structure=structure,
-        structure_group_size=structure_group_size,
-        n_tasks_per_group=n_tasks_per_group,
+        relatedness_width=relatedness_width, proficiency_width=proficiency_width,
         max_tasks_per_type=5,
         stochastic=StochasticConfig(
             spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
-            sigma_a=sigma_a, sigma_b=sigma_b, reward_generation=reward_generation,
-            baseline_team_sum_mean=baseline_team_sum_mean,
-            deterministic_baseline_offsets=deterministic_baseline_offsets,
-            require_positive_diagonal_rewards=require_positive_diagonal_rewards,
-            require_no_negative_dominates_positive=require_no_negative_dominates_positive,
-            positive_rewards_only=positive_rewards_only,
-            reward_seed_max_attempts=reward_seed_max_attempts,
+            sigma_a=sigma_a, sigma_b=sigma_b,
         ),
     )
     return create_env(cfg)
 
 
 # ---------------------------------------------------------------------------
-# phi and R matrix structure
+# proficiency and relatedness matrix structure
 # ---------------------------------------------------------------------------
 
-class TestPhiAndRelatedness:
-    def test_phi_diagonal_always_one(self):
-        """phi[i, i] = 1 when S >= 0 and T = N."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
-        # With S=0: phi[i, kappa] = 1 iff i == kappa
+class TestProficiencyAndRelatedness:
+    def test_proficiency_diagonal_always_one(self):
+        """proficiency[i, i] = 1 when S >= 0 and T = N."""
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
+        # With S=0: proficiency[i, kappa] = 1 iff i == kappa
         for i in range(4):
-            assert env.phi[i, i] == 1.0
+            assert env.proficiency[i, i] == 1.0
 
-    def test_phi_zero_outside_specialization(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=1)
-        # phi[0, 3] = 1[|0-3|<=1] = 0
-        assert env.phi[0, 3] == 0.0
-        # phi[0, 1] = 1[|0-1|<=1] = 1
-        assert env.phi[0, 1] == 1.0
+    def test_proficiency_zero_outside_proficiency_width(self):
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=1)
+        # circular topology: proficiency[0, 2] has circular dist min(2,2)=2 > 1 → 0
+        assert env.proficiency[0, 2] == 0.0
+        # proficiency[0, 3] has circular dist min(3,1)=1 <= 1 → 1 (wraps around)
+        assert env.proficiency[0, 3] == 1.0
+        # proficiency[0, 1] has circular dist 1 <= 1 → 1
+        assert env.proficiency[0, 1] == 1.0
 
     def test_relatedness_self_always_one(self):
-        env = _make_env(clustering=1)
+        env = _make_env(relatedness_width=1)
         for i in range(4):
             assert env.relatedness[i, i] == 1.0
 
-    def test_relatedness_clustering_structure(self):
-        env = _make_env(n_agents=4, clustering=1)
+    def test_relatedness_relatedness_width_structure(self):
+        env = _make_env(n_agents=4, relatedness_width=1)
         # R(0, 1) = 1[|0-1|<=1] = 1
         assert env.relatedness[0, 1] == 1.0
         # R(0, 2) = 1[|0-2|<=1] = 0
         assert env.relatedness[0, 2] == 0.0
 
     def test_full_relatedness_when_C_ge_N(self):
-        env = _make_env(n_agents=4, clustering=10)
+        env = _make_env(n_agents=4, relatedness_width=10)
         assert np.all(env.relatedness == 1.0)
 
-    def test_phi_positive_types_consistent_with_phi(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=1)
+    def test_proficiency_positive_types_consistent_with_proficiency(self):
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=1)
         for i in range(4):
-            expected = frozenset(k for k in range(4) if env.phi[i, k] > 0)
-            assert env.phi_positive_types[i] == expected
-
-    def test_disjoint_groups_relatedness_is_block_diagonal(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=5,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=2,
-        )
-        expected = np.array(
-            [
-                [1, 1, 0, 0, 0],
-                [1, 1, 0, 0, 0],
-                [0, 0, 1, 1, 0],
-                [0, 0, 1, 1, 0],
-                [0, 0, 0, 0, 1],
-            ],
-            dtype=np.float32,
-        )
-        assert np.array_equal(env.relatedness, expected)
-
-    def test_disjoint_groups_proficiency_matches_task_groups(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=5,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=2,
-        )
-        expected = np.array(
-            [
-                [1, 1, 0, 0, 0],
-                [1, 1, 0, 0, 0],
-                [0, 0, 1, 1, 0],
-                [0, 0, 1, 1, 0],
-                [0, 0, 0, 0, 1],
-            ],
-            dtype=np.float32,
-        )
-        assert np.array_equal(env.phi, expected)
-        assert env.phi_positive_types[0] == frozenset({0, 1})
-        assert env.phi_positive_types[2] == frozenset({2, 3})
-        assert env.phi_positive_types[4] == frozenset({4})
-
-    def test_disjoint_groups_can_set_task_types_per_group(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=3,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=2,
-            n_tasks_per_group=1,
-        )
-        expected = np.array(
-            [
-                [1, 0, 0],
-                [1, 0, 0],
-                [0, 1, 0],
-                [0, 1, 0],
-                [0, 0, 1],
-            ],
-            dtype=np.float32,
-        )
-        assert np.array_equal(env.phi, expected)
-        assert env.phi_positive_types[0] == frozenset({0})
-        assert env.phi_positive_types[2] == frozenset({1})
-        assert env.phi_positive_types[4] == frozenset({2})
-
-    def test_disjoint_groups_require_positive_group_size(self):
-        cfg = EnvConfig(
-            height=5, width=5,
-            n_agents=4, n_tasks=2, gamma=0.99,
-            n_task_types=4,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=0,
-            stochastic=StochasticConfig(
-                spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
-            ),
-        )
-        with pytest.raises(ValueError, match="structure_group_size must be positive"):
-            create_env(cfg)
-
-    def test_disjoint_groups_require_positive_tasks_per_group(self):
-        cfg = EnvConfig(
-            height=5, width=5,
-            n_agents=4, n_tasks=2, gamma=0.99,
-            n_task_types=4,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=2,
-            n_tasks_per_group=0,
-            stochastic=StochasticConfig(
-                spawn_prob=0.3, despawn_mode=DespawnMode.PROBABILITY, despawn_prob=0.1,
-            ),
-        )
-        with pytest.raises(ValueError, match="n_tasks_per_group must be positive"):
-            create_env(cfg)
+            expected = frozenset(k for k in range(4) if env.proficiency[i, k] > 0)
+            assert env.proficiency_positive_types[i] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -207,399 +96,94 @@ class TestCategoryRewards:
 
     def test_zero_sigma_gives_uniform(self):
         env = _make_env(n_agents=4, n_task_types=4, sigma_a=0.0, sigma_b=0.0)
-        # Each r'[kappa] = (1/N) * 1_N
-        expected = 1.0 / 4
-        assert np.allclose(env.category_rewards, expected, atol=1e-5)
+        # relatedness_width=1, N=4 → g = min(3,4) = 3. r'[kappa,j] = 1/g for j in C^(kappa)
+        # (the caring agents) and exactly 0 for everyone else.
+        g = min(2 * env.cfg.relatedness_width + 1, env.cfg.n_agents)
+        for kappa in range(4):
+            row = env.category_rewards[kappa]
+            for j in range(4):
+                caring = env.relatedness[kappa, j] > 0
+                expected = (1.0 / g) if caring else 0.0
+                assert abs(row[j] - expected) < 1e-5, f"kappa={kappa}, j={j}: {row[j]} != {expected}"
 
     def test_sigma_a_zero_means_uniform_within_category(self):
         env = _make_env(n_agents=4, n_task_types=4, sigma_a=0.0, sigma_b=1.0)
-        # With sigma_a=0, all agents get same r' within a category (no agent variance)
+        # With sigma_a=0, all CARING agents get the same baseline within a category;
+        # non-caring agents are 0.
         for kappa in range(4):
             row = env.category_rewards[kappa]
-            assert np.allclose(row, row[0], atol=1e-5), f"kappa={kappa} not uniform: {row}"
+            caring_vals = [row[j] for j in range(4) if env.relatedness[kappa, j] > 0]
+            assert np.allclose(caring_vals, caring_vals[0], atol=1e-5), f"kappa={kappa}: {row}"
+            for j in range(4):
+                if env.relatedness[kappa, j] == 0:
+                    assert row[j] == 0.0
 
     def test_sigma_b_zero_means_equal_category_means(self):
         env = _make_env(n_agents=4, n_task_types=4, sigma_a=0.0, sigma_b=0.0)
-        # All categories have same baseline 1/N
-        means = env.category_rewards.mean(axis=1)
-        assert np.allclose(means, 1.0 / 4, atol=1e-5)
+        # Each caring agent gets 1/g; mean over the g caring agents is 1/g.
+        g = min(2 * env.cfg.relatedness_width + 1, env.cfg.n_agents)
+        for kappa in range(4):
+            row = env.category_rewards[kappa]
+            caring_vals = [row[j] for j in range(4) if env.relatedness[kappa, j] > 0]
+            assert np.allclose(np.mean(caring_vals), 1.0 / g, atol=1e-5)
 
     def test_category_rewards_dtype_float32(self):
         env = _make_env()
         assert env.category_rewards.dtype == np.float32
 
-    def test_category_reward_components_reconstruct_rewards(self):
-        env = _make_env(n_agents=5, n_task_types=6, sigma_a=0.4, sigma_b=1.2)
-        reconstructed = env.category_reward_agent_offsets + env.category_reward_baselines[:, np.newaxis]
-
-        assert env.category_reward_baseline_raw.shape == (6,)
-        assert env.category_reward_baseline_standardized.shape == (6,)
-        assert env.category_reward_baselines.shape == (6,)
-        assert env.category_reward_agent_offsets.shape == (6, 5)
-        assert np.allclose(reconstructed, env.category_rewards, atol=1e-6)
-        assert np.allclose(env.category_reward_agent_offsets.mean(axis=1), 0.0, atol=1e-6)
-
-    def test_sigma_b_sets_team_sum_variance(self):
-        sigma_b = 1.25
-        env = _make_env(n_agents=4, n_task_types=8, sigma_a=0.7, sigma_b=sigma_b)
-        team_sums = env.category_rewards.sum(axis=1)
-        assert team_sums.mean() == pytest.approx(1.0, abs=1e-5)
-        assert team_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
-
-    def test_baseline_team_sum_mean_lifts_constant_task_sums(self):
-        sigma_a = 1.7
-        team_sum_mean = 8.0
-        env = _make_env(
-            n_agents=5,
-            n_task_types=6,
-            sigma_a=sigma_a,
-            sigma_b=0.0,
-            baseline_team_sum_mean=team_sum_mean,
-        )
-
-        team_sums = env.category_rewards.sum(axis=1)
-        row_vars = env.category_rewards.var(axis=1)
-
-        assert np.allclose(team_sums, team_sum_mean, atol=1e-5)
-        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
-        assert np.allclose(env.category_rewards.mean(axis=1), team_sum_mean / 5, atol=1e-5)
-
-    def test_deterministic_baseline_offsets_set_exact_task_sum_spread(self):
-        sigma_b = 2.5
-        team_sum_mean = 1.0
-        env = _make_env(
-            n_agents=4,
-            n_task_types=8,
-            sigma_a=0.6,
-            sigma_b=sigma_b,
-            baseline_team_sum_mean=team_sum_mean,
-            deterministic_baseline_offsets=True,
-        )
-
-        team_sums = env.category_rewards.sum(axis=1)
-
-        assert team_sums.mean() == pytest.approx(team_sum_mean, abs=1e-5)
-        assert team_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
-        assert np.all(np.diff(env.category_reward_baseline_raw) > 0.0)
-        assert np.all(np.diff(team_sums) > 0.0)
-
-    def test_sigma_a_sets_within_category_agent_variance(self):
-        sigma_a = 0.4
-        env = _make_env(n_agents=5, n_task_types=6, sigma_a=sigma_a, sigma_b=0.0)
-        row_vars = env.category_rewards.var(axis=1)
-        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
-        assert np.allclose(env.category_rewards.mean(axis=1), 1.0 / 5, atol=1e-5)
-
-    def test_negative_dominance_constraint_preserves_baseline_offset_stats(self):
-        sigma_a = 1.0
-        sigma_b = 0.0
-        env = _make_env(
-            n_agents=12,
-            n_task_types=12,
-            sigma_a=sigma_a,
-            sigma_b=sigma_b,
-            require_no_negative_dominates_positive=True,
-        )
-
-        rewards = env.category_rewards
-        team_sums = rewards.sum(axis=1)
-        row_vars = rewards.var(axis=1)
-
-        assert np.allclose(team_sums, 1.0, atol=1e-5)
-        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
-
-        for row in rewards:
-            negatives = row[row < 0.0]
-            positives = row[row > 0.0]
-            if len(negatives) == 0:
-                continue
-            assert len(positives) > 0
-            assert -float(negatives.min()) <= float(positives.min()) + 1e-6
-
-    def test_sampled_mean_generation_forces_agent_variance(self):
-        sigma_a = 0.4
-        env = _make_env(
-            n_agents=5,
-            n_task_types=6,
-            sigma_a=sigma_a,
-            sigma_b=2.0,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-        )
-
-        row_means = env.category_rewards.mean(axis=1)
-        row_vars = env.category_rewards.var(axis=1)
-
-        assert np.allclose(row_means, env.category_reward_baselines, atol=1e-6)
-        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
-        assert np.allclose(
-            env.category_reward_agent_offsets,
-            env.category_rewards - row_means[:, np.newaxis],
-            atol=1e-6,
-        )
-
-    def test_sampled_mean_positive_rewards_only_preserves_agent_variance(self):
-        sigma_a = 1.0
-        env = _make_env(
-            n_agents=12,
-            n_task_types=12,
-            sigma_a=sigma_a,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-            positive_rewards_only=True,
-        )
-
-        row_vars = env.category_rewards.var(axis=1)
-
-        assert np.all(env.category_rewards > 0.0)
-        assert np.allclose(row_vars, sigma_a ** 2, atol=1e-5)
-        assert np.allclose(
-            env.category_rewards.mean(axis=1),
-            env.category_reward_baselines,
-            atol=1e-6,
-        )
-
-    def test_sampled_mean_generation_preserves_random_row_mean_near_one(self):
-        sigma_a = 0.8
-        env = _make_env(
-            n_agents=5,
-            n_task_types=20,
-            sigma_a=sigma_a,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-        )
-
-        reward_sums = env.category_rewards.sum(axis=1)
-
-        assert np.allclose(reward_sums, env.cfg.n_agents * env.category_reward_baselines, atol=1e-5)
-        assert abs(float(env.category_rewards.mean()) - 1.0) < 0.25
-        assert float(reward_sums.var()) > 0.0
-
-    def test_sampled_mean_generation_zero_sigma_gives_ones(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=6,
-            sigma_a=0.0,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-        )
-        assert np.allclose(env.category_rewards, 1.0, atol=1e-6)
-        assert np.allclose(env.category_reward_agent_offsets, 0.0, atol=1e-6)
-
-    def test_positive_diagonal_reward_requirement_retries_seed(self, monkeypatch):
-        calls = []
-
-        def fake_components(
-            seed,
-            T,
-            N,
-            sigma_a,
-            sigma_b,
-            reward_generation,
-            baseline_team_sum_mean=1.0,
-            deterministic_baseline_offsets=False,
-            require_no_negative_dominates_positive=False,
-            positive_rewards_only=False,
-        ):
-            calls.append(seed)
-            rewards = np.ones((T, N), dtype=np.float32)
-            if len(calls) == 1:
-                rewards[0, 0] = -0.5
-            baselines = rewards.mean(axis=1).astype(np.float32)
-            offsets = rewards - baselines[:, np.newaxis]
-            return (
-                rewards,
-                np.zeros(T, dtype=np.float32),
-                np.zeros(T, dtype=np.float32),
-                baselines,
-                offsets.astype(np.float32),
-            )
-
-        monkeypatch.setattr(
-            StochasticEnv,
-            "_generate_category_reward_components",
-            staticmethod(fake_components),
-        )
-        env = _make_env(
-            n_agents=3,
-            n_task_types=3,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-            require_positive_diagonal_rewards=True,
-        )
-
-        assert env.category_reward_seed_attempts == 2
-        assert len(calls) == 2
-        assert np.all(np.diag(env.category_rewards) > 0.0)
-
-    def test_positive_diagonal_reward_requirement_fails_after_max_attempts(self, monkeypatch):
-        def fake_components(
-            seed,
-            T,
-            N,
-            sigma_a,
-            sigma_b,
-            reward_generation,
-            baseline_team_sum_mean=1.0,
-            deterministic_baseline_offsets=False,
-            require_no_negative_dominates_positive=False,
-            positive_rewards_only=False,
-        ):
-            rewards = np.ones((T, N), dtype=np.float32)
-            rewards[0, 0] = -0.5
-            baselines = rewards.mean(axis=1).astype(np.float32)
-            offsets = rewards - baselines[:, np.newaxis]
-            return (
-                rewards,
-                np.zeros(T, dtype=np.float32),
-                np.zeros(T, dtype=np.float32),
-                baselines,
-                offsets.astype(np.float32),
-            )
-
-        monkeypatch.setattr(
-            StochasticEnv,
-            "_generate_category_reward_components",
-            staticmethod(fake_components),
-        )
-        with pytest.raises(ValueError, match="strictly positive diagonal"):
-            _make_env(
-                n_agents=3,
-                n_task_types=3,
-                reward_generation=RewardGeneration.SAMPLED_MEAN,
-                require_positive_diagonal_rewards=True,
-                reward_seed_max_attempts=2,
-            )
-
 
 # ---------------------------------------------------------------------------
-# Reward formula: r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm[actor]
+# Reward formula: r_j = proficiency[actor,tau] * r'[tau,j], where r'[tau] carries
+# the C^(tau) mask (the agents that care about TASK tau, keyed on tau not the actor).
 # ---------------------------------------------------------------------------
 
 class TestRewardFormula:
-    def test_zero_phi_means_zero_reward(self):
+    def test_zero_proficiency_means_zero_reward(self):
         """If actor has no proficiency in task type, all rewards are zero."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
-        # With S=0: agent 0 can only do type 0. Picking type 1 → phi[0,1]=0 → all r=0
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
+        # With S=0: agent 0 can only do type 0. Picking type 1 → proficiency[0,1]=0 → all r=0
         state = env.init_state()
         rewards = env._compute_pick_rewards(actor=0, tau=1)
         assert all(r == 0.0 for r in rewards), f"Expected all zero, got {rewards}"
 
     def test_correct_pick_formula(self):
-        """r_j = phi[actor,tau] * R[actor,j] * r'[tau,j] * norm computed correctly."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0,
+        """r_j = proficiency[actor,tau] * r'[tau,j], with r'[tau,j] = (1/g)·1[j∈C^(tau)]."""
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0,
                         sigma_a=0.0, sigma_b=0.0)
-        # sigma_a=0, sigma_b=0 → r'[tau,j] = 1/4 for all j
-        # S=0: phi[0, 0] = 1, phi[0, k≠0] = 0
-        # C=1: R[0, 0]=1, R[0, 1]=1, R[0, 2]=0, R[0, 3]=0
+        # sigma_a=sigma_b=0 → r'[tau,j] = 1/g for j in C^(tau); g = min(2*1+1, 4) = 3.
+        # S=0: proficiency[0,0]=1; actor=0 picks tau=0, so reward keyed on C^(0).
+        # C=1, circular: C^(0) = {3,0,1}; agent 2 does not care → 0.
         rewards = env._compute_pick_rewards(actor=0, tau=0)
-        norm = env.cfg.n_agents / env.relatedness[0].sum()
         for j in range(4):
-            expected = 1.0 * env.relatedness[0, j] * (1.0 / 4) * norm
+            expected = 1.0 * env.relatedness[0, j] * (1.0 / 3)  # C^(0) == agents related to id 0
             assert abs(rewards[j] - expected) < 1e-5, f"j={j}: got {rewards[j]}, expected {expected}"
 
-    def test_full_relatedness_pick_sum_variance_matches_sigma_b(self):
-        sigma_b = 1.1
-        env = _make_env(
-            n_agents=4,
-            n_task_types=8,
-            clustering=10,
-            specialization=10,
-            sigma_a=0.6,
-            sigma_b=sigma_b,
-        )
-        reward_sums = np.array([sum(env._compute_pick_rewards(actor=0, tau=tau)) for tau in range(8)])
-        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
-        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
-
-    def test_partial_relatedness_pick_sum_variance_matches_sigma_b_without_agent_noise(self):
-        sigma_b = 0.8
-        env = _make_env(
-            n_agents=6,
-            n_task_types=8,
-            clustering=1,
-            specialization=10,
-            sigma_a=0.0,
-            sigma_b=sigma_b,
-        )
-        reward_sums = np.array([sum(env._compute_pick_rewards(actor=0, tau=tau)) for tau in range(8)])
-        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
-        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
-
-    def test_partial_relatedness_pick_sums_include_masked_agent_noise(self):
-        env = _make_env(
-            n_agents=6,
-            n_task_types=8,
-            clustering=1,
-            specialization=10,
-            sigma_a=0.5,
-            sigma_b=0.0,
-        )
-        actor = 0
-        norm = env.cfg.n_agents / env.relatedness[actor].sum()
-        expected = np.array([
-            norm * float((env.relatedness[actor] * env.category_rewards[tau]).sum())
-            for tau in range(env.cfg.n_task_types)
-        ])
-        reward_sums = np.array([
-            sum(env._compute_pick_rewards(actor=actor, tau=tau))
-            for tau in range(env.cfg.n_task_types)
-        ])
-        assert np.allclose(reward_sums, expected, atol=1e-5)
-        assert reward_sums.var() > 0.0
-
-    def test_disjoint_relatedness_pick_sum_variance_matches_sigma_b_without_agent_noise(self):
-        sigma_b = 0.9
-        env = _make_env(
-            n_agents=6,
-            n_task_types=6,
-            structure=StructureType.DISJOINT_GROUPS,
-            structure_group_size=2,
-            n_tasks_per_group=2,
-            sigma_a=0.0,
-            sigma_b=sigma_b,
-        )
-        reward_sums = []
-        for tau in range(env.cfg.n_task_types):
-            actor = (tau // env.cfg.n_tasks_per_group) * env.cfg.structure_group_size
-            reward_sums.append(sum(env._compute_pick_rewards(actor=actor, tau=tau)))
-        reward_sums = np.array(reward_sums)
-        assert reward_sums.mean() == pytest.approx(1.0, abs=1e-5)
-        assert reward_sums.var() == pytest.approx(sigma_b ** 2, abs=1e-5)
-
-    def test_sampled_mean_pick_rewards_skip_normalization_for_self_reward(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=5,
-            clustering=0,
-            specialization=0,
-            sigma_a=1.0,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-        )
-
-        for actor in range(env.cfg.n_agents):
-            rewards = np.array(env._compute_pick_rewards(actor=actor, tau=actor))
-            expected = np.zeros(env.cfg.n_agents, dtype=np.float32)
-            expected[actor] = env.category_rewards[actor, actor]
-            assert np.allclose(rewards, expected, atol=1e-6)
-
-    def test_sampled_mean_pick_rewards_skip_normalization_for_full_share(self):
-        env = _make_env(
-            n_agents=5,
-            n_task_types=5,
-            clustering=10,
-            specialization=10,
-            sigma_a=1.0,
-            reward_generation=RewardGeneration.SAMPLED_MEAN,
-        )
-
-        rewards = np.array(env._compute_pick_rewards(actor=0, tau=0))
-        assert np.allclose(rewards, env.category_rewards[0], atol=1e-6)
+    def test_relatedness_keyed_on_task_not_actor(self):
+        """Reward spreads to C^(tau), the carers of the picked task — not the actor's set."""
+        # proficiency_width=1 lets actor 0 pick tau=1 (circular dist 1). Reward must go
+        # to C^(1) = {0,1,2}, NOT to C^(0) = {3,0,1}.
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=1,
+                        relatedness_width=1, sigma_a=0.0, sigma_b=0.0)
+        assert env.proficiency[0, 1] == 1.0  # actor 0 is proficient in task 1
+        rewards = env._compute_pick_rewards(actor=0, tau=1)
+        g = 3
+        for j in range(4):
+            expected = (1.0 / g) if env.relatedness[1, j] > 0 else 0.0  # C^(1), keyed on tau=1
+            assert abs(rewards[j] - expected) < 1e-5, f"j={j}: got {rewards[j]}, expected {expected}"
+        # Sanity: agent 3 cares about task 0 but NOT task 1 → must get nothing here.
+        assert rewards[3] == 0.0
+        # Agent 2 cares about task 1 but not task 0 → must get reward here.
+        assert rewards[2] > 0.0
 
     def test_resolve_pick_removes_task(self):
         """After resolve_pick, the picked task is removed from state."""
-        env = _make_env(n_agents=4, n_task_types=4, specialization=10)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=10)
         state = env.init_state()
         # Find a state where actor is on an eligible task
         from orchard.enums import Action
         for _ in range(100):
             actor = state.actor
-            eligible = env.phi_positive_types[actor]
+            eligible = env.proficiency_positive_types[actor]
             if state.is_agent_on_task(actor, eligible):
                 n_tasks_before = len(state.task_positions)
                 new_state, rewards = env.resolve_pick(state, pick_type=list(eligible)[0] if eligible else None)
@@ -610,25 +194,25 @@ class TestRewardFormula:
 
 
 # ---------------------------------------------------------------------------
-# Phase-2 action space: only phi > 0 types offered
+# Phase-2 action space: only proficiency > 0 types offered
 # ---------------------------------------------------------------------------
 
 class TestPhase2Actions:
     def test_stay_always_offered(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         state = env.init_state()
         # Even if no eligible tasks at cell, STAY is offered
         from orchard.datatypes import State, Grid
         from orchard.enums import Action
         # Put actor on a cell with only ineligible task
-        actor = 0  # phi[0, tau>0] = 0 with S=0
+        actor = 0  # proficiency[0, tau>0] = 0 with S=0
         actor_pos = state.agent_positions[actor]
         actions = get_phase2_actions(state.with_pick_phase(), env)
         # At minimum STAY is returned (or empty if no task at cell)
         assert Action.STAY in actions or len(actions) == 0
 
     def test_ineligible_types_not_offered(self):
-        env = _make_env(n_agents=4, n_task_types=4, specialization=0)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=0)
         from orchard.datatypes import State, Grid
         from orchard.enums import Action, make_pick_action
         state = env.init_state()
@@ -643,67 +227,15 @@ class TestPhase2Actions:
 # Encoders: channel count and value correctness
 # ---------------------------------------------------------------------------
 
-class TestGeneralDecEncoder:
+class TestEverythingEncoder:
     def setup_method(self):
-        self.env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1,
+        self.env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1,
                               sigma_a=0.0, sigma_b=0.0)
-        encoding.init_encoder(EncoderType.GENERAL_DEC_CNN_GRID, self.env)
+        encoding.init_encoder(EncoderType.EVERYTHING_CNN_GRID, self.env, n_networks=4)
         self.state = self.env.init_state()
 
     def test_grid_channels_count(self):
-        T = self.env.cfg.n_task_types
-        out = encoding.encode(self.state, 0)
-        assert out.grid.shape[0] == T + 3
-
-    def test_scalar_dim(self):
-        out = encoding.encode(self.state, 0)
-        assert out.scalar.shape[0] == 3
-
-    def test_encode_all_agents_shape(self):
-        T = self.env.cfg.n_task_types
-        N = self.env.cfg.n_agents
-        h, w = self.env.cfg.height, self.env.cfg.width
-        grids, scalars = encoding.encode_all_agents(self.state)
-        assert grids.shape == (N, T + 3, h, w)
-        assert scalars.shape == (N, 3)
-
-    def test_actor_scalar_indicator(self):
-        grids, scalars = encoding.encode_all_agents(self.state)
-        actor = self.state.actor
-        # scalar[actor, 0] == 1, scalar[non-actor, 0] == 0
-        assert scalars[actor, 0].item() == pytest.approx(1.0)
-        for i in range(self.env.cfg.n_agents):
-            if i != actor:
-                assert scalars[i, 0].item() == pytest.approx(0.0)
-
-    def test_task_value_channels_non_negative_when_rewards_positive(self):
-        """With sigma=0 → r'=1/N>0, phi>=0, R>=0 → task values >= 0."""
-        grids, _ = encoding.encode_all_agents(self.state)
-        T = self.env.cfg.n_task_types
-        # Task value channels (0..T-1) should be >= 0
-        assert (grids[:, :T] >= -1e-6).all()
-
-    def test_encode_batch_for_actions_shape(self):
-        from orchard.policy import get_all_actions
-        from orchard.env.base import BaseEnv
-        actions = get_all_actions(self.env.cfg)
-        after_states = [self.env.apply_action(self.state, a) for a in actions]
-        out = encoding.encode_batch_for_actions(self.state, 0, after_states)
         T, N = self.env.cfg.n_task_types, self.env.cfg.n_agents
-        h, w = self.env.cfg.height, self.env.cfg.width
-        assert out.grid.shape == (len(actions), T + 3, h, w)
-        assert out.scalar.shape == (len(actions), 3)
-
-
-class TestGeneralCenEncoder:
-    def setup_method(self):
-        self.env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1)
-        encoding.init_encoder(EncoderType.GENERAL_CEN_CNN_GRID, self.env)
-        self.state = self.env.init_state()
-
-    def test_grid_channels_count(self):
-        T = self.env.cfg.n_task_types
-        N = self.env.cfg.n_agents
         out = encoding.encode(self.state, 0)
         assert out.grid.shape[0] == T + N + 1
 
@@ -716,8 +248,174 @@ class TestGeneralCenEncoder:
         T, N = self.env.cfg.n_task_types, self.env.cfg.n_agents
         h, w = self.env.cfg.height, self.env.cfg.width
         grids, scalars = encoding.encode_all_agents(self.state)
-        # Centralized: N=1 outer dim
-        assert grids.shape == (1, T + N + 1, h, w)
+        assert grids.shape == (N, T + N + 1, h, w)
+        assert scalars.shape == (N, N + 1)
+
+
+class TestFilteredDecEncoder:
+    def setup_method(self):
+        # N=T=4, R^R=1, P^R=1 → KR = min(4, 3) = 3, KW = min(4, 5) = 4.
+        self.env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1,
+                             sigma_a=0.0, sigma_b=0.0)
+        encoding.init_encoder(EncoderType.FILTERED_DEC_CNN_GRID, self.env, n_networks=4)
+        self.state = self.env.init_state()
+        self.KR = min(4, 2 * 1 + 1)
+        self.KW = min(4, 2 * (1 + 1) + 1)
+
+    def test_grid_and_scalar_dims(self):
+        out = encoding.encode(self.state, 0)
+        assert out.grid.shape[0] == self.KR + self.KW + 1
+        assert out.scalar.shape[0] == self.KW + 1
+
+    def test_encode_all_agents_shape(self):
+        h, w = self.env.cfg.height, self.env.cfg.width
+        grids, scalars = encoding.encode_all_agents(self.state)
+        assert grids.shape == (4, self.KR + self.KW + 1, h, w)
+        assert scalars.shape == (4, self.KW + 1)
+
+    def test_encode_batch_for_actions_shape(self):
+        from orchard.policy import get_all_actions
+        actions = get_all_actions(self.env.cfg)
+        after_states = [self.env.apply_action(self.state, a) for a in actions]
+        out = encoding.encode_batch_for_actions(self.state, 0, after_states)
+        h, w = self.env.cfg.height, self.env.cfg.width
+        assert out.grid.shape == (len(actions), self.KR + self.KW + 1, h, w)
+        assert out.scalar.shape == (len(actions), self.KW + 1)
+
+    def test_encode_all_agents_for_actions_shape(self):
+        from orchard.policy import get_all_actions
+        actions = get_all_actions(self.env.cfg)
+        after_states = [self.env.apply_action(self.state, a) for a in actions]
+        grids, scalars = encoding.encode_all_agents_for_actions(self.state, after_states)
+        h, w = self.env.cfg.height, self.env.cfg.width
+        assert grids.shape == (4, len(actions), self.KR + self.KW + 1, h, w)
+        assert scalars.shape == (4, len(actions), self.KW + 1)
+
+    def test_tasks_outside_R_i_are_masked(self):
+        """Network i must not observe a task type outside R_i = {k : d(i,k) <= R^R}."""
+        from orchard.datatypes import State, Grid
+        # Single task of type 2 at (0,0). For agent 0, R_0 = {3,0,1}; type 2 ∉ R_0.
+        state = State(agent_positions=(Grid(2, 2), Grid(3, 3), Grid(4, 4), Grid(0, 1)),
+                      task_positions=(Grid(0, 0),), actor=0, task_types=(2,))
+        out0 = encoding.encode(state, 0)
+        # All KR task channels empty for agent 0 (type 2 not kept).
+        assert out0.grid[: self.KR].abs().sum().item() == pytest.approx(0.0)
+        # Agent 2 cares about type 2 (R_2 = {1,2,3}) → it appears.
+        out2 = encoding.encode(state, 2)
+        assert out2.grid[: self.KR].abs().sum().item() > 0.0
+
+    def test_agents_outside_W_i_are_masked(self):
+        """Network i must not observe an agent outside W_i = {j : d(i,j) <= R^R+P^R}."""
+        # N=4, R^R+P^R=2 → KW=4 = all agents, nothing masked. Use a bigger ring to test.
+        env = _make_env(n_agents=8, n_task_types=8, relatedness_width=1, proficiency_width=1,
+                        sigma_a=0.0, sigma_b=0.0)
+        encoding.init_encoder(EncoderType.FILTERED_DEC_CNN_GRID, env, n_networks=8)
+        KW = min(8, 2 * (1 + 1) + 1)  # = 5; W_0 = {6,7,0,1,2}; agents 3,4,5 excluded
+        from orchard.datatypes import State, Grid
+        # 8 distinct cells inside the 5x5 grid (default height=width=5).
+        positions = tuple(Grid(k // 5, k % 5) for k in range(8))
+        state = State(agent_positions=positions, task_positions=(), actor=0, task_types=())
+        out = encoding.encode(state, 0)
+        KR = min(8, 3)
+        agent_block = out.grid[KR:KR + KW]
+        # Exactly KW agents (the members of W_0) are marked, one cell each.
+        assert agent_block.sum().item() == pytest.approx(float(KW))
+
+
+# ---------------------------------------------------------------------------
+# Spec propositions: exact invariants from the math spec (Proposition 1, sizes,
+# support, proficiency gate, heuristic = team reward). Tolerances are tight
+# because the standardization is exact, not statistical.
+# ---------------------------------------------------------------------------
+
+def _circ(a, b, N):
+    return min(abs(a - b), N - abs(a - b))
+
+
+class TestSpecPropositions:
+    def test_prop1a_within_task_std_is_sigma_a(self):
+        """std_{i in C^(k)} r^(k)_i = sigma_a, mean = 1/g (sigma_b=0)."""
+        N = 7
+        sigma_a = 0.4
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=1,
+                        sigma_a=sigma_a, sigma_b=0.0, seed=1)
+        g = min(2 * env.cfg.relatedness_width + 1, N)
+        for k in range(N):
+            carers = [j for j in range(N) if _circ(k, j, N) <= env.cfg.relatedness_width]
+            vals = env.category_rewards[k, carers]
+            assert np.isclose(vals.std(), sigma_a, atol=1e-5), f"k={k}: std={vals.std()}"
+            assert np.isclose(vals.mean(), 1.0 / g, atol=1e-5), f"k={k}: mean={vals.mean()}"
+
+    def test_prop1b_team_total_std_is_sigma_b_mean_is_one(self):
+        """std_k r^(k)_team = sigma_b and mean_k r^(k)_team = 1 (the normalized target)."""
+        N = 8
+        sigma_b = 0.3
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=1,
+                        sigma_a=0.0, sigma_b=sigma_b, seed=2)
+        team_totals = env.category_rewards.sum(axis=1)  # r^(k)_team for each task k
+        assert np.isclose(team_totals.mean(), 1.0, atol=1e-5), f"mean={team_totals.mean()}"
+        assert np.isclose(team_totals.std(), sigma_b, atol=1e-5), f"std={team_totals.std()}"
+
+    def test_support_equals_caring_set(self):
+        """Nonzero entries of r^(k) are exactly C^(k) = {j : d(k,j) <= R^R}."""
+        N = 7
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=1,
+                        sigma_a=0.5, sigma_b=0.5, seed=3)
+        for k in range(N):
+            support = set(np.nonzero(env.category_rewards[k])[0].tolist())
+            expected = {j for j in range(N) if _circ(k, j, N) <= env.cfg.relatedness_width}
+            assert support == expected, f"k={k}: support={support}, expected={expected}"
+
+    def test_proficiency_gate_zeroes_reward(self):
+        """r^(k)_i(c) = 0 for all i whenever the actor c is not proficient in task k."""
+        N = 7
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=1,
+                        sigma_a=0.5, sigma_b=0.5, seed=4)
+        PR = env.cfg.proficiency_width
+        for c in range(N):
+            for k in range(N):
+                rewards = env._compute_pick_rewards(actor=c, tau=k)
+                if _circ(c, k, N) > PR:  # actor not proficient → all zero
+                    assert all(r == 0.0 for r in rewards), f"c={c}, k={k}: {rewards}"
+
+    def test_set_sizes(self):
+        """|P_c| = 2P^R+1, |C^(k)| = 2R^R+1 (mid-ring, no wrap saturation)."""
+        N = 9
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=1,
+                        sigma_a=0.0, sigma_b=0.0, seed=5)
+        PR, RR = env.cfg.proficiency_width, env.cfg.relatedness_width
+        for c in range(N):
+            assert int(env.proficiency[c].sum()) == 2 * PR + 1
+        for k in range(N):
+            carers = [j for j in range(N) if _circ(k, j, N) <= RR]
+            assert len(carers) == 2 * RR + 1
+
+    def test_heuristic_picks_argmax_team_reward(self):
+        """In phase 2 the heuristic picks the eligible type with the highest team
+        reward Sum_j r^(k)_j present at the actor's cell — confirming the heuristic
+        value IS the team reward."""
+        from orchard.datatypes import State, Grid
+        N = 7
+        env = _make_env(n_agents=N, n_task_types=N, relatedness_width=2, proficiency_width=3,
+                        sigma_a=0.3, sigma_b=0.4, seed=6)
+        actor = 0
+        eligible = sorted(env.proficiency_positive_types[actor])
+        # Stack one task of each eligible type on the actor's cell, so the heuristic
+        # must choose among them by team reward.
+        cell = Grid(2, 2)
+        positions = [Grid(0, 0)] * N
+        positions[actor] = cell
+        task_positions = tuple(cell for _ in eligible)
+        task_types = tuple(eligible)
+        pick_state = State(agent_positions=tuple(positions), task_positions=task_positions,
+                           actor=actor, task_types=task_types, pick_phase=True)
+        action = nearest_action(pick_state, env)
+        assert action.is_pick()
+        chosen = action.pick_type()
+        # Heuristic value of each eligible type = its team reward (proficiency=1 here).
+        team_rewards = {tau: sum(env._compute_pick_rewards(actor, tau)) for tau in eligible}
+        best = max(team_rewards, key=team_rewards.get)
+        assert chosen == best, f"chose {chosen} (r={team_rewards[chosen]}), best is {best} (r={team_rewards[best]})"
 
 
 # ---------------------------------------------------------------------------
@@ -728,9 +426,9 @@ class TestHeuristic:
     def test_heuristic_prefers_high_value_type(self):
         """With sigma_b>0, heuristic should tend toward higher-value task types."""
         set_all_seeds(0)
-        env = _make_env(n_agents=4, n_task_types=4, clustering=10, specialization=10,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=10, proficiency_width=10,
                         sigma_a=0.0, sigma_b=2.0, seed=0)
-        # With C=N-1, S=T-1: all phi=1, all R=1
+        # With C=N-1, S=T-1: all proficiency=1, all R=1
         # Task values differ by category → heuristic is value-aware
         state = env.init_state()
         action = nearest_action(state, env)
@@ -755,11 +453,11 @@ class TestHeuristic:
         """In pick phase with eligible task, heuristic picks it."""
         from orchard.datatypes import State, Grid
         from orchard.enums import Action, make_pick_action
-        env = _make_env(n_agents=4, n_task_types=4, specialization=10)
+        env = _make_env(n_agents=4, n_task_types=4, proficiency_width=10)
         state = env.init_state()
         actor = state.actor
         # Manually place actor on a task cell of type the actor can do
-        eligible_types = env.phi_positive_types[actor]
+        eligible_types = env.proficiency_positive_types[actor]
         if not eligible_types:
             pytest.skip("No eligible types for actor")
         tau = next(iter(eligible_types))
@@ -788,7 +486,7 @@ class TestHeuristic:
 
 class TestIntegration:
     def test_rollout_metrics_run(self):
-        env = _make_env(n_agents=4, n_task_types=4, clustering=1, specialization=1,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=1, proficiency_width=1,
                         sigma_a=0.0, sigma_b=1.0, seed=42)
         state = env.init_state()
         metrics = evaluate_policy_metrics(
@@ -802,8 +500,8 @@ class TestIntegration:
         assert isinstance(metrics["team_rps"], float)
 
     def test_team_rps_non_negative(self):
-        """With sigma_b > 0 and non-trivial phi, heuristic should achieve positive team RPS."""
-        env = _make_env(n_agents=4, n_task_types=4, clustering=10, specialization=10,
+        """With sigma_b > 0 and non-trivial proficiency, heuristic should achieve positive team RPS."""
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=10, proficiency_width=10,
                         sigma_a=0.0, sigma_b=0.5, seed=1)
         state = env.init_state()
         metrics = evaluate_policy_metrics(
@@ -814,13 +512,13 @@ class TestIntegration:
         )
         assert metrics["team_rps"] >= 0.0
 
-    def test_zero_phi_gives_zero_reward(self):
+    def test_zero_proficiency_gives_zero_reward(self):
         """Fully isolated agents (C=0, S=0) only get reward for their own type."""
-        env = _make_env(n_agents=4, n_task_types=4, clustering=0, specialization=0,
+        env = _make_env(n_agents=4, n_task_types=4, relatedness_width=0, proficiency_width=0,
                         sigma_a=0.0, sigma_b=0.0, seed=0)
         # With C=0: R(i,j) = 1[i==j] → only actor gets reward
-        # With sigma_b=0: r'[tau,j] = 1/4 for all j
-        # r_actor = phi[actor, tau] * R[actor, actor] * r'[tau, actor] = phi * 1 * 1/4
+        # With sigma_b=0, relatedness_width=0: g=1, r'[tau,j] = 1/1 = 1.0 for all j
+        # r_actor = proficiency[actor, tau] * R[actor, actor] * r'[tau, actor] = proficiency * 1 * 1
         rewards = env._compute_pick_rewards(actor=0, tau=0)
         # Only agent 0 gets reward (R(0,j)=0 for j!=0)
         for j in range(1, 4):

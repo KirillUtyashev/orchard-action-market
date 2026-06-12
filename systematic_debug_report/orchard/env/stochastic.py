@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from orchard.enums import DespawnMode, RewardGeneration
+from orchard.enums import DespawnMode
 from orchard.env.base import BaseEnv
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
@@ -26,235 +26,84 @@ class StochasticEnv(BaseEnv):
         self._eval_mode: bool = False
         self._saved_rng_state = None
 
-        self.category_reward_seed_attempts = 0
-        self._initialize_category_rewards()
-        self._precompute_pick_rewards()
-
-    def _initialize_category_rewards(self) -> None:
-        """Generate fixed per-category reward vectors, retrying seeds if configured."""
-        assert self.cfg.stochastic is not None
-        stoch = self.cfg.stochastic
-        max_attempts = max(1, stoch.reward_seed_max_attempts)
-
-        for attempt in range(1, max_attempts + 1):
-            seed = rng.randint(0, 2**31)
-            (
-                rewards,
-                baseline_raw,
-                baseline_standardized,
-                baselines,
-                agent_offsets,
-            ) = self._generate_category_reward_components(
-                seed,
-                self.cfg.n_task_types,
-                self.cfg.n_agents,
-                stoch.sigma_a,
-                stoch.sigma_b,
-                stoch.reward_generation,
-                stoch.baseline_team_sum_mean,
-                stoch.deterministic_baseline_offsets,
-                stoch.require_no_negative_dominates_positive,
-                stoch.positive_rewards_only,
-            )
-            if (
-                not stoch.require_positive_diagonal_rewards
-                or self._diagonal_rewards_are_positive(rewards)
-            ):
-                self.category_reward_seed = seed
-                self.category_reward_seed_attempts = attempt
-                self.category_rewards = rewards
-                self.category_reward_baseline_raw = baseline_raw
-                self.category_reward_baseline_standardized = baseline_standardized
-                self.category_reward_baselines = baselines
-                self.category_reward_agent_offsets = agent_offsets
-                return
-
-        raise ValueError(
-            "Failed to generate strictly positive diagonal reward entries "
-            f"after {max_attempts} attempts"
+        # Generate fixed per-category reward vectors from sigma_a, sigma_b and seed.
+        # category_rewards[kappa] = r'^(kappa), shape (T, N).
+        seed = rng.randint(0, 2**31)
+        self.category_rewards: np.ndarray = self._generate_category_rewards(
+            seed,
+            cfg.n_task_types,
+            cfg.n_agents,
+            cfg.stochastic.sigma_a,
+            cfg.stochastic.sigma_b,
+            cfg.relatedness_width,
         )
-
-    @staticmethod
-    def _diagonal_rewards_are_positive(rewards: np.ndarray) -> bool:
-        diagonal_len = min(rewards.shape)
-        if diagonal_len == 0:
-            return True
-        diag = rewards[np.arange(diagonal_len), np.arange(diagonal_len)]
-        return bool(np.all(diag > 0.0))
+        self._precompute_pick_rewards()
 
     @staticmethod
     def _generate_category_rewards(
         seed: int,
-        T: int,
+        n_task_types: int,
         N: int,
         sigma_a: float,
         sigma_b: float,
-        reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
-        baseline_team_sum_mean: float = 1.0,
-        deterministic_baseline_offsets: bool = False,
-        require_no_negative_dominates_positive: bool = False,
-        positive_rewards_only: bool = False,
+        relatedness_width: int,
     ) -> np.ndarray:
-        return StochasticEnv._generate_category_reward_components(
-            seed,
-            T,
-            N,
-            sigma_a,
-            sigma_b,
-            reward_generation,
-            baseline_team_sum_mean,
-            deterministic_baseline_offsets,
-            require_no_negative_dominates_positive,
-            positive_rewards_only,
-        )[0]
+        """Generate the task reward vectors r'^(k). Returns (n_task_types, N) array.
 
-    @staticmethod
-    def _generate_category_reward_components(
-        seed: int,
-        T: int,
-        N: int,
-        sigma_a: float,
-        sigma_b: float,
-        reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET,
-        baseline_team_sum_mean: float = 1.0,
-        deterministic_baseline_offsets: bool = False,
-        require_no_negative_dominates_positive: bool = False,
-        positive_rewards_only: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Generate reward components for each category kappa.
+        Implements the spec directly: r'^(k)_j = I[j ∈ C^(k)] · (b^(k) + a^(k)_j),
+        where C^(k) = {j : circular_dist(k, j) ≤ relatedness_width} is the set of
+        agents that care about task k (size g = min(2*relatedness_width+1, N)),
+        keyed on the TASK k (not the actor). With T=N, task k lives on the agent
+        ring, so this circular distance is the same one used for relatedness.
 
-        BASELINE_OFFSET: r'^(kappa) = a^(kappa) + b^(kappa) * 1_N where:
-          b^(kappa) — scalar baseline: T values standardized to
-                      (mean=0, std=sigma_b/N), shifted by
-                      baseline_team_sum_mean/N so that task reward sums have
-                      mean=baseline_team_sum_mean and std=sigma_b.
-          a^(kappa) — agent variance: N values standardized to (mean=0, std=sigma_a), zero-sum
+          b^(k) — per-task baseline: mean 1/g, std sigma_b/g over tasks.
+          a^(k) — per-agent deviation: mean 0, std sigma_a over j ∈ C^(k) (the
+                  caring agents only); entries for j ∉ C^(k) are exactly 0.
 
-        SAMPLED_MEAN: r'^(kappa) preserves the empirical mean of samples from
-        Normal(1, sigma_a^2), while forcing empirical row std to sigma_a.
-        sigma_b is intentionally unused in this mode.
+        Baking the C^(k) mask into r' means the pick reward needs no separate
+        relatedness factor: r_j(actor, k) = proficiency[actor, k] · r'^(k)_j.
         """
+        g = min(2 * relatedness_width + 1, N)
         rng_np = np.random.default_rng(seed)
 
-        if reward_generation == RewardGeneration.SAMPLED_MEAN:
-            return StochasticEnv._generate_sampled_mean_reward_components(
-                rng_np, T, N, sigma_a, positive_rewards_only
-            )
-
-        baseline_mean = float(baseline_team_sum_mean) / N
-
-        # Baseline b: draw or deterministically build T samples, standardize to
-        # std=sigma_b/N so team reward std=sigma_b.
-        if sigma_b > 0:
-            if deterministic_baseline_offsets:
-                if T < 2:
-                    raise ValueError(
-                        "deterministic_baseline_offsets with sigma_b>0 requires n_task_types >= 2"
-                    )
-                b_raw = np.linspace(-1.0, 1.0, T, dtype=np.float64)
-                b_standardized = (b_raw - b_raw.mean()) / b_raw.std()
-                b = b_standardized * (sigma_b / N) + baseline_mean
-            else:
-                while True:
-                    b_raw = rng_np.standard_normal(T)
-                    b_std = b_raw.std()
-                    if b_std > 1e-10:
-                        b_standardized = (b_raw - b_raw.mean()) / b_std
-                        b = b_standardized * (sigma_b / N) + baseline_mean
-                        break
-        else:
-            b_raw = np.zeros(T, dtype=np.float64)
-            b_standardized = np.zeros(T, dtype=np.float64)
-            b = np.full(T, baseline_mean, dtype=np.float64)
-
-        # Agent variance a: draw N samples per category, standardize
-        rewards = np.zeros((T, N), dtype=np.float32)
-        agent_offsets = np.zeros((T, N), dtype=np.float32)
-        for kappa in range(T):
-            b_kappa = float(b[kappa])
+        # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g.
+        # With a single task type there is no across-task spread to impose, so b
+        # is just the baseline 1/g (a one-element std is identically 0, and the
+        # reject loop below could never satisfy std>0).
+        if sigma_b > 0 and n_task_types >= 2:
             while True:
-                if sigma_a > 0:
-                    a_raw = rng_np.standard_normal(N)
+                b_raw = rng_np.standard_normal(n_task_types)
+                b_std = b_raw.std()
+                if b_std > 1e-10:
+                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / g) + 1.0 / g
+                    break
+        else:
+            b = np.full(n_task_types, 1.0 / g, dtype=np.float64)
+
+        rewards = np.zeros((n_task_types, N), dtype=np.float32)
+        for kappa in range(n_task_types):
+            b_kappa = float(b[kappa])
+            # C^(kappa): agents that care about task kappa (circular distance on the ring).
+            caring = [j for j in range(N) if min(abs(kappa - j), N - abs(kappa - j)) <= relatedness_width]
+
+            # a^(kappa): zero-mean, std sigma_a over the caring agents only.
+            # A single carer (g=1, e.g. relatedness_width=0) has no within-set
+            # spread to impose — a=0 is the only consistent value (and a
+            # one-element std is identically 0, so the reject loop can't proceed).
+            if sigma_a > 0 and len(caring) >= 2:
+                while True:
+                    a_raw = rng_np.standard_normal(len(caring))
                     a_std = a_raw.std()
                     if a_std > 1e-10:
                         a = (a_raw - a_raw.mean()) / a_std * sigma_a
-                    else:
-                        continue
-                else:
-                    a = np.zeros(N)
-                row = a + b_kappa
-                if (
-                    not require_no_negative_dominates_positive
-                    or StochasticEnv._no_negative_dominates_positive(row)
-                ):
-                    break
-            agent_offsets[kappa] = a.astype(np.float32)
-            rewards[kappa] = row.astype(np.float32)
-
-        return (
-            rewards,
-            b_raw.astype(np.float32),
-            b_standardized.astype(np.float32),
-            b.astype(np.float32),
-            agent_offsets,
-        )
-
-    @staticmethod
-    def _no_negative_dominates_positive(row: np.ndarray) -> bool:
-        """Return True if the largest negative magnitude is no bigger than any positive entry."""
-        negatives = row[row < 0.0]
-        if len(negatives) == 0:
-            return True
-        positives = row[row > 0.0]
-        if len(positives) == 0:
-            return False
-        return bool(-float(negatives.min()) <= float(positives.min()) + 1e-12)
-
-    @staticmethod
-    def _generate_sampled_mean_reward_components(
-        rng_np: np.random.Generator,
-        T: int,
-        N: int,
-        sigma_a: float,
-        positive_rewards_only: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Generate reward rows with sampled mean near 1 and exact std sigma_a."""
-        if sigma_a > 0 and N < 2:
-            raise ValueError("sampled_mean reward generation requires n_agents >= 2 when sigma_a > 0")
-
-        rewards = np.zeros((T, N), dtype=np.float32)
-        baselines = np.zeros(T, dtype=np.float32)
-        baseline_raw = np.zeros(T, dtype=np.float32)
-        baseline_standardized = np.zeros(T, dtype=np.float32)
-        agent_offsets = np.zeros((T, N), dtype=np.float32)
-
-        for kappa in range(T):
-            if sigma_a > 0:
-                while True:
-                    z = rng_np.normal(loc=1.0, scale=sigma_a, size=N)
-                    z_std = z.std()
-                    if z_std > 1e-10:
-                        z_mean = float(z.mean())
-                        row = z_mean + sigma_a * (z - z_mean) / z_std
-                        if not positive_rewards_only or np.all(row > 0.0):
-                            break
+                        break
             else:
-                z_mean = 1.0
-                row = np.ones(N, dtype=np.float64)
+                a = np.zeros(len(caring))
 
-            row = row.astype(np.float32)
-            rewards[kappa] = row
-            baselines[kappa] = float(row.mean())
-            baseline_raw[kappa] = z_mean
-            agent_offsets[kappa] = row - baselines[kappa]
+            for idx, j in enumerate(caring):
+                rewards[kappa, j] = np.float32(b_kappa + a[idx])
 
-        return (
-            rewards,
-            baseline_raw,
-            baseline_standardized,
-            baselines,
-            agent_offsets,
-        )
+        return rewards
 
     def set_eval_mode(
         self,

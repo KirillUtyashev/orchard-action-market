@@ -10,15 +10,12 @@ import yaml
 from orchard.enums import (
     Activation,
     AlgorithmName,
-    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
     LearningType,
-    RewardGeneration,
     Schedule,
     StoppingCondition,
-    StructureType,
     WeightInit,
 )
 from orchard.datatypes import (
@@ -43,18 +40,12 @@ from orchard.following_rates import get_supported_rate_solver_names, is_scipy_ra
 # ---------------------------------------------------------------------------
 _ENUM_MAPS: dict[str, dict[str, Any]] = {
     "encoder": {
-        "general_dec_cnn_grid": EncoderType.GENERAL_DEC_CNN_GRID,
-        "general_cen_cnn_grid": EncoderType.GENERAL_CEN_CNN_GRID,
         "everything_cnn_grid": EncoderType.EVERYTHING_CNN_GRID,
+        "filtered_dec_cnn_grid": EncoderType.FILTERED_DEC_CNN_GRID,
     },
     "learning_type": {
         "decentralized": LearningType.DECENTRALIZED,
         "centralized": LearningType.CENTRALIZED,
-    },
-    "decentralized_reward_target": {
-        "individual": DecentralizedRewardTarget.INDIVIDUAL,
-        "team_mean": DecentralizedRewardTarget.TEAM_MEAN,
-        "team_sum": DecentralizedRewardTarget.TEAM_SUM,
     },
     "algorithm_name": {
         "value": AlgorithmName.VALUE,
@@ -85,17 +76,6 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "none": DespawnMode.NONE,
         "probability": DespawnMode.PROBABILITY,
     },
-    "reward_generation": {
-        "baseline_offset": RewardGeneration.BASELINE_OFFSET,
-        "sampled_mean": RewardGeneration.SAMPLED_MEAN,
-        # Backward-compatible aliases from the initial design notes.
-        "keep_b": RewardGeneration.BASELINE_OFFSET,
-        "scale_b_w_n": RewardGeneration.SAMPLED_MEAN,
-    },
-    "structure": {
-        "id_distance": StructureType.ID_DISTANCE,
-        "disjoint_groups": StructureType.DISJOINT_GROUPS,
-    },
 }
 
 
@@ -125,6 +105,12 @@ def _parse_schedule(d: dict[str, Any], name: str) -> ScheduleConfig:
 
 def _parse_env(d: dict[str, Any]) -> EnvConfig:
     n_task_types = int(d.get("n_task_types", 1))
+    n_agents = int(d["n_agents"])
+    if n_task_types != n_agents:
+        raise ValueError(
+            f"env.n_task_types ({n_task_types}) must equal env.n_agents ({n_agents}): "
+            "the spec uses one shared id space (T=N), where agent i's home task is task i."
+        )
 
     sd = d.get("stochastic")
     if sd is None:
@@ -135,13 +121,6 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
-        reward_generation=_enum(sd.get("reward_generation", "baseline_offset"), "reward_generation"),
-        baseline_team_sum_mean=float(sd.get("baseline_team_sum_mean", 1.0)),
-        deterministic_baseline_offsets=bool(sd.get("deterministic_baseline_offsets", False)),
-        require_positive_diagonal_rewards=bool(sd.get("require_positive_diagonal_rewards", False)),
-        require_no_negative_dominates_positive=bool(sd.get("require_no_negative_dominates_positive", False)),
-        positive_rewards_only=bool(sd.get("positive_rewards_only", False)),
-        reward_seed_max_attempts=int(sd.get("reward_seed_max_attempts", 10000)),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
     )
@@ -149,19 +128,12 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
     return EnvConfig(
         height=int(d["height"]),
         width=int(d["width"]),
-        n_agents=int(d["n_agents"]),
+        n_agents=n_agents,
         n_tasks=int(d.get("n_tasks", d.get("n_apples", 3))),
         gamma=float(d["gamma"]),
         n_task_types=n_task_types,
-        clustering=int(d.get("clustering", d.get("relatedness_width", 0))),
-        specialization=int(d.get("specialization", d.get("proficiency_width", 0))),
-        structure=_enum(d.get("structure", "id_distance"), "structure"),
-        structure_group_size=(
-            int(d["structure_group_size"]) if d.get("structure_group_size") is not None else None
-        ),
-        n_tasks_per_group=(
-            int(d["n_tasks_per_group"]) if d.get("n_tasks_per_group") is not None else None
-        ),
+        relatedness_width=int(d.get("relatedness_width", 0)),
+        proficiency_width=int(d.get("proficiency_width", 0)),
         max_tasks_per_type=int(d.get("max_tasks_per_type", 3)),
         stochastic=stochastic_cfg,
     )
@@ -316,10 +288,6 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         warmup_steps=warmup_steps,
         train_only_teammates=bool(d.get("train_only_teammates", False)),
         discount_method=discount_method,
-        decentralized_reward_target=_enum(
-            d.get("decentralized_reward_target", "individual"),
-            "decentralized_reward_target",
-        ),
     )
 
 
@@ -328,7 +296,6 @@ def _parse_eval(d: dict[str, Any]) -> EvalConfig:
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
         checkpoint_freq=int(d.get("checkpoint_freq", 0)),
-        eval_seed=(int(d["eval_seed"]) if d.get("eval_seed") is not None else None),
     )
 
 

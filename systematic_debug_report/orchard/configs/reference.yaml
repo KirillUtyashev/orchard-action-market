@@ -7,41 +7,29 @@ env:
   height: 9                        # grid rows
   width: 9                         # grid columns
   n_agents: 4                      # total agents N
-  n_task_types: 2                  # T: number of distinct task types
+  n_task_types: 4                  # T: number of distinct task types (must equal N: shared id space)
   n_tasks: 10                      # initial tasks spawned per type at env.init_state()
   max_tasks_per_type: 10           # cap: spawning stops when this many of type τ exist
   gamma: 0.99                      # discount factor for move turns (pick turns use γ=1)
 
-  # Reward structure (φ/R framework):
+  # Reward structure (proficiency/relatedness framework):
   #
-  #   structure=id_distance (default):
+  #   R[i,j] = 1[ |i - j| <= relatedness_width ]
+  #     — who shares reward with whom. relatedness_width=0: each agent rewards only itself.
+  #       relatedness_width=N-1: all agents share each other's rewards.
   #
-  #   R[i,j] = 1[ |i - j| <= clustering ]
-  #     — who shares reward with whom. clustering=0: each agent rewards only itself.
-  #       clustering=N-1: all agents share each other's rewards.
-  #
-  #   phi[i,κ] = 1[ |i - κ| <= specialization ]
-  #     — which task types agent i can profitably pick. specialization=0: agent i
-  #       can only pick type i (mod T). specialization=T-1: any agent can pick any type.
-  #
-  #   structure=disjoint_groups:
-  #     R is block-diagonal by structure_group_size agents. phi assigns each agent
-  #     group to n_tasks_per_group contiguous task types.
+  #   proficiency[i,κ] = 1[ |i - κ| <= proficiency_width ]
+  #     — which task types agent i can profitably pick. proficiency_width=0: agent i
+  #       can only pick type i (mod T). proficiency_width=T-1: any agent can pick any type.
   #
   #   category_rewards r'[κ,j]: stochastic T×N reward matrix, sampled once at env
-  #     construction. sigma_a=sigma_b=0 → r'[κ,j]=1/N for all κ,j.
-  #     reward_generation=baseline_offset keeps the historical b[κ] + a[κ,j]
-  #     construction. reward_generation=sampled_mean samples each row around mean
-  #     1, preserves that empirical mean, and forces row variance to sigma_a^2.
+  #     construction from Normal(1, sigma_b²) + agent noise Normal(0, sigma_a²).
+  #     sigma_a=sigma_b=0 → r'[κ,j]=1 for all κ,j (homogeneous rewards).
   #
-  #   Pick reward formula: r_j = phi[actor,κ] * R[actor,j] * r'[κ,j] * norm[actor]
-  #   where norm[actor] = N / sum_j R[actor,j].
+  #   Pick reward formula: r_j = proficiency[actor,κ] * R[actor,j] * r'[κ,j]
   #
-  structure: id_distance            # "id_distance" or "disjoint_groups"
-  # structure_group_size: 2         # agents per group; required for disjoint_groups
-  # n_tasks_per_group: 2            # task types per group; defaults to structure_group_size
-  clustering: 0                    # C: reward-sharing radius; 0 = no sharing
-  specialization: 0                # S: task-type eligibility radius; 0 = strict assignment
+  relatedness_width: 0             # w_R: reward-sharing radius; 0 = no sharing
+  proficiency_width: 0             # w_P: task-type eligibility radius; 0 = strict assignment
 
   # Stochastic spawning/despawning (required):
   stochastic:
@@ -52,33 +40,23 @@ env:
     spawn_at_round_end: false      # if true, spawn/despawn only fires after the last agent acts
     sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
-    reward_generation: baseline_offset  # "baseline_offset" or "sampled_mean"
-    baseline_team_sum_mean: 1.0    # for baseline_offset, mean of task reward sums
-    deterministic_baseline_offsets: false  # for baseline_offset, use a fixed standardized b ladder instead of random b samples
-    require_positive_diagonal_rewards: false  # retry reward seeds until r'[i,i] > 0 for all diagonal entries
-    require_no_negative_dominates_positive: false  # for baseline_offset, resample rows until |most negative| <= smallest positive reward
-    positive_rewards_only: false  # for sampled_mean, resample rows until all reward entries are > 0
-    reward_seed_max_attempts: 10000  # guardrail for diagonal-positive retry loop
 
 model:
-  # Encoder: how the grid state is converted to neural network input
+  # Encoder: how the grid state is converted to neural network input.
+  # Both encoders use raw binary positions only — no pre-calculated phi, R, or
+  # reward values appear anywhere; agents discover structure from the team reward.
   #
-  #   general_dec_cnn_grid:  decentralized; each agent's encoding is personalised
-  #                          using its own phi, R, and category_rewards values.
-  #                          Grid: T+3 channels. Scalars: 3.
+  #   everything_cnn_grid:   full unmasked view. Compatible with both centralized
+  #                          and decentralized learning (n_networks derived from
+  #                          train.learning_type). Grid: T+N+1 channels. Scalars: N+1.
   #
-  #   general_cen_cnn_grid:  centralized (single shared network); encoding
-  #                          contains the full joint state with optimal task values.
-  #                          Grid: T+N+1 channels. Scalars: N+1.
-  #
-  #   everything_cnn_grid:   raw binary positions only — no pre-calculated phi,
-  #                          R, or reward values appear anywhere in the encoding.
-  #                          Agents must discover structure entirely from the team
-  #                          reward signal. Compatible with both centralized and
-  #                          decentralized learning (n_networks is derived
-  #                          automatically from train.learning_type).
-  #                          Grid: T+N+1 channels. Scalars: N+1.
-  encoder: general_dec_cnn_grid
+  #   filtered_dec_cnn_grid: decentralized only. Network i sees only the tasks it
+  #                          cares about (R_i, |R_i|=2*relatedness_width+1) and the
+  #                          agents within reach (W_i, |W_i|=2*(relatedness_width+
+  #                          proficiency_width)+1, capped at N), on the shared id
+  #                          ring (requires T=N). Grid: |R_i|+|W_i|+1 channels.
+  #                          Scalars: |W_i|+1.
+  encoder: everything_cnn_grid
 
   # CNN architecture: list of [output_channels, kernel_size] per conv layer
   # Padding is always kernel_size // 2 (same-padding), so spatial dims don't shrink
@@ -106,13 +84,6 @@ train:
   #   decentralized: N networks, one per agent (agent i's network only sees agent i's encoding)
   #   centralized: 1 network shared by all agents (sees full state)
   learning_type: decentralized
-
-  # Value-learning ablation for decentralized runs:
-  #   individual: critic i trains on its own r_i (default historical behavior)
-  #   team_mean:  every critic trains on mean_j r_j, removing component cancellation
-  #   team_sum:   every critic trains on sum_j r_j
-  # Only affects algorithm.name=value and decentralized training.
-  decentralized_reward_target: individual
 
   # Device: true=GPU (BatchedTrainer + vmap), false=CPU (sequential forwards)
   use_gpu: false

@@ -19,7 +19,7 @@ def _setup_networks(n_agents=2, weight_init=WeightInit.DEFAULT):
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0)
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(16,),
         conv_specs=((4, 3),),
         activation=Activation.RELU,
@@ -27,7 +27,7 @@ def _setup_networks(n_agents=2, weight_init=WeightInit.DEFAULT):
     )
 
     env = StochasticEnv(env_cfg)
-    encoding.init_encoder(EncoderType.GENERAL_DEC_CNN_GRID, env)
+    encoding.init_encoder(EncoderType.EVERYTHING_CNN_GRID, env)
 
     return env_cfg, model_cfg, env
 

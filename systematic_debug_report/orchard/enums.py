@@ -25,9 +25,8 @@ class StructureType(Enum):
 
 
 class EncoderType(Enum):
-    GENERAL_DEC_CNN_GRID = auto()   # dec: T+3 channels, 3 scalars
-    GENERAL_CEN_CNN_GRID = auto()   # cen: T+N+1 channels, N+1 scalars
     EVERYTHING_CNN_GRID = auto()    # cen and dec: T+N+1 channels, N+1 scalars; raw binary only
+    FILTERED_DEC_CNN_GRID = auto()  # dec: |R_i|+|W_i|+1 channels, |W_i|+1 scalars; raw binary, masked to R_i/W_i
 
 
 class Activation(Enum):

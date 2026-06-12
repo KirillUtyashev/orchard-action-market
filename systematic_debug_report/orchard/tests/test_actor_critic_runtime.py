@@ -84,15 +84,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  clustering: 0
-  specialization: 0
+  relatedness_width: 0
+  proficiency_width: 0
   max_tasks_per_type: 2
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:
@@ -145,8 +145,8 @@ def _make_actor_critic_trainer(
     *,
     n_agents: int = 2,
     n_task_types: int = 1,
-    clustering: int = 0,
-    specialization: int = 0,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
     batch_forced_actor_updates: bool = True,
 ):
     set_all_seeds(7)
@@ -157,8 +157,8 @@ def _make_actor_critic_trainer(
         n_tasks=1,
         gamma=0.99,
         n_task_types=n_task_types,
-        clustering=clustering,
-        specialization=specialization,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
         max_tasks_per_type=1,
         stochastic=StochasticConfig(
             spawn_prob=0.0,
@@ -167,7 +167,7 @@ def _make_actor_critic_trainer(
         ),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -213,7 +213,7 @@ def _make_probability_count_trainer():
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -249,8 +249,8 @@ def _make_dual_actor_critic_trainers(
     *,
     n_agents: int = 2,
     n_task_types: int = 2,
-    clustering: int = 0,
-    specialization: int = 0,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
     following_rates_cfg: FollowingRatesConfig | None = None,
     comm_only_teammates: bool = False,
 ):
@@ -263,13 +263,13 @@ def _make_dual_actor_critic_trainers(
         n_tasks=2,
         gamma=0.99,
         n_task_types=n_task_types,
-        clustering=clustering,
-        specialization=specialization,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
         max_tasks_per_type=2,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -336,8 +336,8 @@ def _make_single_actor_critic_trainer(
     *,
     n_agents: int,
     n_task_types: int,
-    clustering: int = 0,
-    specialization: int = 0,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
     following_rates_cfg: FollowingRatesConfig,
 ):
     env_cfg = EnvConfig(
@@ -347,13 +347,13 @@ def _make_single_actor_critic_trainer(
         n_tasks=2,
         gamma=0.99,
         n_task_types=n_task_types,
-        clustering=clustering,
-        specialization=specialization,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
         max_tasks_per_type=2,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -529,13 +529,13 @@ class TestActorCriticTrainingLoop:
             n_tasks=2,
             gamma=0.99,
             n_task_types=2,
-            clustering=0,
-            specialization=0,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=2,
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -685,11 +685,11 @@ class TestActorCriticTrainingLoop:
         )
 
     def test_gpu_comm_only_teammates_masks_non_teammates_without_following_rates(self):
-        # n_agents=4, clustering=1 → agent 0's teammates are {0,1}; non-teammates are {2,3}
+        # n_agents=4, relatedness_width=1 → circular topology → agent 0's teammates are {0,1,3}; non-teammate is {2}
         _, _, gpu_trainer = _make_dual_actor_critic_trainers(
             n_agents=4,
             n_task_types=2,
-            clustering=1,
+            relatedness_width=1,
             comm_only_teammates=True,
         )
         rewards_t = torch.tensor(
@@ -716,7 +716,8 @@ class TestActorCriticTrainingLoop:
 
         expected = (
             rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
-            rewards_t[:, 1] + 0.5 * after_values_t[:, 1]
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1] +
+            rewards_t[:, 3] + 0.5 * after_values_t[:, 3]
         )
         torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
 
@@ -724,7 +725,7 @@ class TestActorCriticTrainingLoop:
         _, _, gpu_trainer = _make_dual_actor_critic_trainers(
             n_agents=4,
             n_task_types=2,
-            clustering=1,
+            relatedness_width=1,
             comm_only_teammates=False,
         )
         rewards_t = torch.tensor(
@@ -762,7 +763,7 @@ class TestActorCriticTrainingLoop:
         _, _, gpu_trainer = _make_dual_actor_critic_trainers(
             n_agents=4,
             n_task_types=2,
-            clustering=1,
+            relatedness_width=1,
             following_rates_cfg=following_cfg,
             comm_only_teammates=True,
         )
@@ -786,20 +787,23 @@ class TestActorCriticTrainingLoop:
             discount=1.0,
         )
 
-        teammate_weight = 1.0 - np.exp(-0.7)
+        # circular topology: agent 0's teammates are {0,1,3}; agent 2 excluded
+        weight_1 = 1.0 - np.exp(-0.7)
+        weight_3 = 1.0 - np.exp(-2.0)
         expected = torch.tensor(
-            [1.0 + teammate_weight * 11.0],
+            [1.0 + weight_1 * 11.0 + weight_3 * 1003.0],
             dtype=torch.float32,
         )
         torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
 
     def test_fixed_following_rates_dual_budgets_initialize_expected_rates(self):
-        # n_agents=4, clustering=1: agent 0's non-self teammates={1}, non-teammates={2,3}
+        # n_agents=4, relatedness_width=1, circular topology:
+        # agent 0's non-self teammates={1,3}, non-teammates={2}
         # agent 2's non-self teammates={1,3}, non-teammates={0}
         _, trainer = _make_single_actor_critic_trainer(
             n_agents=4,
             n_task_types=2,
-            clustering=1,
+            relatedness_width=1,
             following_rates_cfg=FollowingRatesConfig(
                 enabled=True,
                 teammate_budget=2.0,
@@ -811,13 +815,13 @@ class TestActorCriticTrainingLoop:
             ),
         )
 
-        # Agent 0: 1 non-self teammate (agent 1) → rate=2.0; 2 non-teammates → rate=3.0 each
+        # Agent 0: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({2}) → rate=6.0
         np.testing.assert_allclose(
             trainer._following_states[0].following_rates,
-            np.array([0.0, 2.0, 3.0, 3.0]),
+            np.array([0.0, 1.0, 6.0, 1.0]),
             atol=1e-6,
         )
-        # Agent 2: 2 non-self teammates (1,3) → rate=1.0 each; 1 non-teammate (0) → rate=6.0
+        # Agent 2: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({0}) → rate=6.0
         np.testing.assert_allclose(
             trainer._following_states[2].following_rates,
             np.array([6.0, 1.0, 0.0, 1.0]),
@@ -825,8 +829,8 @@ class TestActorCriticTrainingLoop:
         )
 
     def test_gpu_actor_updates_sequentially_per_decision(self):
-        # specialization=4 → agent 0 is eligible for type 0 tasks
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(specialization=4)
+        # proficiency_width=4 → agent 0 is eligible for type 0 tasks
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -869,7 +873,7 @@ class TestActorCriticTrainingLoop:
         assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
 
     def test_gpu_actor_checkpoints_do_not_store_pending_batches(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(specialization=4)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -890,7 +894,7 @@ class TestActorCriticTrainingLoop:
             assert all(len(payload["states"]) == 0 for payload in pending_batches)
 
     def test_gpu_actor_flush_pending_updates_is_noop(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(specialization=4)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -945,7 +949,7 @@ class TestActorCriticTrainingLoop:
         assert choice_calls == 2
 
     def test_gpu_step_reuses_sampled_actor_probability_tensors(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(specialization=4)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         calls = 0
         actor = gpu_trainer.actor_networks[0]
         original_get_action_probabilities_tensor = actor.get_action_probabilities_tensor
@@ -964,7 +968,7 @@ class TestActorCriticTrainingLoop:
         assert calls == 2
 
     def test_warmup_skips_critic_updates(self):
-        _, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -994,7 +998,7 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after is None
 
     def test_warmup_skips_actor_updates(self):
-        _, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         _install_scripted_actions(
             trainer,
@@ -1018,7 +1022,7 @@ class TestActorCriticTrainingLoop:
                 torch.testing.assert_close(actor_before[name], tensor, atol=0.0, rtol=0.0)
 
     def test_warmup_resumes_critic_updates_after_threshold(self):
-        _, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -1056,13 +1060,13 @@ class TestActorCriticTrainingLoop:
             n_tasks=1,
             gamma=0.5,
             n_task_types=1,
-            clustering=0,
-            specialization=0,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -1144,13 +1148,13 @@ class TestActorCriticTrainingLoop:
             n_tasks=1,
             gamma=0.5,
             n_task_types=1,
-            clustering=0,
-            specialization=0,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -1227,7 +1231,7 @@ class TestActorCriticTrainingLoop:
         assert trainer._following_states[0].agent_alphas[1] == 0.0
 
     def test_freeze_critic_skips_critic_updates(self):
-        _, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._freeze_critic = True
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -1261,7 +1265,7 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after is None
 
     def test_actor_critic_step_records_action_and_env_timing(self):
-        _, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._timer = Timer(enabled=True)
         _install_scripted_actions(
             trainer,
@@ -1279,7 +1283,7 @@ class TestActorCriticTrainingLoop:
         assert report[TimerSection.TRAIN] > 0.0
 
     def test_critic_td_uses_previous_after_state_chain(self):
-        env, trainer = _make_actor_critic_trainer(n_task_types=1, specialization=0)
+        env, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
             trainer,
@@ -1316,11 +1320,11 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after.pick_phase is False
 
     def test_wrong_type_task_does_not_enter_pick_phase(self):
-        # Agent 0 has specialization=0 → phi[0,1]=0 → not eligible for type 1
+        # Agent 0 has proficiency_width=0 → phi[0,1]=0 → not eligible for type 1
         env, trainer = _make_actor_critic_trainer(
             n_task_types=2,
-            clustering=0,
-            specialization=0,
+            relatedness_width=0,
+            proficiency_width=0,
         )
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(trainer, move_action=Action.RIGHT)
@@ -1493,8 +1497,8 @@ class TestActorCriticTrainingLoop:
             n_tasks=2,
             gamma=0.99,
             n_task_types=2,
-            clustering=0,
-            specialization=0,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=2,
             stochastic=StochasticConfig(
                 spawn_prob=0.1,
@@ -1503,7 +1507,7 @@ class TestActorCriticTrainingLoop:
             ),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.GENERAL_DEC_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(16,),
             conv_specs=((4, 3),),
         )
@@ -1546,13 +1550,13 @@ class TestActorCriticTrainingLoop:
             n_agents=2,
             n_tasks=1,
             gamma=0.99,
-            n_task_types=1,
-            clustering=0,
-            specialization=0,
+            n_task_types=2,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
             stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
-        model_cfg = ModelConfig(encoder=EncoderType.GENERAL_DEC_CNN_GRID, mlp_dims=(16,))
+        model_cfg = ModelConfig(encoder=EncoderType.EVERYTHING_CNN_GRID, mlp_dims=(16,))
         train_cfg = TrainConfig(
             total_steps=5,
             seed=42,
@@ -1581,15 +1585,16 @@ env:
   width: 3
   n_agents: 2
   n_tasks: 1
+  n_task_types: 2
   gamma: 0.99
-  clustering: 0
-  specialization: 0
+  relatedness_width: 0
+  proficiency_width: 0
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
     despawn_prob: 0.0
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
 train:
   learning_type: decentralized

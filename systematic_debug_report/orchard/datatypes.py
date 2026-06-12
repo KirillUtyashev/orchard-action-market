@@ -11,15 +11,12 @@ from orchard.enums import (
     Action,
     Activation,
     AlgorithmName,
-    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
     LearningType,
-    RewardGeneration,
     Schedule,
     StoppingCondition,
-    StructureType,
     WeightInit,
 )
 
@@ -140,13 +137,6 @@ class StochasticConfig:
     despawn_prob: float         # only meaningful if despawn_mode == PROBABILITY
     sigma_a: float = 0.0        # std of agent-variance component within a task category
     sigma_b: float = 0.0        # std of baseline reward across task categories
-    reward_generation: RewardGeneration = RewardGeneration.BASELINE_OFFSET
-    baseline_team_sum_mean: float = 1.0
-    deterministic_baseline_offsets: bool = False
-    require_positive_diagonal_rewards: bool = False
-    require_no_negative_dominates_positive: bool = False
-    positive_rewards_only: bool = False
-    reward_seed_max_attempts: int = 10000
     spawn_on_agent_cells: bool = False
     spawn_at_round_end: bool = False
 
@@ -159,11 +149,8 @@ class EnvConfig:
     n_tasks: int                    # initial tasks per type
     gamma: float
     n_task_types: int = 1
-    clustering: int = 0             # C: R(i,j) = 1[|i-j| <= C]
-    specialization: int = 0         # S: phi(i,kappa) = 1[|i-kappa| <= S]
-    structure: StructureType = StructureType.ID_DISTANCE
-    structure_group_size: int | None = None
-    n_tasks_per_group: int | None = None
+    relatedness_width: int = 0       # w_R: R(i,j) = 1[|i-j| <= w_R]
+    proficiency_width: int = 0      # w_P: proficiency(i,kappa) = 1[|i-kappa| <= w_P]
     max_tasks_per_type: int = 3
     stochastic: StochasticConfig | None = None
 
@@ -230,7 +217,6 @@ class TrainConfig:
     warmup_steps: int = 0
     train_only_teammates: bool = False  # train only agents j where R(actor,j) > 0
     discount_method: str = "team_steps"
-    decentralized_reward_target: DecentralizedRewardTarget = DecentralizedRewardTarget.INDIVIDUAL
 
 
 @dataclass(frozen=True)

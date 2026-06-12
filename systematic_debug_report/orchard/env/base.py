@@ -8,9 +8,8 @@ from abc import ABC, abstractmethod
 import numpy as np
 import torch
 
-from orchard.enums import Action, RewardGeneration
+from orchard.enums import Action
 from orchard.datatypes import EnvConfig, Grid, State, Transition, sort_tasks
-from orchard.structure import build_structure
 
 
 class BaseEnv(ABC):
@@ -20,21 +19,37 @@ class BaseEnv(ABC):
         self.cfg = cfg
         N = cfg.n_agents
         T = cfg.n_task_types
+        C = cfg.relatedness_width
+        S = cfg.proficiency_width
 
-        self.phi, self.relatedness = build_structure(cfg)
+        # The spec uses one shared id space (T=N): agent i's home task is task i,
+        # so task id τ and agent id share the same circle. This is enforced at
+        # config load (see config.py:_parse_env).
+
+        # proficiency[i, kappa] = 1 if circular_dist(i, kappa) <= S else 0  (N x T)
+        self.proficiency: np.ndarray = np.array(
+            [[1.0 if min(abs(i - kappa), T - abs(i - kappa)) <= S else 0.0 for kappa in range(T)] for i in range(N)],
+            dtype=np.float32,
+        )
+
+        # relatedness[i, j] = 1 if circular_dist(i, j) <= C else 0  (N x N), diagonal always 1
+        self.relatedness: np.ndarray = np.array(
+            [[1.0 if min(abs(i - j), N - abs(i - j)) <= C else 0.0 for j in range(N)] for i in range(N)],
+            dtype=np.float32,
+        )
 
         # teammate_mask[i, j] = relatedness[i,j] > 0  (N x N bool)
         self.teammate_mask: np.ndarray = self.relatedness > 0
 
-        # phi_positive_types[i] = frozenset of kappa where phi[i, kappa] > 0
-        self.phi_positive_types: tuple[frozenset[int], ...] = tuple(
-            frozenset(kappa for kappa in range(T) if self.phi[i, kappa] > 0)
+        # proficiency_positive_types[i] = frozenset of kappa where proficiency[i, kappa] > 0
+        self.proficiency_positive_types: tuple[frozenset[int], ...] = tuple(
+            frozenset(kappa for kappa in range(T) if self.proficiency[i, kappa] > 0)
             for i in range(N)
         )
 
         # Torch tensors for use in encoders
-        self._phi_t: torch.Tensor = torch.from_numpy(self.phi)       # (N, T)
-        self._rel_t: torch.Tensor = torch.from_numpy(self.relatedness)  # (N, N)
+        self._proficiency_t: torch.Tensor = torch.from_numpy(self.proficiency)  # (N, T)
+        self._rel_t: torch.Tensor = torch.from_numpy(self.relatedness)           # (N, N)
 
         # category_rewards is set by StochasticEnv after super().__init__
         # Shape: (T, N) — category_rewards[kappa, j] = r'_j^(kappa)
@@ -45,25 +60,15 @@ class BaseEnv(ABC):
         self._pick_rewards: np.ndarray = np.zeros((N, T, N), dtype=np.float32)
 
     def _precompute_pick_rewards(self) -> None:
-        """Build _pick_rewards[actor, tau, j] = phi[actor,tau]*R[actor,j]*r'[tau,j]*norm[actor].
+        """Build _pick_rewards[actor, tau, j] = proficiency[actor,tau] * r'[tau,j].
 
-        For the default BASELINE_OFFSET generator, norm[actor] = N / group_size[actor]
-        preserves the historical scale where rewards have mean 1/N. SAMPLED_MEAN
-        already lives on raw reward scale, so it skips this normalization.
+        The relatedness/C^(tau) mask is already baked into category_rewards r'
+        (see StochasticEnv._generate_category_rewards), so no separate R factor
+        is needed here. r'[tau,j] is nonzero only for j in C^(tau).
         """
-        # phi: (N,T,1), relatedness: (N,1,N), category_rewards: (1,T,N)
-        stoch = self.cfg.stochastic
-        if stoch is not None and stoch.reward_generation == RewardGeneration.SAMPLED_MEAN:
-            norm = 1.0
-        else:
-            # norm: (N,1,1) — N / sum_j relatedness[actor, j]
-            group_sizes = self.relatedness.sum(axis=1)  # (N,)
-            norm = (self.cfg.n_agents / group_sizes)[:, np.newaxis, np.newaxis]  # (N,1,1)
         self._pick_rewards = (
-            self.phi[:, :, np.newaxis]
-            * self.relatedness[:, np.newaxis, :]
+            self.proficiency[:, :, np.newaxis]
             * self.category_rewards[np.newaxis, :, :]
-            * norm
         ).astype(np.float32)
 
     def set_eval_mode(
@@ -114,7 +119,7 @@ class BaseEnv(ABC):
     def _compute_pick_rewards(
         self, actor: int, tau: int,
     ) -> tuple[float, ...]:
-        """Per-agent rewards: r_j = phi[actor, tau] * R[actor, j] * r'[tau, j]."""
+        """Per-agent rewards: r_j = phi[actor, tau] * r'[tau, j] (r' carries the C^(tau) mask)."""
         return tuple(self._pick_rewards[actor, tau].tolist())
 
     def resolve_pick(

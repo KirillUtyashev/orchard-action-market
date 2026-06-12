@@ -5,15 +5,7 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import (
-    AlgorithmName,
-    DecentralizedRewardTarget,
-    EncoderType,
-    Heuristic,
-    LearningType,
-    RewardGeneration,
-    StructureType,
-)
+from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -27,12 +19,13 @@ env:
   height: 5
   width: 5
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 train:
   total_steps: 100
@@ -47,28 +40,10 @@ class TestConfigParsing:
 
         assert cfg.env.height == 5
         assert cfg.env.gamma == 0.99
-        assert cfg.model.encoder == EncoderType.GENERAL_DEC_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         assert cfg.train.total_steps == 100
         assert cfg.train.comm_only_teammates is False
         assert cfg.train.batch_forced_actor_updates is True
-        assert cfg.train.decentralized_reward_target == DecentralizedRewardTarget.INDIVIDUAL
-        assert cfg.env.stochastic.reward_generation == RewardGeneration.BASELINE_OFFSET
-
-        os.unlink(path)
-
-    def test_eval_seed_parse(self):
-        yaml_str = VALID_YAML + """
-eval:
-  eval_steps: 7
-  n_test_states: 3
-  eval_seed: 123
-"""
-        path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-
-        assert cfg.eval.eval_steps == 7
-        assert cfg.eval.n_test_states == 3
-        assert cfg.eval.eval_seed == 123
 
         os.unlink(path)
 
@@ -80,59 +55,30 @@ eval:
         os.unlink(path)
 
     def test_invalid_enum_raises(self):
-        bad_yaml = VALID_YAML.replace("general_dec_cnn_grid", "magic_encoder")
+        bad_yaml = VALID_YAML.replace("everything_cnn_grid", "magic_encoder")
         path = _write_yaml(bad_yaml)
         with pytest.raises(ValueError, match="Invalid encoder: 'magic_encoder'"):
             load_config(path)
         os.unlink(path)
 
-    def test_clustering_specialization_parse(self):
+    def test_relatedness_width_proficiency_width_parse(self):
         yaml_str = VALID_YAML.replace(
-            "n_agents: 2", "n_agents: 4\n  n_task_types: 4\n  clustering: 1\n  specialization: 2"
+            "n_agents: 2\n  n_task_types: 2",
+            "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 1\n  proficiency_width: 2",
         )
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
-        assert cfg.env.clustering == 1
-        assert cfg.env.specialization == 2
+        assert cfg.env.relatedness_width == 1
+        assert cfg.env.proficiency_width == 2
         assert cfg.env.n_task_types == 4
         os.unlink(path)
 
-    def test_relatedness_proficiency_width_aliases_parse(self):
-        yaml_str = VALID_YAML.replace(
-            "n_agents: 2",
-            "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 3\n  proficiency_width: 1",
-        )
+    def test_t_equals_n_raises(self):
+        # n_agents=2 but n_task_types=3 violates the shared id space T=N.
+        yaml_str = VALID_YAML.replace("n_task_types: 2", "n_task_types: 3")
         path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-
-        assert cfg.env.clustering == 3
-        assert cfg.env.specialization == 1
-
-        os.unlink(path)
-
-    def test_structure_parse(self):
-        yaml_str = VALID_YAML.replace(
-            "n_agents: 2",
-            "n_agents: 4\n  n_task_types: 4\n  structure: disjoint_groups\n  structure_group_size: 2",
-        )
-        path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-        assert cfg.env.structure == StructureType.DISJOINT_GROUPS
-        assert cfg.env.structure_group_size == 2
-        assert cfg.env.n_tasks_per_group is None
-        os.unlink(path)
-
-    def test_n_tasks_per_group_parse(self):
-        yaml_str = VALID_YAML.replace(
-            "n_agents: 2",
-            (
-                "n_agents: 4\n  n_task_types: 2\n  structure: disjoint_groups\n"
-                "  structure_group_size: 2\n  n_tasks_per_group: 1"
-            ),
-        )
-        path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-        assert cfg.env.n_tasks_per_group == 1
+        with pytest.raises(ValueError, match="shared id space"):
+            load_config(path)
         os.unlink(path)
 
     def test_sigma_a_sigma_b_parse(self):
@@ -143,41 +89,6 @@ eval:
         cfg = load_config(path)
         assert cfg.env.stochastic.sigma_a == pytest.approx(0.3)
         assert cfg.env.stochastic.sigma_b == pytest.approx(0.5)
-        os.unlink(path)
-
-    def test_reward_generation_parse(self):
-        yaml_str = VALID_YAML.replace(
-            "spawn_prob: 0.1",
-            (
-                "spawn_prob: 0.1\n"
-                "    reward_generation: sampled_mean\n"
-                "    baseline_team_sum_mean: 4.0\n"
-                "    deterministic_baseline_offsets: true\n"
-                "    require_positive_diagonal_rewards: true\n"
-                "    require_no_negative_dominates_positive: true\n"
-                "    positive_rewards_only: true\n"
-                "    reward_seed_max_attempts: 123"
-            ),
-        )
-        path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-        assert cfg.env.stochastic.reward_generation == RewardGeneration.SAMPLED_MEAN
-        assert cfg.env.stochastic.baseline_team_sum_mean == pytest.approx(4.0)
-        assert cfg.env.stochastic.deterministic_baseline_offsets is True
-        assert cfg.env.stochastic.require_positive_diagonal_rewards is True
-        assert cfg.env.stochastic.require_no_negative_dominates_positive is True
-        assert cfg.env.stochastic.positive_rewards_only is True
-        assert cfg.env.stochastic.reward_seed_max_attempts == 123
-        os.unlink(path)
-
-    def test_decentralized_reward_target_parse(self):
-        yaml_str = VALID_YAML.replace(
-            "total_steps: 100",
-            "total_steps: 100\n  decentralized_reward_target: team_mean",
-        )
-        path = _write_yaml(yaml_str)
-        cfg = load_config(path)
-        assert cfg.train.decentralized_reward_target == DecentralizedRewardTarget.TEAM_MEAN
         os.unlink(path)
 
     def test_actor_critic_nested_blocks_parse(self):
@@ -192,10 +103,10 @@ env:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 actor_model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [32]
 train:
   total_steps: 100
@@ -243,7 +154,7 @@ class TestBackwardCompatibility:
         yaml_str = VALID_YAML.replace("encoder:", "input_type:")
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
-        assert cfg.model.encoder == EncoderType.GENERAL_DEC_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         os.unlink(path)
 
 class TestOverrides:

@@ -32,7 +32,7 @@ def _setup_dual_trainers():
         gamma=0.99, n_task_types=1, max_tasks_per_type=2,
         stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0)
     )
-    model_cfg = ModelConfig(encoder=EncoderType.GENERAL_DEC_CNN_GRID, mlp_dims=(16,))
+    model_cfg = ModelConfig(encoder=EncoderType.EVERYTHING_CNN_GRID, mlp_dims=(16,))
     lr_cfg = ScheduleConfig(start=0.1, end=0.1)
     eps_cfg = ScheduleConfig(start=0.1, end=0.1)
 

@@ -183,7 +183,7 @@ def sample_phase1_policy_eval_states(
             s_moved = env.apply_action(state, move_action)
             if s_moved.is_agent_on_task(s_moved.actor):
                 phase2_state = s_moved.with_pick_phase()
-                phase2_mask = build_phase2_legal_mask(phase2_state, env_cfg, env.phi_positive_types)
+                phase2_mask = build_phase2_legal_mask(phase2_state, env_cfg, env.proficiency_positive_types)
                 phase2_indices = np.flatnonzero(phase2_mask)
                 pick_idx = int(phase2_indices[local_rng.randrange(len(phase2_indices))])
                 pick_action = policy_index_to_action(pick_idx)

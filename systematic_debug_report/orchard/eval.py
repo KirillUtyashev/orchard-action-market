@@ -36,7 +36,7 @@ def rollout_trajectory(
         s_moved = env.apply_action(s, move_action)
 
         actor = s_moved.actor
-        eligible_types = env.phi_positive_types[actor]
+        eligible_types = env.proficiency_positive_types[actor]
         on_task = s_moved.is_agent_on_task(actor, eligible_types)
 
         if on_task:

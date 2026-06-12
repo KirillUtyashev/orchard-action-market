@@ -20,15 +20,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  clustering: 0
-  specialization: 0
+  relatedness_width: 0
+  proficiency_width: 0
   max_tasks_per_type: 2
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: general_dec_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:
