@@ -228,11 +228,13 @@ def _enc_labels(encoder_type, T: int, N: int,
     from orchard.enums import EncoderType
     if encoder_type == EncoderType.FILTERED_DEC_CNN_GRID:
         # FilteredDecEncoder masks to R_i (KR task channels) and W_i (KW agent
-        # channels); both are i-independent by circular symmetry.
+        # channels). The real task type / agent id behind each channel depends on
+        # the selected agent i, so the viewer relabels per-agent in JS
+        # (encLabelsForAgent). These generic labels are only a non-dec fallback.
         KR = min(N, 2 * relatedness_width + 1)
         KW = min(N, 2 * (relatedness_width + proficiency_width) + 1)
-        ch = [f"task (R_i) {t}" for t in range(KR)] + [f"agent (W_i) {s}" for s in range(KW)] + ["actor pos"]
-        sc = [f"actor-local {s}" for s in range(KW)] + ["pick_phase"]
+        ch = [f"task (R_i) ch{t}" for t in range(KR)] + [f"agent (W_i) ch{s}" for s in range(KW)] + ["actor pos"]
+        sc = [f"actor-local ch{s}" for s in range(KW)] + ["pick_phase"]
     else:  # EVERYTHING_CNN_GRID
         ch = [f"task κ{k} present" for k in range(T)] + [f"agent {j} pos" for j in range(N)] + ["actor pos"]
         sc = [f"actor={j}" for j in range(N)] + ["pick_phase"]
@@ -307,8 +309,15 @@ def build_html(
     enc_channel_labels_js = "null"
     enc_scalar_labels_js = "null"
     is_dec_js = "false"
+    # FilteredDecEncoder channels/scalars index into agent i's windows R_i / W_i, so
+    # the real task type / agent id each channel shows depends on which agent is
+    # selected. These let the JS relabel per-agent; for EverythingEncoder they stay 0.
+    enc_is_filtered_js = "false"
+    enc_kr_js, enc_kw_js = "0", "0"
+    enc_rel_w_js, enc_prof_w_js = "0", "0"
     show_encoding = encoder_type is not None and frames[0].encoding_grids is not None
     if show_encoding:
+        from orchard.enums import EncoderType
         # IS_DEC = multiple per-agent encodings were stored (n_networks > 1),
         # regardless of encoder type. EverythingEncoder with dec training also
         # stores N separate grids (one per network), so the dropdown is shown.
@@ -320,6 +329,12 @@ def build_html(
         )
         enc_channel_labels_js = json.dumps(ch_labels)
         enc_scalar_labels_js = json.dumps(sc_labels)
+        if encoder_type == EncoderType.FILTERED_DEC_CNN_GRID:
+            enc_is_filtered_js = "true"
+            enc_kr_js = str(min(n_agents, 2 * relatedness_width + 1))
+            enc_kw_js = str(min(n_agents, 2 * (relatedness_width + proficiency_width) + 1))
+            enc_rel_w_js = str(relatedness_width)
+            enc_prof_w_js = str(proficiency_width)
 
         def _round_enc_frame(frame: Frame):
             if frame.encoding_grids is None:
@@ -816,21 +831,72 @@ const ENC_SCALARS = {enc_scalars_js};
 const ENC_CHANNEL_LABELS = {enc_channel_labels_js};
 const ENC_SCALAR_LABELS = {enc_scalar_labels_js};
 const IS_DEC = {is_dec_js};
+// FilteredDecEncoder: channel c maps to a real task type / agent id that depends on
+// the selected agent i (circular windows). When ENC_IS_FILTERED we relabel per-agent.
+const ENC_IS_FILTERED = {enc_is_filtered_js};
+const ENC_KR = {enc_kr_js};
+const ENC_KW = {enc_kw_js};
+const ENC_REL_W = {enc_rel_w_js};
+const ENC_PROF_W = {enc_prof_w_js};
 
-(function initEncPanel() {{
+// Real labels for agent i's encoding (filtered: ids resolved through R_i / W_i;
+// everything: the static global labels).
+function encLabelsForAgent(agent) {{
+  if (!ENC_IS_FILTERED) return ENC_CHANNEL_LABELS;
+  const N = N_AGENTS;
+  const ch = [];
+  for (let c = 0; c < ENC_KR; c++) {{
+    const tau = (((agent - ENC_REL_W + c) % N) + N) % N;
+    ch.push(`task κ${{tau}} (R_i ch${{c}})`);
+  }}
+  for (let c = 0; c < ENC_KW; c++) {{
+    const j = (((agent - (ENC_REL_W + ENC_PROF_W) + c) % N) + N) % N;
+    ch.push(`agent ${{j}} pos (W_i ch${{c}})`);
+  }}
+  ch.push('actor pos');
+  return ch;
+}}
+
+function encScalarLabelsForAgent(agent) {{
+  if (!ENC_IS_FILTERED) return ENC_SCALAR_LABELS;
+  const N = N_AGENTS;
+  const sc = [];
+  for (let c = 0; c < ENC_KW; c++) {{
+    const j = (((agent - (ENC_REL_W + ENC_PROF_W) + c) % N) + N) % N;
+    sc.push(`actor=${{j}}? (W_i ch${{c}})`);
+  }}
+  sc.push('pick_phase');
+  return sc;
+}}
+
+// (Re)populate the channel dropdown with labels for the given agent, preserving
+// the current selection. For the filtered encoder the labels resolve to real
+// task type / agent ids through agent i's windows, so they change per agent.
+function populateChannelDropdown(agent) {{
   const chSel = document.getElementById('encChannelSel');
-  if (!chSel || !ENC_CHANNEL_LABELS) return;
-
+  if (!chSel) return;
+  const prev = chSel.value || 'all';
+  const labels = encLabelsForAgent(agent);
+  chSel.innerHTML = '';
   const allOpt = document.createElement('option');
   allOpt.value = 'all';
   allOpt.textContent = 'All channels';
   chSel.appendChild(allOpt);
-  ENC_CHANNEL_LABELS.forEach((label, i) => {{
+  labels.forEach((label, i) => {{
     const opt = document.createElement('option');
     opt.value = String(i);
     opt.textContent = `${{i}}: ${{label}}`;
     chSel.appendChild(opt);
   }});
+  chSel.value = prev;
+  if (chSel.selectedIndex < 0) chSel.value = 'all';
+}}
+
+(function initEncPanel() {{
+  const chSel = document.getElementById('encChannelSel');
+  if (!chSel || !ENC_CHANNEL_LABELS) return;
+
+  populateChannelDropdown(0);
 
   // Agent dropdown (only for dec)
   if (IS_DEC) {{
@@ -839,7 +905,7 @@ const IS_DEC = {is_dec_js};
     agDiv.innerHTML = '<label>Agent: </label>';
     const agSel = document.createElement('select');
     agSel.id = 'encAgentSel';
-    agSel.onchange = () => updateEncoding(currentStep);
+    agSel.onchange = () => {{ populateChannelDropdown(parseInt(agSel.value)); updateEncoding(currentStep); }};
     for (let i = 0; i < N_AGENTS; i++) {{
       const opt = document.createElement('option');
       opt.value = i;
@@ -912,16 +978,18 @@ function updateEncoding(frameIdx) {{
   const chVal = chSel ? chSel.value : 'all';
   const grids = ENC_DATA[frameIdx][agent];
   const scalars = ENC_SCALARS[frameIdx][agent];
+  const chLabels = encLabelsForAgent(agent);
+  const scLabels = encScalarLabelsForAgent(agent);
 
   let html = '';
   if (chVal === 'all') {{
     html += '<div style="display:flex;flex-wrap:wrap;gap:4px;max-height:320px;overflow-y:auto;padding:4px;background:#111128;border-radius:4px">';
     for (let ch = 0; ch < grids.length; ch++) {{
-      html += renderChannelSmall(grids[ch], ENC_CHANNEL_LABELS[ch]);
+      html += renderChannelSmall(grids[ch], chLabels[ch]);
     }}
     html += '</div>';
   }} else {{
-    html += renderChannelLarge(grids[parseInt(chVal)], ENC_CHANNEL_LABELS[parseInt(chVal)]);
+    html += renderChannelLarge(grids[parseInt(chVal)], chLabels[parseInt(chVal)]);
   }}
 
   html += '<div style="margin-top:8px"><span style="font-size:11px;font-weight:bold;color:#aaa">Scalars</span>';
@@ -929,7 +997,7 @@ function updateEncoding(frameIdx) {{
   for (let s = 0; s < scalars.length; s++) {{
     const v = scalars[s];
     const style = Math.abs(v) > 0.01 ? 'font-weight:bold;color:#e0c060' : 'color:#888';
-    html += `<tr><td style="color:#666;padding:1px 8px 1px 0">${{ENC_SCALAR_LABELS[s]}}</td>` +
+    html += `<tr><td style="color:#666;padding:1px 8px 1px 0">${{scLabels[s]}}</td>` +
             `<td style="${{style}}">${{v.toFixed(4)}}</td></tr>`;
   }}
   html += '</tbody></table></div>';
