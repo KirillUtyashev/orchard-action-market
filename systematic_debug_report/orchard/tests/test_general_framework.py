@@ -42,6 +42,30 @@ def _make_env(
 
 
 # ---------------------------------------------------------------------------
+# task-space agent centers for T != N
+# ---------------------------------------------------------------------------
+
+
+def test_task_centers_for_more_task_types_than_agents():
+    env = _make_env(n_agents=2, n_task_types=11, relatedness_width=1, proficiency_width=5)
+    assert env.task_centers.tolist() == [3, 7]
+
+    # rel=1 means each agent is interested in three task types around its base task.
+    assert set(np.nonzero(env.task_interest[0])[0].tolist()) == {2, 3, 4}
+    assert set(np.nonzero(env.task_interest[1])[0].tolist()) == {6, 7, 8}
+
+    # prof=5 spans the full 11-task ring, so both agents can perform every task.
+    assert env.proficiency.sum(axis=1).tolist() == [11.0, 11.0]
+
+
+def test_full_task_relatedness_when_width_spans_task_ring():
+    env = _make_env(n_agents=2, n_task_types=11, relatedness_width=5, proficiency_width=5)
+    assert env.task_centers.tolist() == [3, 7]
+    assert np.all(env.task_interest == 1.0)
+    assert np.all(env.category_rewards != 0.0)
+
+
+# ---------------------------------------------------------------------------
 # proficiency and relatedness matrix structure
 # ---------------------------------------------------------------------------
 

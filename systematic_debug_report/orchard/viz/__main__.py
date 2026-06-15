@@ -38,6 +38,10 @@ from orchard.viz.rollout import generate_frames
 
 _HEURISTIC_MAP = {
     "nearest": Heuristic.NEAREST,
+    "eps_nearest": Heuristic.EPS_NEAREST,
+    "nearest_rewarding_task": Heuristic.NEAREST_REWARDING_TASK,
+    "eps_nearest_rewarding_task": Heuristic.EPS_NEAREST_REWARDING_TASK,
+    "nearest_task": Heuristic.NEAREST_TASK,
 }
 
 _ALL_POLICIES = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]

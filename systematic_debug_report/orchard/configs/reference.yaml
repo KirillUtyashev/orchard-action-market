@@ -95,7 +95,7 @@ train:
   seed: 1234                       # RNG seed for reproducibility
 
   # Heuristic baseline policy used for eval comparison
-  # Options: nearest
+  # Options: nearest, eps_nearest, nearest_rewarding_task, eps_nearest_rewarding_task, nearest_task, random
   heuristic: nearest
 
   # Discount timing method:

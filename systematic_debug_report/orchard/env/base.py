@@ -12,6 +12,23 @@ from orchard.enums import Action
 from orchard.datatypes import EnvConfig, Grid, State, Transition, sort_tasks
 
 
+
+def task_center_for_agent(agent: int, n_agents: int, n_task_types: int) -> int:
+    """Place agents at representative centers in task-type space.
+
+    The rule floor((i + 1) * T / (N + 1)) preserves the old task_id ==
+    agent_id mapping whenever T == N, while giving sensible centers for
+    T != N, e.g. T=11,N=1 -> 5 and T=11,N=2 -> 3,7.
+    """
+    if n_agents <= 0 or n_task_types <= 0:
+        raise ValueError("n_agents and n_task_types must be positive")
+    return min(int((agent + 1) * n_task_types // (n_agents + 1)), n_task_types - 1)
+
+
+def circular_task_distance(a: int, b: int, n_task_types: int) -> int:
+    d = abs(int(a) - int(b))
+    return min(d, int(n_task_types) - d)
+
 class BaseEnv(ABC):
     """Abstract base for orchard environments."""
 
@@ -22,25 +39,55 @@ class BaseEnv(ABC):
         C = cfg.relatedness_width
         S = cfg.proficiency_width
 
-        # The spec uses one shared id space (T=N): agent i's home task is task i,
-        # so task id τ and agent id share the same circle. This is enforced at
-        # config load (see config.py:_parse_env).
+        # Agents live in task-type space. For T == N this reduces to the old
+        # identity mapping (agent i centered on task i). For T != N, agents are
+        # placed at evenly spaced representative task centers, e.g. T=11,N=2 ->
+        # centers 3 and 7.
+        self.task_centers: np.ndarray = np.array(
+            [task_center_for_agent(i, N, T) for i in range(N)],
+            dtype=np.int64,
+        )
 
-        # proficiency[i, kappa] = 1 if circular_dist(i, kappa) <= S else 0  (N x T)
+        # proficiency[i, kappa] = 1 if task kappa is within proficiency_width of
+        # agent i's base task in task-type space.
         self.proficiency: np.ndarray = np.array(
-            [[1.0 if min(abs(i - kappa), T - abs(i - kappa)) <= S else 0.0 for kappa in range(T)] for i in range(N)],
+            [
+                [
+                    1.0 if circular_task_distance(center, kappa, T) <= S else 0.0
+                    for kappa in range(T)
+                ]
+                for center in self.task_centers
+            ],
             dtype=np.float32,
         )
 
-        # relatedness[i, j] = 1 if circular_dist(i, j) <= C else 0  (N x N), diagonal always 1
+        # task_interest[i, kappa] = 1 if agent i is interested in task kappa.
+        self.task_interest: np.ndarray = np.array(
+            [
+                [
+                    1.0 if circular_task_distance(center, kappa, T) <= C else 0.0
+                    for kappa in range(T)
+                ]
+                for center in self.task_centers
+            ],
+            dtype=np.float32,
+        )
+
+        # relatedness remains an agent-agent compatibility mask for legacy code;
+        # it is derived from distance between agents' base tasks.
         self.relatedness: np.ndarray = np.array(
-            [[1.0 if min(abs(i - j), N - abs(i - j)) <= C else 0.0 for j in range(N)] for i in range(N)],
+            [
+                [
+                    1.0 if circular_task_distance(self.task_centers[i], self.task_centers[j], T) <= C else 0.0
+                    for j in range(N)
+                ]
+                for i in range(N)
+            ],
             dtype=np.float32,
         )
 
         # teammate_mask[i, j] = relatedness[i,j] > 0  (N x N bool)
         self.teammate_mask: np.ndarray = self.relatedness > 0
-
         # proficiency_positive_types[i] = frozenset of kappa where proficiency[i, kappa] > 0
         self.proficiency_positive_types: tuple[frozenset[int], ...] = tuple(
             frozenset(kappa for kappa in range(T) if self.proficiency[i, kappa] > 0)

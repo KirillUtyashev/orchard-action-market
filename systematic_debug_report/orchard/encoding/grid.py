@@ -12,6 +12,7 @@ import torch
 
 from orchard.encoding.base import GridEncoder
 from orchard.datatypes import EncoderOutput, Grid, State
+from orchard.env.base import circular_task_distance, task_center_for_agent
 
 
 class EverythingEncoder(GridEncoder):
@@ -190,10 +191,11 @@ class FilteredDecEncoder(GridEncoder):
 
     Like EverythingEncoder it contains no pre-computed φ/R/reward values — only
     raw binary positions — but network i only observes:
-      - the tasks it cares about,  R_i = {k : d(i,k) ≤ R^R},     |R_i| = min(N, 2R^R+1)
-      - the agents within reach,    W_i = {j : d(i,j) ≤ R^R+P^R}, |W_i| = min(N, 2(R^R+P^R)+1)
-    where d is circular distance on the shared id ring (T=N). The kept ids are
-    ordered circularly (k_0..k_{|R_i|-1}, j_0..j_{|W_i|-1}).
+      - the tasks it cares about, R_i = {k : d(center_i,k) ≤ R^R}, |R_i| = min(T, 2R^R+1)
+      - agent position channels. For T=N this keeps the old local W_i window;
+        for T != N it keeps all agents so the shape is stable.
+    Here center_i is agent i's base task in task-type space. The kept task ids
+    are ordered circularly around that center.
 
     Grid channels (|R_i| + |W_i| + 1):
       0..|R_i|-1            — task presence: 1 where a task of kept type k_t exists
@@ -213,7 +215,6 @@ class FilteredDecEncoder(GridEncoder):
         super().__init__(env_cfg)
         T = env_cfg.n_task_types
         N = env_cfg.n_agents
-        assert T == N, "FilteredDecEncoder requires the shared id space T=N."
         assert n_networks == N, (
             f"FilteredDecEncoder is decentralized: n_networks ({n_networks}) must equal N ({N})."
         )
@@ -223,23 +224,30 @@ class FilteredDecEncoder(GridEncoder):
 
         RR = env_cfg.relatedness_width
         PR = env_cfg.proficiency_width
-        KR = min(N, 2 * RR + 1)            # |R_i|, same for all i
-        KW = min(N, 2 * (RR + PR) + 1)     # |W_i|, same for all i
+        KR = min(T, 2 * RR + 1)            # |R_i|: task types inside interest window
+        KW = min(N, 2 * (RR + PR) + 1) if T == N else N
         self._KR = KR
         self._KW = KW
+        task_centers = [task_center_for_agent(i, N, T) for i in range(N)]
 
-        # Per-network circular id windows + inverse maps to local channel indices.
-        # task_local[i, tau]  = channel of task tau in R_i, or -1 if tau ∉ R_i.
-        # agent_local[i, j]    = channel of agent j  in W_i, or -1 if j  ∉ W_i.
-        task_local = torch.full((N, N), -1, dtype=torch.long)
+        # Per-network task-space windows + inverse maps to local channel indices.
+        # task_local[i, tau] = channel of task tau in R_i, or -1 if tau not in agent i's interests.
+        # agent_local[i, j]  = channel of agent j in W_i. For T != N we keep all agents visible.
+        task_local = torch.full((N, T), -1, dtype=torch.long)
         agent_local = torch.full((N, N), -1, dtype=torch.long)
-        for i in range(N):
-            for c in range(KR):
-                k = (i - RR + c) % N
-                task_local[i, k] = c
-            for c in range(KW):
-                j = (i - (RR + PR) + c) % N
-                agent_local[i, j] = c
+        for i, center in enumerate(task_centers):
+            kept_tasks = [tau for tau in range(T) if circular_task_distance(center, tau, T) <= RR]
+            kept_tasks.sort(key=lambda tau: ((tau - center) % T))
+            for c, tau in enumerate(kept_tasks[:KR]):
+                task_local[i, tau] = c
+
+            if T == N:
+                for c in range(KW):
+                    j = (i - (RR + PR) + c) % N
+                    agent_local[i, j] = c
+            else:
+                for j in range(N):
+                    agent_local[i, j] = j
         self._task_local = task_local
         self._agent_local = agent_local
 

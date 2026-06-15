@@ -10,6 +10,7 @@ import yaml
 from orchard.enums import (
     Activation,
     AlgorithmName,
+    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -51,8 +52,18 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
         "value": AlgorithmName.VALUE,
         "actor_critic": AlgorithmName.ACTOR_CRITIC,
     },
+    "decentralized_reward_target": {
+        "individual": DecentralizedRewardTarget.INDIVIDUAL,
+        "team_mean": DecentralizedRewardTarget.TEAM_MEAN,
+        "team_sum": DecentralizedRewardTarget.TEAM_SUM,
+    },
     "heuristic": {
         "nearest": Heuristic.NEAREST,
+        "eps_nearest": Heuristic.EPS_NEAREST,
+        "nearest_rewarding_task": Heuristic.NEAREST_REWARDING_TASK,
+        "eps_nearest_rewarding_task": Heuristic.EPS_NEAREST_REWARDING_TASK,
+        "nearest_task": Heuristic.NEAREST_TASK,
+        "random": Heuristic.RANDOM,
     },
     "activation": {
         "relu": Activation.RELU,
@@ -106,11 +117,6 @@ def _parse_schedule(d: dict[str, Any], name: str) -> ScheduleConfig:
 def _parse_env(d: dict[str, Any]) -> EnvConfig:
     n_task_types = int(d.get("n_task_types", 1))
     n_agents = int(d["n_agents"])
-    if n_task_types != n_agents:
-        raise ValueError(
-            f"env.n_task_types ({n_task_types}) must equal env.n_agents ({n_agents}): "
-            "the spec uses one shared id space (T=N), where agent i's home task is task i."
-        )
 
     sd = d.get("stochastic")
     if sd is None:
@@ -122,6 +128,11 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
+        constant_reward_value=(
+            float(sd["constant_reward_value"])
+            if sd.get("constant_reward_value") is not None
+            else None
+        ),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
     )
 
@@ -288,6 +299,10 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         warmup_steps=warmup_steps,
         train_only_teammates=bool(d.get("train_only_teammates", False)),
         discount_method=discount_method,
+        decentralized_reward_target=_enum(
+            d.get("decentralized_reward_target", "individual"),
+            "decentralized_reward_target",
+        ),
     )
 
 
@@ -296,6 +311,7 @@ def _parse_eval(d: dict[str, Any]) -> EvalConfig:
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
         checkpoint_freq=int(d.get("checkpoint_freq", 0)),
+        eval_seed=(int(d["eval_seed"]) if d.get("eval_seed") is not None else None),
     )
 
 

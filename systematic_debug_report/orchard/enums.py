@@ -17,6 +17,11 @@ class RewardGeneration(Enum):
 
 class Heuristic(Enum):
     NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
+    EPS_NEAREST = auto()  # 70% nearest heuristic, 30% random valid action
+    NEAREST_REWARDING_TASK = auto()  # nearest proficient positive-team-reward task, scored by reward/distance
+    EPS_NEAREST_REWARDING_TASK = auto()  # 80% nearest_rewarding_task, 20% random
+    NEAREST_TASK = auto()  # nearest proficient task, ignoring reward
+    RANDOM = auto()
 
 
 class StructureType(Enum):

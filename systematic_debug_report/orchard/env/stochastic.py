@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from orchard.enums import DespawnMode
-from orchard.env.base import BaseEnv
+from orchard.env.base import BaseEnv, circular_task_distance
 from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
 
@@ -36,6 +36,8 @@ class StochasticEnv(BaseEnv):
             cfg.stochastic.sigma_a,
             cfg.stochastic.sigma_b,
             cfg.relatedness_width,
+            tuple(int(x) for x in self.task_centers),
+            cfg.stochastic.constant_reward_value,
         )
         self._precompute_pick_rewards()
 
@@ -47,58 +49,59 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         relatedness_width: int,
+        task_centers: tuple[int, ...],
+        constant_reward_value: float | None = None,
     ) -> np.ndarray:
-        """Generate the task reward vectors r'^(k). Returns (n_task_types, N) array.
+        """Generate task reward vectors r'^(k), shape (T, N).
 
-        Implements the spec directly: r'^(k)_j = I[j ∈ C^(k)] · (b^(k) + a^(k)_j),
-        where C^(k) = {j : circular_dist(k, j) ≤ relatedness_width} is the set of
-        agents that care about task k (size g = min(2*relatedness_width+1, N)),
-        keyed on the TASK k (not the actor). With T=N, task k lives on the agent
-        ring, so this circular distance is the same one used for relatedness.
-
-          b^(k) — per-task baseline: mean 1/g, std sigma_b/g over tasks.
-          a^(k) — per-agent deviation: mean 0, std sigma_a over j ∈ C^(k) (the
-                  caring agents only); entries for j ∉ C^(k) are exactly 0.
-
-        Baking the C^(k) mask into r' means the pick reward needs no separate
-        relatedness factor: r_j(actor, k) = proficiency[actor, k] · r'^(k)_j.
+        r'^(k)_j is nonzero when task k is inside agent j's interest window in
+        task-type space. Agent j's window is centered at task_centers[j]; for
+        T=N, task_centers[j] == j and this reduces to the previous behavior.
         """
-        g = min(2 * relatedness_width + 1, N)
         rng_np = np.random.default_rng(seed)
 
-        # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g.
-        # With a single task type there is no across-task spread to impose, so b
-        # is just the baseline 1/g (a one-element std is identically 0, and the
-        # reject loop below could never satisfy std>0).
+        if len(task_centers) != N:
+            raise ValueError(f"Expected {N} task centers, got {len(task_centers)}")
+
+        # Standardized per-task baseline noise. It is scaled by 1/g_k for each
+        # task, where g_k is the number of agents interested in task k. Tasks
+        # with no interested agents remain exactly zero.
         if sigma_b > 0 and n_task_types >= 2:
             while True:
                 b_raw = rng_np.standard_normal(n_task_types)
                 b_std = b_raw.std()
                 if b_std > 1e-10:
-                    b = (b_raw - b_raw.mean()) / b_std * (sigma_b / g) + 1.0 / g
+                    b_z = (b_raw - b_raw.mean()) / b_std
                     break
         else:
-            b = np.full(n_task_types, 1.0 / g, dtype=np.float64)
+            b_z = np.zeros(n_task_types, dtype=np.float64)
 
         rewards = np.zeros((n_task_types, N), dtype=np.float32)
         for kappa in range(n_task_types):
-            b_kappa = float(b[kappa])
-            # C^(kappa): agents that care about task kappa (circular distance on the ring).
-            caring = [j for j in range(N) if min(abs(kappa - j), N - abs(kappa - j)) <= relatedness_width]
+            caring = [
+                j for j, center in enumerate(task_centers)
+                if circular_task_distance(center, kappa, n_task_types) <= relatedness_width
+            ]
+            g = len(caring)
+            if g == 0:
+                continue
+            if constant_reward_value is not None:
+                for j in caring:
+                    rewards[kappa, j] = np.float32(constant_reward_value)
+                continue
+
+            b_kappa = float(1.0 / g + b_z[kappa] * (sigma_b / g))
 
             # a^(kappa): zero-mean, std sigma_a over the caring agents only.
-            # A single carer (g=1, e.g. relatedness_width=0) has no within-set
-            # spread to impose — a=0 is the only consistent value (and a
-            # one-element std is identically 0, so the reject loop can't proceed).
-            if sigma_a > 0 and len(caring) >= 2:
+            if sigma_a > 0 and g >= 2:
                 while True:
-                    a_raw = rng_np.standard_normal(len(caring))
+                    a_raw = rng_np.standard_normal(g)
                     a_std = a_raw.std()
                     if a_std > 1e-10:
                         a = (a_raw - a_raw.mean()) / a_std * sigma_a
                         break
             else:
-                a = np.zeros(len(caring))
+                a = np.zeros(g)
 
             for idx, j in enumerate(caring):
                 rewards[kappa, j] = np.float32(b_kappa + a[idx])

@@ -47,6 +47,20 @@ class TestConfigParsing:
 
         os.unlink(path)
 
+    def test_new_heuristic_names_parse(self):
+        for name, expected in [
+            ("eps_nearest", Heuristic.EPS_NEAREST),
+            ("nearest_rewarding_task", Heuristic.NEAREST_REWARDING_TASK),
+            ("eps_nearest_rewarding_task", Heuristic.EPS_NEAREST_REWARDING_TASK),
+            ("nearest_task", Heuristic.NEAREST_TASK),
+            ("random", Heuristic.RANDOM),
+        ]:
+            yaml_str = VALID_YAML + chr(10) + f"  heuristic: {name}" + chr(10)
+            path = _write_yaml(yaml_str)
+            cfg = load_config(path)
+            assert cfg.train.heuristic == expected
+            os.unlink(path)
+
     def test_missing_section_raises(self):
         bad_yaml = VALID_YAML.replace("env:", "environment:")
         path = _write_yaml(bad_yaml)
@@ -73,12 +87,12 @@ class TestConfigParsing:
         assert cfg.env.n_task_types == 4
         os.unlink(path)
 
-    def test_t_equals_n_raises(self):
-        # n_agents=2 but n_task_types=3 violates the shared id space T=N.
+    def test_n_task_types_can_differ_from_n_agents(self):
         yaml_str = VALID_YAML.replace("n_task_types: 2", "n_task_types: 3")
         path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="shared id space"):
-            load_config(path)
+        cfg = load_config(path)
+        assert cfg.env.n_agents == 2
+        assert cfg.env.n_task_types == 3
         os.unlink(path)
 
     def test_sigma_a_sigma_b_parse(self):

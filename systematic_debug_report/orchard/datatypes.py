@@ -11,6 +11,7 @@ from orchard.enums import (
     Action,
     Activation,
     AlgorithmName,
+    DecentralizedRewardTarget,
     DespawnMode,
     EncoderType,
     Heuristic,
@@ -139,6 +140,7 @@ class StochasticConfig:
     sigma_b: float = 0.0        # std of baseline reward across task categories
     spawn_on_agent_cells: bool = False
     spawn_at_round_end: bool = False
+    constant_reward_value: float | None = None  # if set, all nonzero reward entries equal this value
 
 
 @dataclass(frozen=True)
@@ -217,6 +219,7 @@ class TrainConfig:
     warmup_steps: int = 0
     train_only_teammates: bool = False  # train only agents j where R(actor,j) > 0
     discount_method: str = "team_steps"
+    decentralized_reward_target: DecentralizedRewardTarget = DecentralizedRewardTarget.INDIVIDUAL
 
 
 @dataclass(frozen=True)
