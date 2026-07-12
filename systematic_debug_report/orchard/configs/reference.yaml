@@ -40,6 +40,10 @@ env:
     spawn_at_round_end: false      # if true, spawn/despawn only fires after the last agent acts
     sigma_a: 0.0                   # agent-level noise in category_rewards (Normal std)
     sigma_b: 0.0                   # category-level baseline noise in category_rewards (Normal std)
+    # "circulant_all_to_all" uses a deterministic Fourier construction whenever
+    # every agent cares about every task; partial-interest cases retain the
+    # independent generator. This mode may produce negative individual rewards.
+    reward_generation: independent # independent | circulant_all_to_all
 
 model:
   # Encoder: how the grid state is converted to neural network input.

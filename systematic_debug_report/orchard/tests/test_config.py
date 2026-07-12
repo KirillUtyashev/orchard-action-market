@@ -91,6 +91,16 @@ class TestConfigParsing:
         assert cfg.env.stochastic.sigma_b == pytest.approx(0.5)
         os.unlink(path)
 
+    def test_reward_generation_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "spawn_prob: 0.1",
+            "spawn_prob: 0.1\n    reward_generation: circulant_all_to_all",
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.stochastic.reward_generation == "circulant_all_to_all"
+        os.unlink(path)
+
     def test_actor_critic_nested_blocks_parse(self):
         yaml_str = """
 env:

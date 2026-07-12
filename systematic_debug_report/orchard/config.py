@@ -121,6 +121,9 @@ def _parse_env(d: dict[str, Any]) -> EnvConfig:
         despawn_prob=float(sd.get("despawn_prob", 0.0)),
         sigma_a=float(sd.get("sigma_a", 0.0)),
         sigma_b=float(sd.get("sigma_b", 0.0)),
+        reward_generation=str(
+            sd.get("reward_generation", "independent")
+        ).lower().strip(),
         spawn_on_agent_cells=bool(sd.get("spawn_on_agent_cells", False)),
         spawn_at_round_end=bool(sd.get("spawn_at_round_end", False)),
     )

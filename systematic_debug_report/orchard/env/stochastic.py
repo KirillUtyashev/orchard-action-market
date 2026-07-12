@@ -10,6 +10,51 @@ from orchard.seed import rng
 from orchard.datatypes import EnvConfig, Grid, State, sort_tasks
 
 
+def generate_rewards_all_to_all(
+    num_agents: int,
+    sigma_a: float,
+    sigma_b: float,
+    mean_team_reward: float = 1.0,
+) -> np.ndarray:
+    """Return a deterministic (agents, task types) reward matrix.
+
+    The two orthogonal Fourier frequencies control within-task agent variation
+    and across-task team-total variation independently. Cyclic shifts make
+    every agent row and task column balanced. Individual rewards are not
+    constrained to be non-negative; increasing mean_team_reward shifts all
+    entries upward without changing any of the controlled variances.
+    """
+    N = num_agents
+    if N < 5:
+        raise ValueError("all-to-all Fourier reward generation requires num_agents >= 5")
+    if sigma_a < 0 or sigma_b < 0:
+        raise ValueError("sigma_a and sigma_b must be non-negative")
+
+    indices = np.arange(N, dtype=np.float64)
+    deviation_pattern = (
+        np.sqrt(2.0) * sigma_a * np.cos(2.0 * np.pi * indices / N)
+    )
+    task_totals = (
+        mean_team_reward
+        + np.sqrt(2.0) * sigma_b * np.cos(4.0 * np.pi * indices / N)
+    )
+    task_baselines = task_totals / N
+
+    agent_ids = np.arange(N)[:, None]
+    task_ids = np.arange(N)[None, :]
+    deviation_indices = (agent_ids - task_ids) % N
+    rewards = deviation_pattern[deviation_indices] + task_baselines[None, :]
+
+    assert np.allclose(rewards.std(axis=0, ddof=0), sigma_a)
+    assert np.isclose(rewards.sum(axis=0).std(ddof=0), sigma_b)
+    assert np.allclose(rewards.mean(axis=1), mean_team_reward / N)
+    assert np.allclose(
+        rewards.std(axis=1, ddof=0),
+        np.sqrt(sigma_a**2 + sigma_b**2 / N**2),
+    )
+    return rewards
+
+
 class StochasticEnv(BaseEnv):
     """Stochastic spawn/despawn with random uniform task placement."""
 
@@ -36,6 +81,7 @@ class StochasticEnv(BaseEnv):
             cfg.stochastic.sigma_a,
             cfg.stochastic.sigma_b,
             cfg.relatedness_width,
+            cfg.stochastic.reward_generation,
         )
         self._precompute_pick_rewards()
 
@@ -47,6 +93,7 @@ class StochasticEnv(BaseEnv):
         sigma_a: float,
         sigma_b: float,
         relatedness_width: int,
+        reward_generation: str = "independent",
     ) -> np.ndarray:
         """Generate the task reward vectors r'^(k). Returns (n_task_types, N) array.
 
@@ -64,6 +111,16 @@ class StochasticEnv(BaseEnv):
         relatedness factor: r_j(actor, k) = proficiency[actor, k] · r'^(k)_j.
         """
         g = min(2 * relatedness_width + 1, N)
+        if reward_generation == "circulant_all_to_all" and g == N:
+            if n_task_types != N:
+                raise ValueError(
+                    "circulant_all_to_all reward generation requires "
+                    "n_task_types == num_agents"
+                )
+            # The environment stores (task types, agents), while the public
+            # generator intentionally exposes (agents, task types).
+            return generate_rewards_all_to_all(N, sigma_a, sigma_b).T
+
         rng_np = np.random.default_rng(seed)
 
         # Baseline b: draw n_task_types samples, standardize to std=sigma_b/g.
