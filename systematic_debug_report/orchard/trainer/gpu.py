@@ -37,6 +37,7 @@ class GpuTrainer(ValueTrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         discount_method: str = "team_steps",
+        behavior_policy: str = "value_greedy",
     ) -> None:
         super().__init__(
             network_list=network_list, env=env, gamma=gamma,
@@ -44,6 +45,7 @@ class GpuTrainer(ValueTrainerBase):
             total_steps=total_steps, heuristic=heuristic, timer=timer,
             train_only_teammates=train_only_teammates,
             discount_method=discount_method,
+            behavior_policy=behavior_policy,
         )
         self._bt = bt
 

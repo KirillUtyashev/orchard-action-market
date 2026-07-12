@@ -53,6 +53,10 @@ _ENUM_MAPS: dict[str, dict[str, Any]] = {
     },
     "heuristic": {
         "nearest": Heuristic.NEAREST,
+        "hungarian": Heuristic.HUNGARIAN,
+        "stochastic_mpc": Heuristic.STOCHASTIC_MPC,
+        "raw_stochastic_mpc": Heuristic.RAW_STOCHASTIC_MPC,
+        "clairvoyant_rollout": Heuristic.CLAIRVOYANT_ROLLOUT,
     },
     "activation": {
         "relu": Activation.RELU,
@@ -271,6 +275,12 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
     if discount_method not in ("team_steps", "world_steps", "round_steps"):
         raise ValueError(f"train.discount_method must be 'team_steps', 'world_steps', or 'round_steps', got {discount_method!r}")
 
+    behavior_policy = str(d.get("behavior_policy", "value_greedy")).lower().strip()
+    if behavior_policy not in ("value_greedy", "heuristic"):
+        raise ValueError(
+            f"train.behavior_policy must be 'value_greedy' or 'heuristic', got {behavior_policy!r}"
+        )
+
     return TrainConfig(
         total_steps=int(d["total_steps"]),
         seed=int(d.get("seed", 42)),
@@ -291,14 +301,20 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         warmup_steps=warmup_steps,
         train_only_teammates=bool(d.get("train_only_teammates", False)),
         discount_method=discount_method,
+        behavior_policy=behavior_policy,
     )
 
 
 def _parse_eval(d: dict[str, Any]) -> EvalConfig:
+    mc_validation_path = d.get("mc_validation_path")
+    eval_seed = d.get("eval_seed")
     return EvalConfig(
         eval_steps=int(d.get("eval_steps", 1000)),
         n_test_states=int(d.get("n_test_states", 50)),
         checkpoint_freq=int(d.get("checkpoint_freq", 0)),
+        eval_seed=int(eval_seed) if eval_seed is not None else None,
+        mc_validation_path=str(mc_validation_path) if mc_validation_path else None,
+        rollout_metrics=bool(d.get("rollout_metrics", True)),
     )
 
 

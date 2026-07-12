@@ -38,6 +38,10 @@ from orchard.viz.rollout import generate_frames
 
 _HEURISTIC_MAP = {
     "nearest": Heuristic.NEAREST,
+    "hungarian": Heuristic.HUNGARIAN,
+    "stochastic_mpc": Heuristic.STOCHASTIC_MPC,
+    "raw_stochastic_mpc": Heuristic.RAW_STOCHASTIC_MPC,
+    "clairvoyant_rollout": Heuristic.CLAIRVOYANT_ROLLOUT,
 }
 
 _ALL_POLICIES = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]

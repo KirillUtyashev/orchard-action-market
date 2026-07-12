@@ -115,6 +115,7 @@ def create_trainer(
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
             discount_method=cfg.train.discount_method,
+            behavior_policy=cfg.train.behavior_policy,
         )
     else:
         from orchard.trainer.cpu import CpuTrainer
@@ -130,4 +131,5 @@ def create_trainer(
             timer=timer,
             train_only_teammates=cfg.train.train_only_teammates,
             discount_method=cfg.train.discount_method,
+            behavior_policy=cfg.train.behavior_policy,
         )

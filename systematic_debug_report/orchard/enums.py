@@ -12,6 +12,10 @@ class DespawnMode(Enum):
 
 class Heuristic(Enum):
     NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
+    HUNGARIAN = auto()  # centralized survival-adjusted max-weight agent-task assignment
+    STOCHASTIC_MPC = auto()  # Hungarian-guided finite-horizon assignment planner
+    RAW_STOCHASTIC_MPC = auto()  # exhaustive open-loop action-tree planner
+    CLAIRVOYANT_ROLLOUT = auto()  # exact-RNG first-action search with Hungarian tail policy
 
 
 class EncoderType(Enum):

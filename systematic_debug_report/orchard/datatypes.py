@@ -218,6 +218,7 @@ class TrainConfig:
     warmup_steps: int = 0
     train_only_teammates: bool = False  # train only agents j where R(actor,j) > 0
     discount_method: str = "team_steps"
+    behavior_policy: str = "value_greedy"  # value_greedy or heuristic
 
 
 @dataclass(frozen=True)
@@ -235,6 +236,8 @@ class EvalConfig:
     n_test_states: int = 50
     checkpoint_freq: int = 0
     eval_seed: int | None = None
+    mc_validation_path: str | None = None
+    rollout_metrics: bool = True
 
 
 @dataclass(frozen=True)

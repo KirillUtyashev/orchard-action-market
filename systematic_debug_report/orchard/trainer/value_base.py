@@ -46,6 +46,7 @@ class ValueTrainerBase(TrainerBase):
         timer: Timer | None = None,
         train_only_teammates: bool = False,
         discount_method: str = "team_steps",
+        behavior_policy: str = "value_greedy",
     ) -> None:
         self._networks_list = network_list
         self._env = env
@@ -57,6 +58,7 @@ class ValueTrainerBase(TrainerBase):
         self._lr_schedule = lr_schedule
         self._total_steps = total_steps
         self._heuristic = heuristic
+        self._behavior_policy = behavior_policy
         self._timer = timer or Timer()
 
         self._zero_rewards = tuple(0.0 for _ in range(self._n_networks))
@@ -325,6 +327,13 @@ class ValueTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     def select_move(self, state: State, t: int) -> Action:
         self._timer.start(TimerSection.ACTION)
+        if self._behavior_policy == "heuristic":
+            action = heuristic_action(state, self._env, self._heuristic)
+            self._dbg_was_greedy = True
+            self._dbg_best_val = 0.0
+            self._timer.stop()
+            return action
+
         eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
         actions = get_all_actions(self._env.cfg)
         _arng = self._agent_rngs[state.actor] if self._agent_rngs is not None else rng
@@ -341,6 +350,11 @@ class ValueTrainerBase(TrainerBase):
 
     def select_pick(self, state: State, t: int) -> Action:
         self._timer.start(TimerSection.ACTION)
+        if self._behavior_policy == "heuristic":
+            action = heuristic_action(state, self._env, self._heuristic)
+            self._timer.stop()
+            return action
+
         eps = compute_schedule_value(self._epsilon_schedule, t, self._total_steps)
         actions = get_phase2_actions(state, self._env)
         if rng.random() < eps:

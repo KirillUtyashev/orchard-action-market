@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import torch
 
@@ -20,6 +21,11 @@ from orchard.logging_ import (
     build_main_csv_fieldnames,
     finalize_logging,
     setup_logging,
+)
+from orchard.mc_value_validation import (
+    build_mc_validation_csv_fieldnames,
+    evaluate_mc_validation,
+    load_mc_validation_csv,
 )
 from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
@@ -72,6 +78,12 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     encoding.init_encoder(cfg.model.encoder, env, n_networks=n_networks)
     trainer = create_trainer(cfg, env)
 
+    mc_validation_set = None
+    if cfg.eval.mc_validation_path:
+        mc_validation_path = Path(cfg.eval.mc_validation_path)
+        mc_validation_set = load_mc_validation_csv(mc_validation_path, cfg.env.n_agents)
+        print(f"Loaded {len(mc_validation_set)} MC validation states from: {mc_validation_path}")
+
     if resume_checkpoint is not None:
         loaded_step = trainer.load_checkpoint(resume_checkpoint)
         print(f"Loaded weights from: {resume_checkpoint} (step {loaded_step if loaded_step is not None else '?'})")
@@ -95,12 +107,20 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             actor_critic=bool(trainer.actor_networks),
             following_rates=cfg.train.following_rates.enabled,
             influencer=cfg.train.influencer.enabled,
+            mc_validation=mc_validation_set is not None,
+            rollout_metrics=cfg.eval.rollout_metrics,
         ),
     )
     detail_logger = CSVLogger(
         run_dir / "details.csv",
         build_detail_csv_fieldnames(trainer.critic_networks, trainer.actor_networks),
     )
+    mc_validation_logger = None
+    if mc_validation_set is not None:
+        mc_validation_logger = CSVLogger(
+            run_dir / "mc_validation.csv",
+            build_mc_validation_csv_fieldnames(cfg.env.n_agents),
+        )
     stopper = EarlyStopper(cfg.train.stopping, cfg.logging.main_csv_freq)
 
     timing_logger = None
@@ -141,7 +161,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             trainer.sync_to_cpu()
             wall_time = time.time() - start_time
             _eval_t0 = time.perf_counter()
-            metrics = trainer.evaluate(env, cfg.eval)
+            metrics = trainer.evaluate(env, cfg.eval) if cfg.eval.rollout_metrics else {}
             _eval_wall_accum += time.perf_counter() - _eval_t0
             td_loss_value = round(trainer.get_td_loss(), 8)
             row: dict[str, float | int | str] = {
@@ -150,19 +170,41 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
                 "td_loss_avg": td_loss_value,
             }
             row.update(metrics)
+            if mc_validation_set is not None:
+                mc_result = evaluate_mc_validation(
+                    mc_validation_set,
+                    trainer.critic_networks,
+                    n_agents=cfg.env.n_agents,
+                )
+                row.update(mc_result.summary)
+                if mc_validation_logger is not None:
+                    for mc_row in mc_result.rows:
+                        mc_log_row = {
+                            "step": t + 1,
+                            "wall_time": round(wall_time, 3),
+                        }
+                        mc_log_row.update(mc_row)
+                        mc_validation_logger.log(mc_log_row)
             row.update(trainer.get_main_metrics())
             main_logger.log(row)
             trainer.log_auxiliary(t + 1, round(wall_time, 3))
 
             # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
-            print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
-                  f"Team RPS: {metrics['greedy_team_rps']:.4f}")
-            h_rps_key = f"{heuristic_name}_rps"
-            h_team_key = f"{heuristic_name}_team_rps"
-            if h_rps_key in metrics:
-                print(f"  {heuristic_name} RPS: {metrics[h_rps_key]:.4f}  "
-                      f"Team RPS: {metrics[h_team_key]:.4f}")
+            if cfg.eval.rollout_metrics:
+                print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
+                      f"Team RPS: {metrics['greedy_team_rps']:.4f}")
+                h_rps_key = f"{heuristic_name}_rps"
+                h_team_key = f"{heuristic_name}_team_rps"
+                if h_rps_key in metrics:
+                    print(f"  {heuristic_name} RPS: {metrics[h_rps_key]:.4f}  "
+                          f"Team RPS: {metrics[h_team_key]:.4f}")
+            if mc_validation_set is not None:
+                print(f"  MC value RMSE: team={row['mc_value_team_rmse']:.4f}", end="")
+                if "mc_value_agent_rmse" in row and row["mc_value_agent_rmse"] != "":
+                    print(f"  agent={row['mc_value_agent_rmse']:.4f}")
+                else:
+                    print()
 
             if stopper.check(t, metrics):
                 break
@@ -275,6 +317,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     trainer.save_checkpoint(run_dir / "checkpoints" / "final.pt", last_completed_step)
     main_logger.close()
     detail_logger.close()
+    if mc_validation_logger is not None:
+        mc_validation_logger.close()
     if timing_logger is not None:
         timing_logger.close()
     trainer.close()
