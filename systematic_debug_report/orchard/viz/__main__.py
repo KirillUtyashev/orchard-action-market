@@ -29,7 +29,7 @@ from orchard.seed import set_all_seeds, rng
 from orchard.datatypes import State
 from orchard.enums import Action, Heuristic, num_actions
 
-from orchard.viz.export import write_summary_json, write_trajectory_csv
+from orchard.viz.export import write_reward_variances_json, write_summary_json, write_trajectory_csv
 from orchard.viz.frame import Frame
 from orchard.viz.html_builder import build_html
 from orchard.viz.renderer import render_frame_svg
@@ -492,6 +492,16 @@ def main() -> None:
         seed=seed,
     )
     print(f"Wrote {summary_path}")
+
+    reward_var_path = out_dir / "reward_variances.json"
+    write_reward_variances_json(
+        env.category_rewards,
+        sigma_a=cfg.env.stochastic.sigma_a,
+        sigma_b=cfg.env.stochastic.sigma_b,
+        reward_generation=cfg.env.stochastic.reward_generation,
+        path=reward_var_path,
+    )
+    print(f"Wrote {reward_var_path}")
 
     if compare_frames is not None:
         csv_compare_path = out_dir / "trajectory_compare.csv"
