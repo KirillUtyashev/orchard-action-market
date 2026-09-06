@@ -130,15 +130,16 @@ def build_main_csv_fieldnames(
     actor_critic: bool = False,
     following_rates: bool = False,
     influencer: bool = False,
+    mc_validation: bool = False,
+    rollout_metrics: bool = True,
 ) -> list[str]:
-    fields = [
-        "step", "wall_time",
-        "greedy_rps", "greedy_team_rps",
-        "greedy_correct_pps", "greedy_wrong_pps",
-        f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
-        f"{heuristic_name}_correct_pps", f"{heuristic_name}_wrong_pps",
-        "td_loss_avg",
-    ]
+    fields = ["step", "wall_time"]
+    if rollout_metrics:
+        fields.extend([
+            "greedy_rps", "greedy_team_rps",
+            f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
+        ])
+    fields.append("td_loss_avg")
     if actor_critic:
         fields.extend([
             "actor_lr",
@@ -160,6 +161,9 @@ def build_main_csv_fieldnames(
             "beta_mean",
             "influencer_weight_mean",
         ])
+    if mc_validation:
+        from orchard.mc_value_validation import build_mc_validation_summary_fieldnames
+        fields.extend(build_mc_validation_summary_fieldnames())
     return fields
 
 

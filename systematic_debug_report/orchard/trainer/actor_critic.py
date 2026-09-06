@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+import csv as _csv
 import json
 from pathlib import Path
+import random as _random
 from typing import Any
 
 import numpy as np
@@ -21,6 +23,7 @@ from orchard.actor_critic import (
     policy_index_to_action,
     sample_phase1_policy_eval_states,
 )
+from orchard.batched_actor_training import BatchedActorTrainer
 from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import (
     EncoderOutput,
@@ -30,7 +33,7 @@ from orchard.datatypes import (
     ScheduleConfig,
     State,
 )
-from orchard.enums import Action, Heuristic, PickMode
+from orchard.enums import Action, Heuristic
 from orchard.env.base import BaseEnv
 from orchard.eval import evaluate_policy_metrics
 from orchard.following_rates import (
@@ -94,6 +97,9 @@ class ActorCriticTrainerBase(TrainerBase):
         freeze_critic: bool,
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
+        comm_only_teammates: bool = False,
+        actor_bt: BatchedActorTrainer | None = None,
+        defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -107,11 +113,15 @@ class ActorCriticTrainerBase(TrainerBase):
         self._heuristic = heuristic
         self._freeze_critic = bool(freeze_critic)
         self._warmup_steps = max(0, int(warmup_steps))
+        self._defer_actor_updates = False if defer_actor_updates is None else bool(defer_actor_updates)
+        self._actor_bt = actor_bt
+        self._deferred_actor_t: int | None = None
         self._timer = timer or Timer()
         self._n_agents = env.cfg.n_agents
         self._decision_count = 0
         self._zero_rewards = tuple(0.0 for _ in range(self._n_agents))
         self._critic_prev_after: Any = None
+        self._agent_action_rngs = self._build_agent_action_rngs()
 
         self._td_loss_accum = 0.0
         self._td_loss_count = 0
@@ -124,23 +134,43 @@ class ActorCriticTrainerBase(TrainerBase):
 
         self._following_rates_cfg = following_rates_cfg
         self._influencer_cfg = influencer_cfg
+        self._comm_only_teammates = bool(comm_only_teammates)
+        self._teammate_matrix = self._build_teammate_matrix()
         self._following_states: list[FollowingRateAgentState] = []
         self._influencer: ExternalInfluencer | None = None
         if self._following_rates_cfg.enabled:
+            fixed_dual_budgets = self._following_rates_cfg.fixed and (
+                self._following_rates_cfg.teammate_budget is not None or
+                self._following_rates_cfg.non_teammate_budget is not None
+            )
+            follower_influencer_budget = (
+                float(self._following_rates_cfg.teammate_budget or 0.0) +
+                float(self._following_rates_cfg.non_teammate_budget or 0.0)
+                if fixed_dual_budgets
+                else self._following_rates_cfg.budget
+            )
             self._following_states = [
                 FollowingRateAgentState(
                     agent_id=agent_id,
                     agent_alphas=np.zeros(self._n_agents, dtype=float),
-                    budget=self._following_rates_cfg.budget,
+                    budget=(
+                        float(self._following_rates_cfg.teammate_budget or 0.0) +
+                        float(self._following_rates_cfg.non_teammate_budget or 0.0)
+                        if fixed_dual_budgets
+                        else self._following_rates_cfg.budget
+                    ),
                     following_rates=initial_following_rate_vector(
                         self._n_agents,
                         agent_id,
                         self._following_rates_cfg.budget,
                         influencer_enabled=self._influencer_cfg.enabled,
+                        teammate_mask=self._teammate_matrix[agent_id],
+                        teammate_budget=self._following_rates_cfg.teammate_budget,
+                        non_teammate_budget=self._following_rates_cfg.non_teammate_budget,
                     ),
                     following_rate_to_influencer=initial_following_rate_to_influencer(
                         self._n_agents,
-                        self._following_rates_cfg.budget,
+                        follower_influencer_budget,
                         influencer_enabled=self._influencer_cfg.enabled,
                     ),
                     rate_solver_name=self._following_rates_cfg.solver,
@@ -170,6 +200,60 @@ class ActorCriticTrainerBase(TrainerBase):
         self._alpha_state_log_freq: int = 0
         self._phase1_eval_states: list[State] | None = None
         self._phase2_eval_states: list[tuple[str, State]] | None = None
+        self._trace_f: Any = None
+        self._trace_w: Any = None
+        self._dbg_was_greedy: bool = False
+        self._dbg_best_val: float = 0.0
+        self._dbg_td_delta_sq: float = 0.0
+        self._dbg_actor_selected_q: float = 0.0
+        self._dbg_actor_baseline: float = 0.0
+        self._dbg_actor_advantage: float = 0.0
+
+    def _build_agent_action_rngs(self) -> list[_random.Random] | None:
+        return None
+
+    def _sample_action_index_from_probs(self, actor_id: int, probs: np.ndarray | torch.Tensor) -> int:
+        agent_rngs = self._agent_action_rngs
+        if agent_rngs is None:
+            if isinstance(probs, torch.Tensor):
+                return int(torch.multinomial(probs, 1).item())
+            return int(np.random.choice(len(probs), p=probs))
+
+        probs_np = probs.detach().cpu().numpy() if isinstance(probs, torch.Tensor) else np.asarray(probs)
+        threshold = agent_rngs[actor_id].random()
+        cumulative = 0.0
+        for idx, prob in enumerate(probs_np):
+            cumulative += float(prob)
+            if threshold <= cumulative:
+                return idx
+        return int(len(probs_np) - 1)
+
+    def _build_teammate_matrix(self) -> tuple[tuple[bool, ...], ...]:
+        # Use relatedness matrix: R(actor, observer) > 0 means observer is teammate of actor
+        tm = self._env.teammate_mask  # (N, N) bool, includes self
+        return tuple(
+            tuple(bool(tm[actor_id, observer_id]) and observer_id != actor_id
+                  for observer_id in range(self._n_agents))
+            for actor_id in range(self._n_agents)
+        )
+
+    def _is_teammate_observer(self, observer_id: int, actor_id: int) -> bool:
+        return bool(self._teammate_matrix[actor_id][observer_id])
+
+    def _teammate_mask_tensor(
+        self,
+        actor_id: int,
+        *,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        mask = torch.as_tensor(self._teammate_matrix[actor_id], dtype=dtype, device=device)
+        mask = mask.clone()
+        mask[actor_id] = 1.0
+        return mask
+
+    def _actor_task_types(self, actor_id: int) -> frozenset[int]:
+        return self._env.proficiency_positive_types[actor_id]
 
     # ------------------------------------------------------------------
     # Abstract critic hooks
@@ -220,6 +304,28 @@ class ActorCriticTrainerBase(TrainerBase):
         self._entropy_accum += float(actor_metrics["entropy_mean"]) * sample_count
         self._entropy_count += sample_count
 
+    def _train_actor_batch(self, actor_net: PolicyNetwork) -> None:
+        actor_metrics = actor_net.train_batch()
+        self._accumulate_actor_metrics(actor_metrics)
+
+    def _flush_deferred_actor_updates(self, t: int | None = None) -> None:
+        if not self._defer_actor_updates:
+            return
+        actor_t = t if t is not None else self._deferred_actor_t
+        if actor_t is None:
+            return
+        self._timer.start(TimerSection.TRAIN)
+        if self._actor_bt is not None:
+            actor_lr = compute_schedule_value(self._actor_lr_schedule, actor_t, self._total_steps)
+            actor_metrics = self._actor_bt.train_batch_batched(alpha=actor_lr)
+            self._accumulate_actor_metrics(actor_metrics)
+        else:
+            for actor_net in self._actor_networks_list:
+                if actor_net.batch_states:
+                    self._train_actor_batch(actor_net)
+        self._deferred_actor_t = None
+        self._timer.stop()
+
     def _handle_actor_experience(
         self,
         actor_net: PolicyNetwork,
@@ -235,12 +341,20 @@ class ActorCriticTrainerBase(TrainerBase):
         actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
         actor_net.set_lr(actor_lr)
         actor_net.add_experience(actor_state, legal_mask, action, advantage)
+        if self._defer_actor_updates:
+            self._deferred_actor_t = t
+            self._timer.stop()
+            return
         actor_metrics = actor_net.train_batch()
         self._timer.stop()
         self._accumulate_actor_metrics(actor_metrics)
 
     def _after_step(self, next_state: State, t: int) -> None:
-        del next_state, t
+        if self._defer_actor_updates and next_state.actor == 0:
+            self._flush_deferred_actor_updates(t)
+
+    def flush_pending_updates(self) -> None:
+        self._flush_deferred_actor_updates()
 
     def _serialize_pending_actor_batches(self) -> list[dict[str, object]]:
         serialized: list[dict[str, object]] = []
@@ -298,15 +412,21 @@ class ActorCriticTrainerBase(TrainerBase):
 
         self._timer.start(TimerSection.ACTION)
         move_action, move_actor_state, move_probs, move_mask = self._sample_action(state)
+        move_probs_np = move_probs.detach().cpu().numpy() if isinstance(move_probs, torch.Tensor) else move_probs
+        self._dbg_was_greedy = int(move_action.value) == int(np.argmax(move_probs_np))
         self._timer.stop()
 
         self._timer.start(TimerSection.ENV)
         s_moved = self._env.apply_action(state, move_action)
         actor = state.actor
-        on_task = s_moved.is_agent_on_task(actor)
+        on_task = s_moved.is_agent_on_task(actor, self._actor_task_types(actor))
         self._timer.stop()
 
-        if self._env.cfg.pick_mode == PickMode.CHOICE and on_task:
+        trace_pick_happened = False
+        trace_pick_type = -1
+        trace_pick_rewards: tuple[float, ...] = tuple(0.0 for _ in range(self._n_agents))
+
+        if on_task:
             pick_state = s_moved.with_pick_phase()
             self._train_decision(
                 state=state,
@@ -327,6 +447,9 @@ class ActorCriticTrainerBase(TrainerBase):
                 s_moved,
                 pick_type=pick_action.pick_type() if pick_action.is_pick() else None,
             )
+            trace_pick_happened = True
+            trace_pick_type = pick_action.pick_type() if pick_action.is_pick() else -1
+            trace_pick_rewards = pick_rewards
             self._timer.stop()
             self._train_decision(
                 state=pick_state,
@@ -338,8 +461,23 @@ class ActorCriticTrainerBase(TrainerBase):
                 probs=pick_probs,
             )
             self._timer.start(TimerSection.ENV)
-            next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+            pre_spawn_state = s_picked
+            post_spawn_state = self._env.spawn_and_despawn(s_picked)
+            next_state = self._env.advance_actor(post_spawn_state)
             self._timer.stop()
+            self._write_env_trace_row(
+                t=t,
+                actor=actor,
+                move_action=move_action,
+                on_task=on_task,
+                pick_happened=trace_pick_happened,
+                pick_task_type=trace_pick_type,
+                pick_rewards=trace_pick_rewards,
+                pre_spawn_state=pre_spawn_state,
+                post_spawn_state=post_spawn_state,
+                next_state=next_state,
+                move_actor_state=move_actor_state,
+            )
             self._after_step(next_state, t)
             return next_state
 
@@ -355,6 +493,9 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             self._timer.start(TimerSection.ENV)
             s_picked, rewards = self._env.resolve_pick(s_moved)
+            trace_pick_happened = True
+            trace_pick_type = self._picked_task_type(s_moved)
+            trace_pick_rewards = rewards
             self._timer.stop()
             self._train_critic_after_transition(s_picked, rewards, 1.0, t)
         else:
@@ -369,8 +510,23 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             s_picked = s_moved
         self._timer.start(TimerSection.ENV)
-        next_state = self._env.advance_actor(self._env.spawn_and_despawn(s_picked))
+        pre_spawn_state = s_picked
+        post_spawn_state = self._env.spawn_and_despawn(s_picked)
+        next_state = self._env.advance_actor(post_spawn_state)
         self._timer.stop()
+        self._write_env_trace_row(
+            t=t,
+            actor=actor,
+            move_action=move_action,
+            on_task=on_task,
+            pick_happened=trace_pick_happened,
+            pick_task_type=trace_pick_type,
+            pick_rewards=trace_pick_rewards,
+            pre_spawn_state=pre_spawn_state,
+            post_spawn_state=post_spawn_state,
+            next_state=next_state,
+            move_actor_state=move_actor_state,
+        )
         self._after_step(next_state, t)
         return next_state
 
@@ -386,7 +542,7 @@ class ActorCriticTrainerBase(TrainerBase):
 
     def _legal_mask(self, state: State) -> np.ndarray:
         if state.pick_phase:
-            return build_phase2_legal_mask(state, self._env.cfg)
+            return build_phase2_legal_mask(state, self._env.cfg, self._env.proficiency_positive_types)
         return build_phase1_legal_mask(state, self._env.cfg)
 
     def _actor_probabilities(self, state: State) -> np.ndarray:
@@ -402,8 +558,9 @@ class ActorCriticTrainerBase(TrainerBase):
         actor_id = state.actor
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state)
-        action, probs = self._actor_networks_list[actor_id].sample_action(actor_state, legal_mask)
-        return action, actor_state, probs, legal_mask
+        probs = self._actor_networks_list[actor_id].get_action_probabilities(actor_state, legal_mask)
+        action_idx = self._sample_action_index_from_probs(actor_id, probs)
+        return policy_index_to_action(action_idx), actor_state, probs, legal_mask
 
     def _greedy_action(self, state: State) -> Action:
         probs = self._actor_probabilities(state)
@@ -497,7 +654,10 @@ class ActorCriticTrainerBase(TrainerBase):
             return after_state, rewards
 
         s_moved = self._env.apply_action(state, action)
-        if s_moved.is_agent_on_task(s_moved.actor):
+        if s_moved.is_agent_on_task(
+            s_moved.actor,
+            self._actor_task_types(s_moved.actor),
+        ):
             return s_moved.with_pick_phase(), self._zero_rewards
         return s_moved, self._zero_rewards
 
@@ -517,6 +677,14 @@ class ActorCriticTrainerBase(TrainerBase):
                 total += weight * (
                     float(rewards[observer_id]) + float(discount) * float(after_values[observer_id])
                 )
+            return total
+        if self._comm_only_teammates:
+            total = float(rewards[actor_id]) + float(discount) * float(after_values[actor_id])
+            for observer_id in range(self._n_agents):
+                if observer_id == actor_id:
+                    continue
+                if self._is_teammate_observer(observer_id, actor_id):
+                    total += float(rewards[observer_id]) + float(discount) * float(after_values[observer_id])
             return total
         return float(sum(rewards) + float(discount) * sum(after_values))
 
@@ -587,6 +755,7 @@ class ActorCriticTrainerBase(TrainerBase):
     ) -> None:
         if self._freeze_critic or t < self._warmup_steps:
             self._critic_prev_after = None
+            self._dbg_td_delta_sq = 0.0
             return
 
         self._timer.start(TimerSection.ENCODE)
@@ -604,7 +773,10 @@ class ActorCriticTrainerBase(TrainerBase):
             )
             self._td_loss_accum += critic_loss
             self._td_loss_count += self._n_agents
+            self._dbg_td_delta_sq = critic_loss
             self._timer.stop()
+        else:
+            self._dbg_td_delta_sq = 0.0
 
         self._critic_prev_after = current_after
 
@@ -651,8 +823,12 @@ class ActorCriticTrainerBase(TrainerBase):
             discount,
         )
         selected_q_value = float(q_values[action_idx])
+        self._dbg_best_val = selected_q_value
         baseline_value = float(np.dot(probs, q_values))
         advantage = selected_q_value - baseline_value
+        self._dbg_actor_selected_q = selected_q_value
+        self._dbg_actor_baseline = baseline_value
+        self._dbg_actor_advantage = advantage
         selected_rewards = rewards_by_action[action_idx]
         selected_after_values = after_values_by_action[action_idx]
         if self._following_states:
@@ -694,27 +870,27 @@ class ActorCriticTrainerBase(TrainerBase):
     # Evaluation and logging
     # ------------------------------------------------------------------
     def evaluate(self, env: BaseEnv, eval_cfg: EvalConfig) -> dict[str, float | int]:
-        eval_start = env.init_state()
+        env.set_eval_mode(True, seed=eval_cfg.eval_seed)
+        try:
+            eval_start = env.init_state()
 
-        def greedy_policy(s: State) -> Action:
-            return self._greedy_action(s)
+            def greedy_policy(s: State) -> Action:
+                return self._greedy_action(s)
 
-        def baseline_policy(s: State) -> Action:
-            return heuristic_action(s, env.cfg, self._heuristic)
+            def baseline_policy(s: State) -> Action:
+                return heuristic_action(s, env, self._heuristic)
 
-        heuristic_name = self._heuristic.name.lower()
-        greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
-        baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
-        return {
-            "greedy_rps": greedy_metrics["rps"],
-            "greedy_team_rps": greedy_metrics["team_rps"],
-            "greedy_correct_pps": greedy_metrics["correct_pps"],
-            "greedy_wrong_pps": greedy_metrics["wrong_pps"],
-            f"{heuristic_name}_rps": baseline_metrics["rps"],
-            f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
-            f"{heuristic_name}_correct_pps": baseline_metrics["correct_pps"],
-            f"{heuristic_name}_wrong_pps": baseline_metrics["wrong_pps"],
-        }
+            heuristic_name = self._heuristic.name.lower()
+            greedy_metrics = evaluate_policy_metrics(eval_start, greedy_policy, env, eval_cfg.eval_steps)
+            baseline_metrics = evaluate_policy_metrics(eval_start, baseline_policy, env, eval_cfg.eval_steps)
+            return {
+                "greedy_rps": greedy_metrics["rps"],
+                "greedy_team_rps": greedy_metrics["team_rps"],
+                f"{heuristic_name}_rps": baseline_metrics["rps"],
+                f"{heuristic_name}_team_rps": baseline_metrics["team_rps"],
+            }
+        finally:
+            env.set_eval_mode(False)
 
     def get_td_loss(self) -> float:
         avg = self._td_loss_accum / max(self._td_loss_count, 1)
@@ -775,12 +951,95 @@ class ActorCriticTrainerBase(TrainerBase):
         }
         for idx, actor_net in enumerate(self._actor_networks_list):
             for name, val in actor_net.get_weight_norms().items():
-                row[f"actor_weight_norm_agent_{idx}_{name}"] = round(val, 6)
+                row[f"actor_weight_norm_agent_{idx}_{name}"] = round(val, 11)
             for name, val in actor_net.get_grad_norms().items():
-                row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 6)
+                row[f"actor_grad_norm_agent_{idx}_{name}"] = round(val, 11)
         return row
 
-    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0) -> None:
+    def _picked_task_type(self, state: State) -> int:
+        pos = state.agent_positions[state.actor]
+        actor_types = self._actor_task_types(state.actor)
+        for task_pos, task_type in zip(state.task_positions, state.task_types or ()):
+            if task_pos == pos and (actor_types is None or task_type in actor_types):
+                return int(task_type)
+        return -1
+
+    @staticmethod
+    def _enc_grid_l2_for_actor_state(actor_state: EncoderOutput) -> float:
+        try:
+            if actor_state.grid is None:
+                return float("nan")
+            return float(actor_state.grid.detach().norm().cpu().item())
+        except Exception:
+            return float("nan")
+
+    @staticmethod
+    def _enc_scalar_for_actor_state(actor_state: EncoderOutput) -> str:
+        try:
+            if actor_state.scalar is None:
+                return ""
+            values = actor_state.scalar.detach().cpu().flatten().tolist()
+            return ",".join(f"{float(x):.6f}" for x in values)
+        except Exception:
+            return ""
+
+    def _write_env_trace_row(
+        self,
+        *,
+        t: int,
+        actor: int,
+        move_action: Action,
+        on_task: bool,
+        pick_happened: bool,
+        pick_task_type: int,
+        pick_rewards: tuple[float, ...],
+        pre_spawn_state: State,
+        post_spawn_state: State,
+        next_state: State,
+        move_actor_state: EncoderOutput,
+    ) -> None:
+        if self._trace_w is None:
+            return
+
+        fmt_positions = lambda ps: ";".join(f"{p.row},{p.col}" for p in sorted(ps))
+        tasks_before = set(pre_spawn_state.task_positions)
+        tasks_after = set(post_spawn_state.task_positions)
+        post_pairs = sorted(
+            zip(post_spawn_state.task_positions, post_spawn_state.task_types or ()),
+            key=lambda item: (item[0].row, item[0].col, item[1]),
+        )
+        row: dict[str, float | int | str | bool] = {
+            "step": t,
+            "actor": actor,
+            "epsilon": 0.0,
+            "action": move_action.name,
+            "on_task": on_task,
+            "pick_happened": pick_happened,
+            "pick_task_type": pick_task_type,
+            "n_tasks_before_spawn": len(tasks_before),
+            "tasks_despawned": fmt_positions(tasks_before - tasks_after),
+            "tasks_spawned": fmt_positions(tasks_after - tasks_before),
+            "n_tasks_after": len(tasks_after),
+            "task_positions_after": ";".join(f"{p.row},{p.col}" for p, _ in post_pairs),
+            "task_types_after": ";".join(str(task_type) for _, task_type in post_pairs),
+            "agent_positions": fmt_positions(next_state.agent_positions),
+            "agent_positions_indexed": ";".join(f"{p.row},{p.col}" for p in next_state.agent_positions),
+            "was_greedy": self._dbg_was_greedy,
+            "best_val": round(self._dbg_best_val, 8),
+            "actor_selected_q": round(self._dbg_actor_selected_q, 8),
+            "actor_baseline": round(self._dbg_actor_baseline, 8),
+            "actor_advantage": round(self._dbg_actor_advantage, 8),
+            "td_delta_sq": round(self._dbg_td_delta_sq, 10),
+            "enc_grid_l2": round(self._enc_grid_l2_for_actor_state(move_actor_state), 8),
+            "enc_scalar": self._enc_scalar_for_actor_state(move_actor_state),
+        }
+        for idx in range(self._n_agents):
+            row[f"reward_{idx}"] = pick_rewards[idx] if idx < len(pick_rewards) else 0.0
+        self._trace_w.writerow(row)
+        if self._trace_f is not None:
+            self._trace_f.flush()
+
+    def setup_aux_loggers(self, run_dir: Path, alpha_state_log_freq: int = 0, env_trace: bool = False) -> None:
         self._alpha_state_log_freq = alpha_state_log_freq
         self._phase1_logger = CSVLogger(
             run_dir / "phase1_policy_probabilities.csv",
@@ -806,6 +1065,21 @@ class ActorCriticTrainerBase(TrainerBase):
             )
         if alpha_state_log_freq > 0 and self._following_states:
             self._alpha_state_log = open(run_dir / "alpha_states.jsonl", "w")
+        if env_trace:
+            fields = (
+                ["step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type"]
+                + [f"reward_{i}" for i in range(self._n_agents)]
+                + ["n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
+                   "n_tasks_after", "task_positions_after", "task_types_after",
+                   "agent_positions", "agent_positions_indexed",
+                   "was_greedy", "best_val", "td_delta_sq",
+                   "actor_selected_q", "actor_baseline", "actor_advantage",
+                   "enc_grid_l2", "enc_scalar"]
+            )
+            self._trace_f = open(run_dir / "env_trace.csv", "w", newline="")
+            self._trace_w = _csv.DictWriter(self._trace_f, fieldnames=fields)
+            self._trace_w.writeheader()
+            self._trace_f.flush()
 
     def _log_alpha_state(
         self,
@@ -824,10 +1098,8 @@ class ActorCriticTrainerBase(TrainerBase):
         freq = self._alpha_state_log_freq
         if freq <= 0 or t % freq != 0:
             return
-        assignments = self._env.cfg.task_assignments or ()
-        actor_types = set(assignments[actor_id]) if actor_id < len(assignments) else set()
         teammate_of_actor = [
-            i != actor_id and bool(set(assignments[i]) & actor_types if i < len(assignments) else False)
+            i != actor_id and bool(self._env.teammate_mask[actor_id, i])
             for i in range(self._n_agents)
         ]
         record = {
@@ -865,7 +1137,7 @@ class ActorCriticTrainerBase(TrainerBase):
             for idx, (label, state) in enumerate(self._phase2_eval_states):
                 probs = self._actor_probabilities(state)
                 self._phase2_logger.log(
-                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg)
+                    build_phase2_policy_prob_row(step, wall_time, idx, label, state, probs, self._env.cfg, self._env.proficiency_positive_types)
                 )
         for idx, state in enumerate(self._following_states):
             logger = self._following_loggers.get(idx)
@@ -883,6 +1155,13 @@ class ActorCriticTrainerBase(TrainerBase):
             logger.close()
         if self._influencer_logger is not None:
             self._influencer_logger.close()
+        if self._trace_f is not None:
+            self._trace_f.close()
+            self._trace_f = None
+            self._trace_w = None
+        if self._alpha_state_log is not None:
+            self._alpha_state_log.close()
+            self._alpha_state_log = None
 
     # ------------------------------------------------------------------
     # Checkpoints
@@ -943,6 +1222,8 @@ class ActorCriticTrainerBase(TrainerBase):
             net.load_state_dict(sd, strict=True)
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
+        if self._actor_bt is not None:
+            self._actor_bt.sync_from_networks()
         self._restore_pending_actor_batches(None)
 
         if self._following_states and ckpt.get("following_rates"):
@@ -982,6 +1263,8 @@ class ActorCriticTrainerBase(TrainerBase):
             raise ValueError(f"No actor weights found in checkpoint. Keys: {list(ckpt.keys())}")
         for net, sd in zip(self._actor_networks_list, ckpt["actors"]):
             net.load_state_dict(sd, strict=True)
+        if self._actor_bt is not None:
+            self._actor_bt.sync_from_networks()
         return ckpt.get("step")
     # ------------------------------------------------------------------
     # Public properties
@@ -1049,6 +1332,9 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         freeze_critic: bool,
         following_rates_cfg: FollowingRatesConfig,
         influencer_cfg: InfluencerConfig,
+        comm_only_teammates: bool = False,
+        actor_bt: BatchedActorTrainer | None = None,
+        defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
     ) -> None:
@@ -1064,6 +1350,9 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             freeze_critic=freeze_critic,
             following_rates_cfg=following_rates_cfg,
             influencer_cfg=influencer_cfg,
+            comm_only_teammates=comm_only_teammates,
+            actor_bt=actor_bt,
+            defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=warmup_steps,
         )
@@ -1105,12 +1394,21 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
     ) -> torch.Tensor:
         returns_t = rewards_t + float(discount) * after_values_t
         if not self._following_states:
+            if self._comm_only_teammates:
+                weights = self._teammate_mask_tensor(
+                    actor_id,
+                    dtype=returns_t.dtype,
+                    device=returns_t.device,
+                )
+                return returns_t @ weights
             return returns_t.sum(dim=1)
 
         weights = torch.zeros(self._n_agents, dtype=returns_t.dtype, device=returns_t.device)
         weights[actor_id] = 1.0
         for observer_id in range(self._n_agents):
             if observer_id == actor_id:
+                continue
+            if self._comm_only_teammates and not self._is_teammate_observer(observer_id, actor_id):
                 continue
             weights[observer_id] = float(self._effective_observer_weight(observer_id, actor_id))
         return returns_t @ weights
@@ -1135,7 +1433,7 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         actor_state = self._encode_actor_state(state, actor_id)
         legal_mask = self._legal_mask(state)
         probs_t = self._actor_networks_list[actor_id].get_action_probabilities_tensor(actor_state, legal_mask)
-        action_idx = int(torch.multinomial(probs_t, 1).item())
+        action_idx = self._sample_action_index_from_probs(actor_id, probs_t)
         return policy_index_to_action(action_idx), actor_state, probs_t, legal_mask
 
     def _train_decision(
@@ -1171,8 +1469,12 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         probs_legal = probs_t.index_select(0, legal_indices_t)
         action_pos = legal_indices.index(action_idx)
         selected_q_value = float(q_legal[action_pos].item())
+        self._dbg_best_val = selected_q_value
         baseline_value = float(torch.dot(probs_legal, q_legal).item())
         advantage = selected_q_value - baseline_value
+        self._dbg_actor_selected_q = selected_q_value
+        self._dbg_actor_baseline = baseline_value
+        self._dbg_actor_advantage = advantage
 
         selected_rewards = rewards_list[action_pos]
         selected_after_values_t = after_values_t[action_pos]

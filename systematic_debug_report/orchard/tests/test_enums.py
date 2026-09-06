@@ -3,7 +3,6 @@
 import pytest
 from orchard.enums import (
     Action,
-    PickMode,
     make_pick_action,
     num_actions,
     NUM_MOVE_ACTIONS,
@@ -18,7 +17,6 @@ class TestActionBasic:
         assert Action.LEFT.value == 2
         assert Action.RIGHT.value == 3
         assert Action.STAY.value == 4
-        assert Action.PICK.value == 5
 
     def test_construction_by_value(self):
         a = Action(0)
@@ -31,12 +29,10 @@ class TestActionBasic:
         assert Action.LEFT.delta == (0, -1)
         assert Action.RIGHT.delta == (0, 1)
         assert Action.STAY.delta == (0, 0)
-        assert Action.PICK.delta == (0, 0)
 
     def test_name(self):
         assert Action.UP.name == 'UP'
         assert Action.STAY.name == 'STAY'
-        assert Action.PICK.name == 'PICK'
 
     def test_repr(self):
         assert repr(Action.UP) == 'Action.UP'
@@ -58,7 +54,7 @@ class TestActionMovePick:
     def test_is_move(self):
         assert Action.UP.is_move() is True
         assert Action.STAY.is_move() is True
-        assert Action.PICK.is_pick() is True
+        assert make_pick_action(0).is_pick() is True
         assert Action.UP.is_pick() is False
 
     def test_pick_type_movement(self):
@@ -66,7 +62,7 @@ class TestActionMovePick:
         assert Action.STAY.pick_type() is None
 
     def test_pick_type_generic(self):
-        assert Action.PICK.pick_type() == 0
+        assert make_pick_action(0).pick_type() == 0
 
     def test_pick_delta(self):
         """Pick actions have (0,0) delta — no movement."""
@@ -80,7 +76,7 @@ class TestMakePickAction:
         assert a.value == 5
         assert a.is_pick() is True
         assert a.pick_type() == 0
-        assert a.name == 'PICK'  # value 5 maps exactly to 'PICK'
+        assert a.name == 'PICK_0'
 
     def test_pick_3(self):
         a = make_pick_action(3)
@@ -95,15 +91,14 @@ class TestMakePickAction:
 
 
 class TestNumActions:
-    def test_forced(self):
-        # Forced mode ignores n_task_types, always 5 move actions
-        assert num_actions(PickMode.FORCED, 4) == 5
+    def test_basic(self):
+        assert num_actions(4) == 9
+        assert num_actions(1) == 6
+        assert num_actions(10) == 15
 
-    def test_choice(self):
-        # Choice mode adds n_task_types pick actions
-        assert num_actions(PickMode.CHOICE, 4) == 9
-        assert num_actions(PickMode.CHOICE, 1) == 6
-        assert num_actions(PickMode.CHOICE, 10) == 15
+    def test_formula(self):
+        for t in range(1, 6):
+            assert num_actions(t) == 5 + t
 
 
 class TestConstants:

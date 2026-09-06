@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import torch
 
@@ -20,6 +21,11 @@ from orchard.logging_ import (
     build_main_csv_fieldnames,
     finalize_logging,
     setup_logging,
+)
+from orchard.mc_value_validation import (
+    build_mc_validation_csv_fieldnames,
+    evaluate_mc_validation,
+    load_mc_validation_csv,
 )
 from orchard.schedule import compute_schedule_value
 from orchard.seed import set_all_seeds
@@ -67,8 +73,16 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     # --- Setup ---
     set_all_seeds(cfg.train.seed)
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, cfg.env)
+    from orchard.enums import LearningType
+    n_networks = 1 if cfg.train.learning_type == LearningType.CENTRALIZED else cfg.env.n_agents
+    encoding.init_encoder(cfg.model.encoder, env, n_networks=n_networks)
     trainer = create_trainer(cfg, env)
+
+    mc_validation_set = None
+    if cfg.eval.mc_validation_path:
+        mc_validation_path = Path(cfg.eval.mc_validation_path)
+        mc_validation_set = load_mc_validation_csv(mc_validation_path, cfg.env.n_agents)
+        print(f"Loaded {len(mc_validation_set)} MC validation states from: {mc_validation_path}")
 
     if resume_checkpoint is not None:
         loaded_step = trainer.load_checkpoint(resume_checkpoint)
@@ -82,7 +96,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
 
     # --- Logging ---
     run_dir = setup_logging(cfg)
-    trainer.setup_aux_loggers(run_dir, alpha_state_log_freq=cfg.logging.alpha_state_log_freq)
+    trainer.setup_aux_loggers(run_dir, alpha_state_log_freq=cfg.logging.alpha_state_log_freq, env_trace=cfg.logging.env_trace)
     trainer.save_checkpoint(run_dir / "checkpoints" / "step_0.pt", 0)
 
     heuristic_name = cfg.train.heuristic.name.lower()
@@ -93,12 +107,20 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             actor_critic=bool(trainer.actor_networks),
             following_rates=cfg.train.following_rates.enabled,
             influencer=cfg.train.influencer.enabled,
+            mc_validation=mc_validation_set is not None,
+            rollout_metrics=cfg.eval.rollout_metrics,
         ),
     )
     detail_logger = CSVLogger(
         run_dir / "details.csv",
         build_detail_csv_fieldnames(trainer.critic_networks, trainer.actor_networks),
     )
+    mc_validation_logger = None
+    if mc_validation_set is not None:
+        mc_validation_logger = CSVLogger(
+            run_dir / "mc_validation.csv",
+            build_mc_validation_csv_fieldnames(cfg.env.n_agents),
+        )
     stopper = EarlyStopper(cfg.train.stopping, cfg.logging.main_csv_freq)
 
     timing_logger = None
@@ -115,14 +137,18 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         timing_logger = CSVLogger(
             run_dir / "timing.csv",
             ["step", "wall_time",
-             "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms",
-             "total_ms",
+             "encode_ms", "env_ms",
+             "action_env_ms", "action_encode_ms", "action_forward_ms",
+             "train_grad_ms", "train_trace_ms", "train_v_next_ms", "train_param_ms",
+             "eval_wall_ms",
+             "total_step_ms",
              "sm_util_pct", "gpu_mem_util_pct",
              "vram_allocated_mb"],
         )
 
     state = env.init_state()
     last_completed_step = 0
+    _eval_wall_accum: float = 0.0  # accumulated eval wall-time between timing reports
 
     # --- Main loop ---
     for t in range(cfg.train.total_steps):
@@ -134,7 +160,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         if (t + 1) % cfg.logging.main_csv_freq == 0:
             trainer.sync_to_cpu()
             wall_time = time.time() - start_time
-            metrics = trainer.evaluate(env, cfg.eval)
+            _eval_t0 = time.perf_counter()
+            metrics = trainer.evaluate(env, cfg.eval) if cfg.eval.rollout_metrics else {}
+            _eval_wall_accum += time.perf_counter() - _eval_t0
             td_loss_value = round(trainer.get_td_loss(), 8)
             row: dict[str, float | int | str] = {
                 "step": t + 1,
@@ -142,21 +170,41 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
                 "td_loss_avg": td_loss_value,
             }
             row.update(metrics)
+            if mc_validation_set is not None:
+                mc_result = evaluate_mc_validation(
+                    mc_validation_set,
+                    trainer.critic_networks,
+                    n_agents=cfg.env.n_agents,
+                )
+                row.update(mc_result.summary)
+                if mc_validation_logger is not None:
+                    for mc_row in mc_result.rows:
+                        mc_log_row = {
+                            "step": t + 1,
+                            "wall_time": round(wall_time, 3),
+                        }
+                        mc_log_row.update(mc_row)
+                        mc_validation_logger.log(mc_log_row)
             row.update(trainer.get_main_metrics())
             main_logger.log(row)
             trainer.log_auxiliary(t + 1, round(wall_time, 3))
 
             # Print progress
             print(f"\n--- Step {t + 1} ({wall_time:.1f}s) ---")
-            print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
-                  f"Team RPS: {metrics['greedy_team_rps']:.4f}  "
-                  f"Correct PPS: {metrics['greedy_correct_pps']:.4f}  "
-                  f"Wrong PPS: {metrics['greedy_wrong_pps']:.4f}")
-            h_rps_key = f"{heuristic_name}_rps"
-            h_team_key = f"{heuristic_name}_team_rps"
-            if h_rps_key in metrics:
-                print(f"  {heuristic_name} RPS: {metrics[h_rps_key]:.4f}  "
-                      f"Team RPS: {metrics[h_team_key]:.4f}")
+            if cfg.eval.rollout_metrics:
+                print(f"  Greedy RPS: {metrics['greedy_rps']:.4f}  "
+                      f"Team RPS: {metrics['greedy_team_rps']:.4f}")
+                h_rps_key = f"{heuristic_name}_rps"
+                h_team_key = f"{heuristic_name}_team_rps"
+                if h_rps_key in metrics:
+                    print(f"  {heuristic_name} RPS: {metrics[h_rps_key]:.4f}  "
+                          f"Team RPS: {metrics[h_team_key]:.4f}")
+            if mc_validation_set is not None:
+                print(f"  MC value RMSE: team={row['mc_value_team_rmse']:.4f}", end="")
+                if "mc_value_agent_rmse" in row and row["mc_value_agent_rmse"] != "":
+                    print(f"  agent={row['mc_value_agent_rmse']:.4f}")
+                else:
+                    print()
 
             if stopper.check(t, metrics):
                 break
@@ -192,9 +240,9 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
 
             for idx, net in enumerate(trainer.critic_networks):
                 for name, val in net.get_weight_norms().items():
-                    detail_row[f"critic_weight_norm_agent_{idx}_{name}"] = round(val, 6)
+                    detail_row[f"critic_weight_norm_agent_{idx}_{name}"] = round(val, 11)
                 for name, val in net.get_grad_norms().items():
-                    detail_row[f"critic_grad_norm_agent_{idx}_{name}"] = round(val, 6)
+                    detail_row[f"critic_grad_norm_agent_{idx}_{name}"] = round(val, 11)
 
             if td_loss_value is None:
                 td_loss_value = round(trainer.get_td_loss(), 8)
@@ -210,11 +258,29 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
         # ── Timing CSV ──
         if timing_logger is not None and (t + 1) % cfg.logging.timing_csv_freq == 0:
             report = trainer._timer.report_and_reset()
-            encode_ms = round(report[TimerSection.ENCODE] * 1000, 4)
-            train_ms  = round(report[TimerSection.TRAIN]  * 1000, 4)
-            action_ms = round(report[TimerSection.ACTION] * 1000, 4)
-            env_ms    = round(report[TimerSection.ENV]    * 1000, 4)
-            eval_ms   = round(report[TimerSection.EVAL]   * 1000, 4)
+            n = cfg.logging.timing_csv_freq
+            ms = {s: round(report[s] * 1000, 4) for s in TimerSection}
+
+            encode_ms          = ms[TimerSection.ENCODE]
+            env_ms             = ms[TimerSection.ENV]
+            action_env_ms      = ms[TimerSection.ACTION_ENV]
+            action_encode_ms   = ms[TimerSection.ACTION_ENCODE]
+            action_forward_ms  = ms[TimerSection.ACTION_FORWARD]
+            train_grad_ms      = ms[TimerSection.TRAIN_GRAD]
+            train_trace_ms     = ms[TimerSection.TRAIN_TRACE]
+            train_v_next_ms    = ms[TimerSection.TRAIN_V_NEXT]
+            train_param_ms     = ms[TimerSection.TRAIN_PARAM]
+            # eval_wall_ms: total eval wall time in this window, averaged per step
+            eval_wall_ms       = round(_eval_wall_accum * 1000 / n, 4)
+            _eval_wall_accum   = 0.0
+
+            total_step_ms = round(
+                encode_ms + env_ms
+                + action_env_ms + action_encode_ms + action_forward_ms
+                + train_grad_ms + train_trace_ms + train_v_next_ms + train_param_ms
+                + eval_wall_ms,
+                4,
+            )
 
             sm_util = gpu_mem_util = -1
             if _nvml_available:
@@ -226,18 +292,23 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
                     pass
 
             timing_logger.log({
-                "step":             t + 1,
-                "wall_time":        round(time.time() - start_time, 3),
-                "encode_ms":        encode_ms,
-                "train_ms":         train_ms,
-                "action_ms":        action_ms,
-                "env_ms":           env_ms,
-                "eval_ms":          eval_ms,
-                "total_ms":         round(encode_ms + train_ms + action_ms + env_ms + eval_ms, 4),
-                "sm_util_pct":      sm_util,
-                "gpu_mem_util_pct": gpu_mem_util,
-                "vram_allocated_mb": round(torch.cuda.memory_allocated() / 1024**2, 1)
-                                     if torch.cuda.is_available() else -1,
+                "step":               t + 1,
+                "wall_time":          round(time.time() - start_time, 3),
+                "encode_ms":          encode_ms,
+                "env_ms":             env_ms,
+                "action_env_ms":      action_env_ms,
+                "action_encode_ms":   action_encode_ms,
+                "action_forward_ms":  action_forward_ms,
+                "train_grad_ms":      train_grad_ms,
+                "train_trace_ms":     train_trace_ms,
+                "train_v_next_ms":    train_v_next_ms,
+                "train_param_ms":     train_param_ms,
+                "eval_wall_ms":       eval_wall_ms,
+                "total_step_ms":      total_step_ms,
+                "sm_util_pct":        sm_util,
+                "gpu_mem_util_pct":   gpu_mem_util,
+                "vram_allocated_mb":  round(torch.cuda.memory_allocated() / 1024**2, 1)
+                                      if torch.cuda.is_available() else -1,
             })
 
     # --- Finalize ---
@@ -246,6 +317,8 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
     trainer.save_checkpoint(run_dir / "checkpoints" / "final.pt", last_completed_step)
     main_logger.close()
     detail_logger.close()
+    if mc_validation_logger is not None:
+        mc_validation_logger.close()
     if timing_logger is not None:
         timing_logger.close()
     trainer.close()

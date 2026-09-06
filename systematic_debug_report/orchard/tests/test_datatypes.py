@@ -1,7 +1,7 @@
-"""Tests for core datatypes (State, Grid) and assignment math."""
+"""Tests for core datatypes (State, Grid) and sort_tasks."""
 
 import pytest
-from orchard.datatypes import Grid, State, sort_tasks, compute_task_assignments
+from orchard.datatypes import Grid, State, sort_tasks
 
 
 class TestStateBasic:
@@ -75,7 +75,7 @@ class TestStateTaskQueries:
         assert s.task_type_at(Grid(1, 0)) == 0
 
     def test_tasks_at_multiple(self):
-        """Choice pick allows multiple types at the same cell."""
+        """Multiple tasks of different types can occupy the same cell."""
         s = State(
             agent_positions=(Grid(0, 0),),
             task_positions=(Grid(1, 1), Grid(1, 1), Grid(2, 0)),
@@ -108,35 +108,3 @@ class TestSortTasks:
         sp, st = sort_tasks(pos, None)
         assert sp == (Grid(0, 0), Grid(1, 0))
         assert st is None
-
-
-class TestComputeTaskAssignments:
-    def test_max_specialization(self):
-        # rho=0.25 * 4 = 1. Every agent gets exactly 1 type.
-        result = compute_task_assignments(4, 4, 0.25)
-        assert result == ((0,), (1,), (2,), (3,))
-
-    def test_half_specialization(self):
-        # rho=0.5 * 4 = 2. Every agent gets 2 types.
-        result = compute_task_assignments(4, 4, 0.5)
-        assert result == ((0, 1), (1, 2), (2, 3), (3, 0))
-
-    def test_no_specialization(self):
-        # rho=1.0 * 4 = 4. Every agent gets all 4 types.
-        result = compute_task_assignments(4, 4, 1.0)
-        for g in result:
-            assert set(g) == {0, 1, 2, 3}
-
-    def test_coverage_guaranteed(self):
-        """All types must be covered by at least one agent."""
-        result = compute_task_assignments(7, 7, 1.0 / 7)
-        covered = set()
-        for g in result:
-            covered.update(g)
-        assert covered == set(range(7))
-
-    def test_missing_type_raises_error(self):
-        # Unrealistic, but if math fails to cover a type, it must crash.
-        # compute_task_assignments mathematically guarantees coverage based on the formulation,
-        # but the assert inside will catch manual breaches.
-        pass

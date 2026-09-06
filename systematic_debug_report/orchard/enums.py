@@ -10,27 +10,17 @@ class DespawnMode(Enum):
     PROBABILITY = auto()
 
 
-class TaskSpawnMode(Enum):
-    GLOBAL_UNIQUE = auto()   # at most 1 task of ANY type per cell (forced pick)
-    PER_TYPE_UNIQUE = auto() # at most 1 task per TYPE per cell; types may coexist (choice pick)
-
-
-class PickMode(Enum):
-    FORCED = auto()   # auto-pick when stepping on task cell
-    CHOICE = auto()   # explicit pick(τ) action required
-
-
 class Heuristic(Enum):
-    NEAREST_TASK = auto()                    # move toward any nearest task
-    NEAREST_CORRECT_TASK = auto()            # move toward nearest task with τ ∈ G_actor; phase 2: always pick
-    NEAREST_CORRECT_TASK_STAY_WRONG = auto() # same phase 1; phase 2: pick if correct type, STAY if wrong
+    NEAREST = auto()  # value-aware: argmax φ(i,κ)·Σ_j R(i,j)·r'_j; moves toward best task
+    HUNGARIAN = auto()  # centralized survival-adjusted max-weight agent-task assignment
+    STOCHASTIC_MPC = auto()  # Hungarian-guided finite-horizon assignment planner
+    RAW_STOCHASTIC_MPC = auto()  # exhaustive open-loop action-tree planner
+    CLAIRVOYANT_ROLLOUT = auto()  # exact-RNG first-action search with Hungarian tail policy
 
 
 class EncoderType(Enum):
-    BLIND_TASK_CNN_GRID = auto()             # dec O(1): 4 grid channels, 3 scalars
-    FILTERED_TASK_CNN_GRID = auto()          # dec O(1): 6 grid channels, 3 scalars
-    POSITION_AWARE_TASK_CNN_GRID = auto()    # dec O(1): 5 grid channels, 3 scalars 
-    CENTRALIZED_TASK_CNN_GRID = auto()       # cen: T+N+1 channels, N scalars
+    EVERYTHING_CNN_GRID = auto()    # cen and dec: T+N+1 channels, N+1 scalars; raw binary only
+    FILTERED_DEC_CNN_GRID = auto()  # dec: |R_i|+|W_i|+1 channels, |W_i|+1 scalars; raw binary, masked to R_i/W_i
 
 
 class Activation(Enum):
@@ -83,7 +73,6 @@ _ACTION_NAMES: dict[int, str] = {
     2: 'LEFT',
     3: 'RIGHT',
     4: 'STAY',
-    5: 'PICK',
 }
 
 
@@ -97,7 +86,6 @@ class Action:
     LEFT: Action
     RIGHT: Action
     STAY: Action
-    PICK: Action
 
     def __init__(self, value: int) -> None:
         self._value = value
@@ -143,7 +131,6 @@ Action.DOWN = Action(1)
 Action.LEFT = Action(2)
 Action.RIGHT = Action(3)
 Action.STAY = Action(4)
-Action.PICK = Action(5)  # generic pick, used in forced mode transitions
 
 
 def make_pick_action(task_type: int) -> Action:
@@ -154,10 +141,8 @@ def make_pick_action(task_type: int) -> Action:
 NUM_MOVE_ACTIONS: int = 5
 
 
-def num_actions(pick_mode: PickMode, n_task_types: int) -> int:
-    """Total action count: 5 for forced, 5+T for choice."""
-    if pick_mode == PickMode.FORCED:
-        return 5
+def num_actions(n_task_types: int) -> int:
+    """Total action count: 5 move + T pick options."""
     return 5 + n_task_types
 
 

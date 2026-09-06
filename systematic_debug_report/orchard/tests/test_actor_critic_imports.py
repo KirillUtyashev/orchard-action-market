@@ -1,5 +1,7 @@
 """Import-structure tests for the canonical package split."""
 
+from __future__ import annotations
+
 import importlib
 
 import pytest

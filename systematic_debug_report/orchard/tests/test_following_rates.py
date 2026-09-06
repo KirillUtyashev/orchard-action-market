@@ -28,6 +28,30 @@ class TestFollowingRateHelpers:
         assert initial_following_rate_to_influencer(3, 3.0, influencer_enabled=True) == 1.0
         assert initial_following_rate_to_influencer(3, 3.0, influencer_enabled=False) == 0.0
 
+    def test_initial_following_rate_vector_with_dual_budgets(self):
+        rates = initial_following_rate_vector(
+            4,
+            agent_id=0,
+            budget=0.0,
+            teammate_mask=[False, True, False, False],
+            teammate_budget=2.0,
+            non_teammate_budget=6.0,
+        )
+
+        assert np.allclose(rates, np.array([0.0, 2.0, 3.0, 3.0]))
+
+    def test_initial_following_rate_vector_with_dual_budgets_leaves_empty_class_unused(self):
+        rates = initial_following_rate_vector(
+            3,
+            agent_id=0,
+            budget=0.0,
+            teammate_mask=[False, False, False],
+            teammate_budget=2.0,
+            non_teammate_budget=4.0,
+        )
+
+        assert np.allclose(rates, np.array([0.0, 2.0, 2.0]))
+
 
 class TestFollowingRateAgentState:
     def test_initialization_sanitizes_and_zeros_self_edge(self):

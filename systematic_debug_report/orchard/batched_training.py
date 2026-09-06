@@ -14,10 +14,11 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from torch.func import functional_call, grad_and_value, stack_module_state, vmap
+from torch.func import functional_call, grad, grad_and_value, stack_module_state, vmap
 
 from orchard.datatypes import EncoderOutput
 from orchard.model import ValueNetwork
+from orchard.trainer.timer import Timer, TimerSection
 
 
 class _VmapForwardWrapper(nn.Module):
@@ -53,11 +54,13 @@ class BatchedTrainer:
         networks: list[ValueNetwork],
         td_lambda: float,
         device: str = "cuda",
+        timer: Timer | None = None,
     ) -> None:
         self.n = len(networks)
         self.networks = networks
         self._td_lambda = td_lambda
         self.device = torch.device(device)
+        self._timer = timer or Timer()
 
         # Create wrapper modules with identical structure
         wrappers = [_VmapForwardWrapper(net) for net in networks]
@@ -79,12 +82,26 @@ class BatchedTrainer:
         # Per-network gamma_prev (all start at 0.0)
         self._gamma_prev = torch.zeros(self.n, device=self.device)
 
-        # Build the vmapped grad_and_value function (cached)
+        # Pre-compute broadcast shapes for trace/param updates.
+        # Each param is (N, *shape); gamma_prev/deltas are (N,).
+        # We need to reshape them to (N, 1, 1, ...) to broadcast over *shape.
+        self._param_view_shapes = {
+            k: (-1,) + (1,) * (v.dim() - 1)
+            for k, v in self._params.items()
+        }
+
         def _f(params, buffers, grid, scalar):
             return functional_call(self._base, (params, buffers), (grid, scalar))
 
-        self._vmap_grad_and_value = vmap(grad_and_value(_f))
-        self._vmap_forward = vmap(_f)
+        # Stacked forward: grids_pair is (2, C, H, W), returns (2,).
+        # grad(has_aux=True) differentiates out[0]=V(s_t) and returns out[1]=V(s_next)
+        # as aux — so one vmap call replaces the old grad_and_value + separate v_next forward.
+        def _f_stacked(params, buffers, grids_pair, scalars_pair):
+            out = functional_call(self._base, (params, buffers), (grids_pair, scalars_pair))
+            return out[0], (out[0], out[1])  # (V(s_t) for grad, (V(s_t), V(s_next)) as aux)
+
+        self._vmap_grad_with_vnext = vmap(grad(_f_stacked, has_aux=True))
+        self._vmap_forward = vmap(_f)  # used for action selection
 
     # ------------------------------------------------------------------
     # Training
@@ -98,8 +115,9 @@ class BatchedTrainer:
         grids_next: torch.Tensor,     # (N, C, H, W) — s_{t+1} encodings
         scalars_next: torch.Tensor,   # (N, S)
         alpha: float,
+        agent_indices: list[int] | None = None,  # None = train all N; else only these K agents
     ) -> float:
-        """One batched TD(λ) backward-view step for all N networks.
+        """One batched TD(λ) backward-view step for all N (or K active) networks.
 
         z ← γ_prev · λ · z + ∇V(s)
         δ = r + γ · V(s') − V(s)
@@ -114,34 +132,62 @@ class BatchedTrainer:
         grids_next = grids_next.to(self.device)
         scalars_next = scalars_next.to(self.device)
 
-        # Forward + backward: all N grads and values
-        grads, v_s = self._vmap_grad_and_value(
-            self._params, self._buffers, grids_t, scalars_t
+        # When only a subset of agents should be trained, gather their data and
+        # run vmap over K agents only. Stranger agents are never touched.
+        if agent_indices is not None:
+            idx = torch.tensor(agent_indices, device=self.device, dtype=torch.long)
+            active_params  = {k: v[idx] for k, v in self._params.items()}
+            active_buffers = {k: v[idx] for k, v in self._buffers.items()}
+            active_gp      = self._gamma_prev[idx]
+            grids_t     = grids_t[idx]
+            scalars_t   = scalars_t[idx]
+            rewards     = rewards[idx]
+            grids_next  = grids_next[idx]
+            scalars_next = scalars_next[idx]
+        else:
+            idx            = None
+            active_params  = self._params
+            active_buffers = self._buffers
+            active_gp      = self._gamma_prev
+
+        # Single vmap call: grad of V(s_t) + V(s_t) + V(s_next) via stacked forward.
+        self._timer.start(TimerSection.TRAIN_GRAD)
+        grids_pair   = torch.stack([grids_t,   grids_next],   dim=1)  # (K, 2, C, H, W)
+        scalars_pair = torch.stack([scalars_t, scalars_next], dim=1)  # (K, 2, S)
+        grads, (v_s, v_next) = self._vmap_grad_with_vnext(
+            active_params, active_buffers, grids_pair, scalars_pair
         )
+        self._timer.stop()
 
         # z ← γ_prev · λ · z + ∇V(s)
-        for name in self._params:
-            gp = self._gamma_prev
-            for _ in range(self._traces[name].dim() - 1):
-                gp = gp.unsqueeze(-1)
-            self._traces[name] = gp * self._td_lambda * self._traces[name] + grads[name]
+        self._timer.start(TimerSection.TRAIN_TRACE)
+        for name in active_params:
+            gp = active_gp.view(self._param_view_shapes[name])
+            if idx is not None:
+                trace_k = self._traces[name][idx] * (gp * self._td_lambda) + grads[name]
+                self._traces[name][idx] = trace_k
+            else:
+                self._traces[name].mul_(gp * self._td_lambda).add_(grads[name])
+        self._timer.stop()
 
         # δ = r + γ · V(s') − V(s)
-        with torch.no_grad():
-            v_next = self._vmap_forward(
-                self._params, self._buffers, grids_next, scalars_next
-            )
         deltas = rewards + discount * v_next - v_s.detach()
 
         # θ ← θ + α · δ · z
+        self._timer.start(TimerSection.TRAIN_PARAM)
         with torch.no_grad():
-            for name in self._params:
-                d = deltas
-                for _ in range(self._params[name].dim() - 1):
-                    d = d.unsqueeze(-1)
-                self._params[name] = self._params[name] + alpha * d * self._traces[name]
+            for name in active_params:
+                d = deltas.view(self._param_view_shapes[name])
+                if idx is not None:
+                    self._params[name][idx] = self._params[name][idx] + alpha * self._traces[name][idx] * d
+                else:
+                    self._params[name].add_(self._traces[name] * d, alpha=alpha)
+        self._timer.stop()
 
-        self._gamma_prev.fill_(discount)
+        if idx is not None:
+            self._gamma_prev[idx] = discount
+        else:
+            self._gamma_prev.fill_(discount)
         return (deltas ** 2).sum().item()
 
     # ------------------------------------------------------------------

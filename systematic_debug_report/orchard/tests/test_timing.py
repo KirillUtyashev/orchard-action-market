@@ -18,7 +18,11 @@ class TestTimerSection:
         assert hasattr(TimerSection, "ENV")
 
     def test_all_sections_present(self):
-        expected = {"ENCODE", "TRAIN", "ACTION", "EVAL", "ENV"}
+        expected = {
+            "ENCODE", "TRAIN", "ACTION", "EVAL", "ENV",
+            "ACTION_ENV", "ACTION_ENCODE", "ACTION_FORWARD",
+            "TRAIN_GRAD", "TRAIN_TRACE", "TRAIN_V_NEXT", "TRAIN_PARAM",
+        }
         actual = {s.name for s in TimerSection}
         assert expected == actual
 
@@ -125,12 +129,13 @@ env:
   height: 3
   width: 3
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -155,12 +160,13 @@ env:
   height: 3
   width: 3
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
 train:
   total_steps: 10
@@ -187,17 +193,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  r_picker: 1.0
-  r_low: 0.0
-  pick_mode: forced
+  relatedness_width: 0
+  proficiency_width: 0
   max_tasks_per_type: 2
-  task_assignments: [[0], [1]]
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [8]
   conv_specs: [[4, 3]]
 train:
@@ -206,7 +210,7 @@ train:
   td_lambda: 0.3
   total_steps: 10
   seed: 42
-  heuristic: nearest_correct_task
+  heuristic: nearest
   lr:
     start: 0.01
   epsilon:
@@ -254,8 +258,11 @@ class TestTimingIntegration:
             reader = csv.DictReader(f)
             assert set(reader.fieldnames) == {
                 "step", "wall_time",
-                "encode_ms", "train_ms", "action_ms", "env_ms", "eval_ms",
-                "total_ms", "sm_util_pct", "vram_allocated_mb", "gpu_mem_util_pct",
+                "encode_ms", "env_ms",
+                "action_env_ms", "action_encode_ms", "action_forward_ms",
+                "train_grad_ms", "train_trace_ms", "train_v_next_ms", "train_param_ms",
+                "eval_wall_ms", "total_step_ms",
+                "sm_util_pct", "vram_allocated_mb", "gpu_mem_util_pct",
             }
             rows = list(reader)
             # 10 total steps / freq 5 = 2 rows
@@ -270,10 +277,9 @@ class TestTimingIntegration:
         with open(timing_path) as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # These sections are always active during training
+                # These sections fire for any trainer (CPU or GPU)
                 assert float(row["encode_ms"]) > 0
-                assert float(row["train_ms"]) > 0
-                assert float(row["action_ms"]) > 0
+                assert float(row["action_env_ms"]) > 0
                 assert float(row["env_ms"]) > 0
 
     def test_no_timing_csv_when_disabled(self):

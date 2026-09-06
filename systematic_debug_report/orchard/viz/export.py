@@ -6,6 +6,8 @@ import csv
 import json
 from pathlib import Path
 
+import numpy as np
+
 from orchard.viz.frame import Frame
 
 
@@ -128,3 +130,96 @@ def write_summary_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         json.dump(summary, f, indent=2)
+
+
+def write_reward_variances_json(
+    category_rewards,
+    sigma_a: float,
+    sigma_b: float,
+    reward_generation: str,
+    path: Path,
+    mean_team_reward: float = 1.0,
+) -> None:
+    """Write per-agent / per-task / team-total variance diagnostics of the reward matrix.
+
+    category_rewards is (n_task_types, n_agents): entry [k, j] is the reward agent j
+    receives for picking task type k. All stats are POPULATION (ddof=0), matching the
+    generator's internal asserts, so the circulant guarantees can be checked exactly.
+    """
+    R = np.asarray(category_rewards, dtype=np.float64)  # (T, N) = (task_types, agents)
+    T, N = R.shape
+
+    # per agent (column j): distribution of that agent's rewards ACROSS TASKS (over rows)
+    agent_mean = R.mean(axis=0)             # (N,)
+    agent_var = R.var(axis=0, ddof=0)       # (N,)  <- one variance per agent, no averaging
+    agent_std = R.std(axis=0, ddof=0)       # (N,)
+
+    # per task (row k): distribution of a task's rewards ACROSS AGENTS (over cols)
+    task_mean = R.mean(axis=1)              # (T,)
+    task_var = R.var(axis=1, ddof=0)        # (T,)  <- one variance per task
+    task_std = R.std(axis=1, ddof=0)        # (T,)
+
+    # team total per task = sum of reward over agents; its spread ACROSS TASKS
+    team_total = R.sum(axis=1)              # (T,)
+    team_total_var = float(team_total.var(ddof=0))
+    team_total_std = float(team_total.std(ddof=0))
+
+    def _f(a):
+        return [float(v) for v in a]
+
+    out = {
+        "reward_generation": reward_generation,
+        "note": ("category_rewards[task, agent]. Population stats (ddof=0). "
+                 "circulant_all_to_all is deterministic (seed-independent)."),
+        "shape": {"n_task_types": T, "n_agents": N},
+        "config_sigma_a": float(sigma_a),
+        "config_sigma_b": float(sigma_b),
+
+        # (1) agent variance across tasks — ONE PER AGENT, no averaging
+        "per_agent_across_tasks": {
+            "mean": _f(agent_mean),
+            "var": _f(agent_var),
+            "std": _f(agent_std),
+        },
+        # (2) variance of each task across agents — ONE PER TASK
+        "per_task_across_agents": {
+            "mean": _f(task_mean),
+            "var": _f(task_var),
+            "std": _f(task_std),
+            "team_total": _f(team_total),
+        },
+        # (3) sum of reward across agents (team total), its variance across tasks
+        "team_total_across_tasks": {
+            "mean": float(team_total.mean()),
+            "var": team_total_var,
+            "std": team_total_std,
+        },
+        # extra roll-ups so the whole picture is visible at a glance
+        "aggregates": {
+            "grand_mean": float(R.mean()),
+            "min_reward": float(R.min()),
+            "max_reward": float(R.max()),
+            "agent_std_across_tasks": {
+                "min": float(agent_std.min()), "max": float(agent_std.max()),
+                "mean": float(agent_std.mean()),
+            },
+            "task_std_across_agents": {
+                "min": float(task_std.min()), "max": float(task_std.max()),
+                "mean": float(task_std.mean()),
+            },
+            "sum_of_per_agent_vars": float(agent_var.sum()),
+        },
+        # what the circulant_all_to_all construction is supposed to yield
+        "expected_if_circulant_all_to_all": {
+            "agent_std_across_tasks": float((sigma_a ** 2 + sigma_b ** 2 / N ** 2) ** 0.5),
+            "task_std_across_agents": float(sigma_a),
+            "team_total_std_across_tasks": float(sigma_b),
+            "agent_mean_across_tasks": float(mean_team_reward / N),
+        },
+        # full matrix for manual inspection (rounded)
+        "reward_matrix": [[round(float(v), 6) for v in row] for row in R],
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(out, f, indent=2)

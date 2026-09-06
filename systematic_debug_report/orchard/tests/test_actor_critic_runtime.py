@@ -24,7 +24,6 @@ from orchard.enums import (
     EncoderType,
     Heuristic,
     LearningType,
-    PickMode,
     make_pick_action,
 )
 from orchard.datatypes import (
@@ -50,6 +49,7 @@ from orchard.trainer import create_trainer
 from orchard.trainer.actor_critic import ActorCriticCpuTrainer, ActorCriticGpuTrainer
 from orchard.trainer.timer import Timer, TimerSection
 from orchard.train import train
+from orchard.seed import set_all_seeds
 
 
 def _write_config(yaml_str: str) -> str:
@@ -84,17 +84,15 @@ env:
   n_tasks: 2
   n_task_types: 2
   gamma: 0.99
-  r_picker: 1.0
-  r_low: 0.0
-  pick_mode: {pick_mode}
+  relatedness_width: 0
+  proficiency_width: 0
   max_tasks_per_type: 2
-  task_assignments: [[0], [1]]
   stochastic:
     spawn_prob: 0.1
     despawn_mode: probability
     despawn_prob: 0.05
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
   conv_specs: [[4, 3]]
 train:
@@ -103,7 +101,7 @@ train:
   td_lambda: 0.3
   total_steps: 5
   seed: 42
-  heuristic: nearest_correct_task_stay_wrong
+  heuristic: nearest
   lr:
     start: 0.01
   epsilon:
@@ -124,7 +122,6 @@ logging:
 
 def _run_actor_critic_case(
     *,
-    pick_mode: str,
     output_dir: str,
     extra_train_blocks: str = "",
     extra_logging_blocks: str = "",
@@ -132,11 +129,9 @@ def _run_actor_critic_case(
     use_gpu: str = "false",
 ) -> Path:
     yaml_str = ACTOR_CRITIC_CONFIG.format(
-        pick_mode=pick_mode,
         output_dir=output_dir,
         extra_train_blocks=extra_train_blocks,
         extra_logging_blocks=extra_logging_blocks,
-        resume_checkpoint=resume_checkpoint,
         use_gpu=use_gpu,
     )
     path = _write_config(yaml_str)
@@ -146,23 +141,33 @@ def _run_actor_critic_case(
     return _latest_run_dir(output_dir)
 
 
-def _make_actor_critic_trainer(pick_mode: PickMode):
+def _make_actor_critic_trainer(
+    *,
+    n_agents: int = 2,
+    n_task_types: int = 1,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
+    batch_forced_actor_updates: bool = True,
+):
+    set_all_seeds(7)
     env_cfg = EnvConfig(
         height=3,
         width=3,
-        n_agents=2,
+        n_agents=n_agents,
         n_tasks=1,
         gamma=0.99,
-        r_picker=1.0,
-        n_task_types=1,
-        r_low=0.0,
-        task_assignments=((0,), (0,)),
-        pick_mode=pick_mode,
+        n_task_types=n_task_types,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
         max_tasks_per_type=1,
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        stochastic=StochasticConfig(
+            spawn_prob=0.0,
+            despawn_mode=DespawnMode.NONE,
+            despawn_prob=0.0,
+        ),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -177,7 +182,8 @@ def _make_actor_critic_trainer(pick_mode: PickMode):
         learning_type=LearningType.DECENTRALIZED,
         use_gpu=False,
         td_lambda=0.0,
-        heuristic=Heuristic.NEAREST_TASK,
+        batch_forced_actor_updates=batch_forced_actor_updates,
+        heuristic=Heuristic.NEAREST,
         stopping=StoppingConfig(),
     )
     cfg = ExperimentConfig(
@@ -188,29 +194,26 @@ def _make_actor_critic_trainer(pick_mode: PickMode):
         eval=EvalConfig(),
         logging=LoggingConfig(output_dir="unused"),
     )
-    encoding.init_encoder(model_cfg.encoder, env_cfg)
     env = create_env(env_cfg)
+    encoding.init_encoder(model_cfg.encoder, env)
     trainer = create_trainer(cfg, env)
     return env, trainer
 
 
 def _make_probability_count_trainer():
+    set_all_seeds(9)
     env_cfg = EnvConfig(
         height=3,
         width=3,
         n_agents=2,
         n_tasks=5,
         gamma=0.99,
-        r_picker=1.0,
         n_task_types=1,
-        r_low=0.0,
-        task_assignments=((0,), (0,)),
-        pick_mode=PickMode.CHOICE,
         max_tasks_per_type=5,
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -225,7 +228,7 @@ def _make_probability_count_trainer():
         learning_type=LearningType.DECENTRALIZED,
         use_gpu=False,
         td_lambda=0.0,
-        heuristic=Heuristic.NEAREST_TASK,
+        heuristic=Heuristic.NEAREST,
         stopping=StoppingConfig(),
     )
     cfg = ExperimentConfig(
@@ -236,35 +239,37 @@ def _make_probability_count_trainer():
         eval=EvalConfig(),
         logging=LoggingConfig(output_dir="unused"),
     )
-    encoding.init_encoder(model_cfg.encoder, env_cfg)
     env = create_env(env_cfg)
+    encoding.init_encoder(model_cfg.encoder, env)
     trainer = create_trainer(cfg, env)
     return env, trainer
 
 
 def _make_dual_actor_critic_trainers(
-    pick_mode: PickMode,
     *,
+    n_agents: int = 2,
+    n_task_types: int = 2,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
     following_rates_cfg: FollowingRatesConfig | None = None,
+    comm_only_teammates: bool = False,
 ):
     torch.manual_seed(11)
 
     env_cfg = EnvConfig(
         height=3,
         width=3,
-        n_agents=2,
+        n_agents=n_agents,
         n_tasks=2,
         gamma=0.99,
-        r_picker=1.0,
-        n_task_types=2,
-        r_low=-0.25,
-        task_assignments=((0,), (1,)),
-        pick_mode=pick_mode,
+        n_task_types=n_task_types,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
         max_tasks_per_type=2,
-        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
     )
     model_cfg = ModelConfig(
-        encoder=EncoderType.BLIND_TASK_CNN_GRID,
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
         mlp_dims=(8,),
         conv_specs=((4, 3),),
     )
@@ -281,12 +286,13 @@ def _make_dual_actor_critic_trainers(
         learning_type=LearningType.DECENTRALIZED,
         use_gpu=True,
         td_lambda=0.0,
-        heuristic=Heuristic.NEAREST_TASK,
+        comm_only_teammates=comm_only_teammates,
+        heuristic=Heuristic.NEAREST,
         stopping=StoppingConfig(),
     )
 
-    encoding.init_encoder(model_cfg.encoder, env_cfg)
     env = create_env(env_cfg)
+    encoding.init_encoder(model_cfg.encoder, env)
     following_cfg = following_rates_cfg or FollowingRatesConfig()
 
     cpu_critics = create_networks(model_cfg, env_cfg, train_cfg)
@@ -302,10 +308,11 @@ def _make_dual_actor_critic_trainers(
         critic_lr_schedule=lr_cfg,
         actor_lr_schedule=actor_lr_cfg,
         total_steps=train_cfg.total_steps,
-        heuristic=Heuristic.NEAREST_TASK,
+        heuristic=Heuristic.NEAREST,
         freeze_critic=False,
         following_rates_cfg=following_cfg,
         influencer_cfg=InfluencerConfig(),
+        comm_only_teammates=comm_only_teammates,
     )
     gpu_trainer = ActorCriticGpuTrainer(
         critic_networks=gpu_critics,
@@ -316,12 +323,67 @@ def _make_dual_actor_critic_trainers(
         critic_lr_schedule=lr_cfg,
         actor_lr_schedule=actor_lr_cfg,
         total_steps=train_cfg.total_steps,
-        heuristic=Heuristic.NEAREST_TASK,
+        heuristic=Heuristic.NEAREST,
         freeze_critic=False,
         following_rates_cfg=following_cfg,
         influencer_cfg=InfluencerConfig(),
+        comm_only_teammates=comm_only_teammates,
     )
     return env, cpu_trainer, gpu_trainer
+
+
+def _make_single_actor_critic_trainer(
+    *,
+    n_agents: int,
+    n_task_types: int,
+    relatedness_width: int = 0,
+    proficiency_width: int = 0,
+    following_rates_cfg: FollowingRatesConfig,
+):
+    env_cfg = EnvConfig(
+        height=3,
+        width=3,
+        n_agents=n_agents,
+        n_tasks=2,
+        gamma=0.99,
+        n_task_types=n_task_types,
+        relatedness_width=relatedness_width,
+        proficiency_width=proficiency_width,
+        max_tasks_per_type=2,
+        stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
+    )
+    model_cfg = ModelConfig(
+        encoder=EncoderType.EVERYTHING_CNN_GRID,
+        mlp_dims=(8,),
+        conv_specs=((4, 3),),
+    )
+    train_cfg = TrainConfig(
+        total_steps=20,
+        seed=11,
+        lr=ScheduleConfig(start=0.01, end=0.01),
+        epsilon=ScheduleConfig(start=0.0, end=0.0),
+        actor_lr=ScheduleConfig(start=0.01, end=0.01),
+        algorithm=AlgorithmConfig(name=AlgorithmName.ACTOR_CRITIC),
+        freeze_critic=False,
+        following_rates=following_rates_cfg,
+        learning_type=LearningType.DECENTRALIZED,
+        use_gpu=False,
+        td_lambda=0.0,
+        heuristic=Heuristic.NEAREST,
+        stopping=StoppingConfig(),
+    )
+    cfg = ExperimentConfig(
+        env=env_cfg,
+        model=model_cfg,
+        actor_model=None,
+        train=train_cfg,
+        eval=EvalConfig(),
+        logging=LoggingConfig(output_dir="unused"),
+    )
+    env = create_env(env_cfg)
+    encoding.init_encoder(model_cfg.encoder, env)
+    trainer = create_trainer(cfg, env)
+    return env, trainer
 
 
 def _clone_actor_params(actors: list[PolicyNetwork]) -> list[dict[str, torch.Tensor]]:
@@ -458,6 +520,7 @@ def _install_two_actor_choice_cycle_actions(
 class TestActorCriticTrainingLoop:
     def test_batched_actor_trainer_matches_delayed_sequential_update(self):
         torch.manual_seed(17)
+        set_all_seeds(17)
 
         env_cfg = EnvConfig(
             height=3,
@@ -465,16 +528,14 @@ class TestActorCriticTrainingLoop:
             n_agents=2,
             n_tasks=2,
             gamma=0.99,
-            r_picker=1.0,
             n_task_types=2,
-            r_low=-0.25,
-            task_assignments=((0,), (1,)),
-            pick_mode=PickMode.CHOICE,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=2,
-            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -489,10 +550,11 @@ class TestActorCriticTrainingLoop:
             learning_type=LearningType.DECENTRALIZED,
             use_gpu=True,
             td_lambda=0.0,
-            heuristic=Heuristic.NEAREST_TASK,
+            heuristic=Heuristic.NEAREST,
             stopping=StoppingConfig(),
         )
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = create_env(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
 
         sequential_actors = create_actor_networks(model_cfg, env_cfg, train_cfg)
         batched_actors = [copy.deepcopy(net) for net in sequential_actors]
@@ -535,7 +597,7 @@ class TestActorCriticTrainingLoop:
         _assert_actor_params_close(sequential_actors, batched_actors)
 
     def test_gpu_enumerate_action_objectives_matches_cpu_for_pick_phase(self):
-        env, cpu_trainer, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        env, cpu_trainer, gpu_trainer = _make_dual_actor_critic_trainers()
         state = _make_multi_pick_phase_state()
         legal_mask = build_phase2_legal_mask(state, env.cfg)
 
@@ -559,7 +621,7 @@ class TestActorCriticTrainingLoop:
             )
 
     def test_gpu_enumerate_action_objectives_batches_legal_actions_once(self):
-        env, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        env, _, gpu_trainer = _make_dual_actor_critic_trainers()
         state = _make_phase1_decision_state()
         legal_mask = build_phase1_legal_mask(state, env.cfg)
 
@@ -604,7 +666,6 @@ class TestActorCriticTrainingLoop:
         discount: float,
     ):
         env, cpu_trainer, gpu_trainer = _make_dual_actor_critic_trainers(
-            PickMode.CHOICE,
             following_rates_cfg=following_rates_cfg,
         )
         state = _make_multi_pick_phase_state()
@@ -623,8 +684,153 @@ class TestActorCriticTrainingLoop:
             atol=1e-6,
         )
 
+    def test_gpu_comm_only_teammates_masks_non_teammates_without_following_rates(self):
+        # n_agents=4, relatedness_width=1 → circular topology → agent 0's teammates are {0,1,3}; non-teammate is {2}
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            n_agents=4,
+            n_task_types=2,
+            relatedness_width=1,
+            comm_only_teammates=True,
+        )
+        rewards_t = torch.tensor(
+            [
+                [1.0, 10.0, 100.0, 1000.0],
+                [2.0, 20.0, 200.0, 2000.0],
+            ],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [
+                [0.5, 5.0, 50.0, 500.0],
+                [1.5, 6.0, 60.0, 600.0],
+            ],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=0.5,
+        )
+
+        expected = (
+            rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1] +
+            rewards_t[:, 3] + 0.5 * after_values_t[:, 3]
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_gpu_comm_only_teammates_keeps_default_full_team_objective_when_disabled(self):
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            n_agents=4,
+            n_task_types=2,
+            relatedness_width=1,
+            comm_only_teammates=False,
+        )
+        rewards_t = torch.tensor(
+            [[1.0, 10.0, 100.0, 1000.0]],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [[0.5, 5.0, 50.0, 500.0]],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=0.5,
+        )
+
+        expected = (
+            rewards_t[:, 0] + 0.5 * after_values_t[:, 0] +
+            rewards_t[:, 1] + 0.5 * after_values_t[:, 1] +
+            rewards_t[:, 2] + 0.5 * after_values_t[:, 2] +
+            rewards_t[:, 3] + 0.5 * after_values_t[:, 3]
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_gpu_comm_only_teammates_preserves_teammate_following_weights_only(self):
+        following_cfg = FollowingRatesConfig(
+            enabled=True,
+            budget=3.0,
+            rho=0.5,
+            reallocation_freq=1,
+            fixed=True,
+        )
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(
+            n_agents=4,
+            n_task_types=2,
+            relatedness_width=1,
+            following_rates_cfg=following_cfg,
+            comm_only_teammates=True,
+        )
+        gpu_trainer._following_states[1].set_following_rates([0.7, 0.0, 0.0, 0.0])
+        gpu_trainer._following_states[2].set_following_rates([1.5, 0.0, 0.0, 0.0])
+        gpu_trainer._following_states[3].set_following_rates([2.0, 0.0, 0.0, 0.0])
+
+        rewards_t = torch.tensor(
+            [[1.0, 10.0, 100.0, 1000.0]],
+            dtype=torch.float32,
+        )
+        after_values_t = torch.tensor(
+            [[0.0, 1.0, 2.0, 3.0]],
+            dtype=torch.float32,
+        )
+
+        q_values = gpu_trainer._action_objectives_tensor(
+            actor_id=0,
+            rewards_t=rewards_t,
+            after_values_t=after_values_t,
+            discount=1.0,
+        )
+
+        # circular topology: agent 0's teammates are {0,1,3}; agent 2 excluded
+        weight_1 = 1.0 - np.exp(-0.7)
+        weight_3 = 1.0 - np.exp(-2.0)
+        expected = torch.tensor(
+            [1.0 + weight_1 * 11.0 + weight_3 * 1003.0],
+            dtype=torch.float32,
+        )
+        torch.testing.assert_close(q_values, expected, atol=1e-6, rtol=0.0)
+
+    def test_fixed_following_rates_dual_budgets_initialize_expected_rates(self):
+        # n_agents=4, relatedness_width=1, circular topology:
+        # agent 0's non-self teammates={1,3}, non-teammates={2}
+        # agent 2's non-self teammates={1,3}, non-teammates={0}
+        _, trainer = _make_single_actor_critic_trainer(
+            n_agents=4,
+            n_task_types=2,
+            relatedness_width=1,
+            following_rates_cfg=FollowingRatesConfig(
+                enabled=True,
+                teammate_budget=2.0,
+                non_teammate_budget=6.0,
+                rho=0.5,
+                reallocation_freq=1,
+                solver="closed_form",
+                fixed=True,
+            ),
+        )
+
+        # Agent 0: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({2}) → rate=6.0
+        np.testing.assert_allclose(
+            trainer._following_states[0].following_rates,
+            np.array([0.0, 1.0, 6.0, 1.0]),
+            atol=1e-6,
+        )
+        # Agent 2: 2 non-self teammates ({1,3}) → rate=1.0 each; 1 non-teammate ({0}) → rate=6.0
+        np.testing.assert_allclose(
+            trainer._following_states[2].following_rates,
+            np.array([6.0, 1.0, 0.0, 1.0]),
+            atol=1e-6,
+        )
+
     def test_gpu_actor_updates_sequentially_per_decision(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        # proficiency_width=4 → agent 0 is eligible for type 0 tasks
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -667,7 +873,7 @@ class TestActorCriticTrainingLoop:
         assert all(len(actor_net.batch_states) == 0 for actor_net in gpu_trainer.actor_networks)
 
     def test_gpu_actor_checkpoints_do_not_store_pending_batches(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -688,7 +894,7 @@ class TestActorCriticTrainingLoop:
             assert all(len(payload["states"]) == 0 for payload in pending_batches)
 
     def test_gpu_actor_flush_pending_updates_is_noop(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         state = _make_choice_cycle_start_state()
         _install_two_actor_choice_cycle_actions(
             gpu_trainer,
@@ -743,7 +949,7 @@ class TestActorCriticTrainingLoop:
         assert choice_calls == 2
 
     def test_gpu_step_reuses_sampled_actor_probability_tensors(self):
-        _, _, gpu_trainer = _make_dual_actor_critic_trainers(PickMode.CHOICE)
+        _, _, gpu_trainer = _make_dual_actor_critic_trainers(proficiency_width=4)
         calls = 0
         actor = gpu_trainer.actor_networks[0]
         original_get_action_probabilities_tensor = actor.get_action_probabilities_tensor
@@ -762,7 +968,7 @@ class TestActorCriticTrainingLoop:
         assert calls == 2
 
     def test_warmup_skips_critic_updates(self):
-        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -792,7 +998,7 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after is None
 
     def test_warmup_skips_actor_updates(self):
-        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         _install_scripted_actions(
             trainer,
@@ -816,7 +1022,7 @@ class TestActorCriticTrainingLoop:
                 torch.testing.assert_close(actor_before[name], tensor, atol=0.0, rtol=0.0)
 
     def test_warmup_resumes_critic_updates_after_threshold(self):
-        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._warmup_steps = 5
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -846,22 +1052,21 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after is not None
 
     def test_warmup_does_not_skip_following_rate_alpha_updates(self):
+        set_all_seeds(7)
         env_cfg = EnvConfig(
             height=3,
             width=3,
             n_agents=2,
             n_tasks=1,
             gamma=0.5,
-            r_picker=1.0,
             n_task_types=1,
-            r_low=0.0,
-            task_assignments=((0,), (0,)),
-            pick_mode=PickMode.CHOICE,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
-            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -883,7 +1088,7 @@ class TestActorCriticTrainingLoop:
             learning_type=LearningType.DECENTRALIZED,
             use_gpu=False,
             td_lambda=0.0,
-            heuristic=Heuristic.NEAREST_TASK,
+            heuristic=Heuristic.NEAREST,
             stopping=StoppingConfig(),
             warmup_steps=100,
         )
@@ -895,8 +1100,8 @@ class TestActorCriticTrainingLoop:
             eval=EvalConfig(),
             logging=LoggingConfig(output_dir="unused"),
         )
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
         env = create_env(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         trainer = create_trainer(cfg, env)
 
         def _critic_values_for_after_states(self, state, after_states):
@@ -935,22 +1140,21 @@ class TestActorCriticTrainingLoop:
         assert not np.isclose(trainer._following_states[1].agent_alphas[0], 0.0)
 
     def test_alpha_update_uses_stay_baseline(self):
+        set_all_seeds(7)
         env_cfg = EnvConfig(
             height=3,
             width=3,
             n_agents=2,
             n_tasks=1,
             gamma=0.5,
-            r_picker=1.0,
             n_task_types=1,
-            r_low=0.0,
-            task_assignments=((0,), (0,)),
-            pick_mode=PickMode.CHOICE,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
-            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(8,),
             conv_specs=((4, 3),),
         )
@@ -972,7 +1176,7 @@ class TestActorCriticTrainingLoop:
             learning_type=LearningType.DECENTRALIZED,
             use_gpu=False,
             td_lambda=0.0,
-            heuristic=Heuristic.NEAREST_TASK,
+            heuristic=Heuristic.NEAREST,
             stopping=StoppingConfig(),
         )
         cfg = ExperimentConfig(
@@ -983,8 +1187,8 @@ class TestActorCriticTrainingLoop:
             eval=EvalConfig(),
             logging=LoggingConfig(output_dir="unused"),
         )
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
         env = create_env(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         trainer = create_trainer(cfg, env)
 
         def _critic_values_for_after_states(self, state, after_states):
@@ -1020,17 +1224,14 @@ class TestActorCriticTrainingLoop:
 
         # Pick removes the only task → after_state has 0 tasks → V(after_pick) = 0
         # Stay keeps the task → after_state has 1 task → V(after_stay) = 10
-        # Pick rewards: (1.0, 0.0); Stay rewards: (0.0, 0.0); discount = 1.0
-        # Old definition would store Q1(s, pick) = 0 + 1.0*0 = 0
-        # New definition stores Q1(s, pick) - Q1(s, Stay) = 0 - 10 = -10
+        # Pick rewards: non-zero; Stay rewards: (0.0, 0.0); discount = 1.0
+        # α = Q(s, pick) - Q(s, Stay) = 0 - 10 = -10
         assert np.isclose(trainer._following_states[1].agent_alphas[0], -10.0)
-        # Actor's own following state never updates its self-edge
         assert trainer._following_states[0].agent_alphas[0] == 0.0
-        # Other observer dimensions of the non-actor remain at their initial values
         assert trainer._following_states[0].agent_alphas[1] == 0.0
 
     def test_freeze_critic_skips_critic_updates(self):
-        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._freeze_critic = True
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
@@ -1064,7 +1265,7 @@ class TestActorCriticTrainingLoop:
         assert trainer._critic_prev_after is None
 
     def test_actor_critic_step_records_action_and_env_timing(self):
-        _, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+        _, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         trainer._timer = Timer(enabled=True)
         _install_scripted_actions(
             trainer,
@@ -1081,8 +1282,8 @@ class TestActorCriticTrainingLoop:
         assert report[TimerSection.ENCODE] > 0.0
         assert report[TimerSection.TRAIN] > 0.0
 
-    def test_choice_mode_critic_td_uses_previous_after_state_chain(self):
-        env, trainer = _make_actor_critic_trainer(PickMode.CHOICE)
+    def test_critic_td_uses_previous_after_state_chain(self):
+        env, trainer = _make_actor_critic_trainer(n_task_types=1, proficiency_width=0)
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(
             trainer,
@@ -1114,13 +1315,17 @@ class TestActorCriticTrainingLoop:
         assert calls[0]["discount"] == pytest.approx(env.cfg.gamma)
         assert calls[0]["current"].pick_phase is True
         assert calls[1]["prev"].pick_phase is True
-        assert calls[1]["rewards"] == (1.0, 0.0)
         assert calls[1]["discount"] == pytest.approx(1.0)
         assert calls[1]["current"].pick_phase is False
         assert trainer._critic_prev_after.pick_phase is False
 
-    def test_forced_pick_turn_inserts_critic_only_pick_followup(self):
-        env, trainer = _make_actor_critic_trainer(PickMode.FORCED)
+    def test_wrong_type_task_does_not_enter_pick_phase(self):
+        # Agent 0 has proficiency_width=0 → phi[0,1]=0 → not eligible for type 1
+        env, trainer = _make_actor_critic_trainer(
+            n_task_types=2,
+            relatedness_width=0,
+            proficiency_width=0,
+        )
         spy = _install_identity_critic_spy(trainer)
         _install_scripted_actions(trainer, move_action=Action.RIGHT)
 
@@ -1136,27 +1341,24 @@ class TestActorCriticTrainingLoop:
             agent_positions=(Grid(0, 0), Grid(2, 2)),
             task_positions=(Grid(0, 1),),
             actor=0,
-            task_types=(0,),
+            task_types=(1,),  # type 1, agent 0 not eligible (phi[0,1]=0)
         )
 
-        trainer.step(state, 0)
+        next_state = trainer.step(state, 0)
 
         calls = spy["td_calls"]
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert calls[0]["prev"] == sentinel_after
         assert calls[0]["rewards"] == (0.0, 0.0)
         assert calls[0]["discount"] == pytest.approx(env.cfg.gamma)
-        assert calls[0]["current"].pick_phase is True
-        assert calls[1]["prev"].pick_phase is True
-        assert calls[1]["rewards"] == (1.0, 0.0)
-        assert calls[1]["discount"] == pytest.approx(1.0)
-        assert calls[1]["current"].pick_phase is False
+        assert calls[0]["current"].pick_phase is False
+        assert calls[0]["current"].task_positions == (Grid(0, 1),)
         assert trainer._critic_prev_after.pick_phase is False
+        assert next_state.task_positions == (Grid(0, 1),)
 
-    @pytest.mark.parametrize("pick_mode", ["forced", "choice"])
-    def test_actor_critic_end_to_end_writes_runtime_artifacts(self, pick_mode: str):
+    def test_actor_critic_end_to_end_writes_runtime_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_dir = _run_actor_critic_case(pick_mode=pick_mode, output_dir=tmpdir)
+            run_dir = _run_actor_critic_case(output_dir=tmpdir)
 
             assert (run_dir / "metadata.yaml").exists()
             assert (run_dir / "metrics.csv").exists()
@@ -1177,10 +1379,45 @@ class TestActorCriticTrainingLoop:
             details_row = _read_single_row(run_dir / "details.csv")
             assert "current_actor_lr" in details_row
 
+    def test_actor_critic_env_trace_writes_value_style_rows(self, monkeypatch):
+        if not hasattr(os, "sched_getaffinity"):
+            monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: {0}, raising=False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = _run_actor_critic_case(
+                output_dir=tmpdir,
+                extra_logging_blocks="""
+  env_trace: true
+""",
+            )
+
+            trace_path = run_dir / "env_trace.csv"
+            assert trace_path.exists()
+
+            with open(trace_path) as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            assert rows
+            assert reader.fieldnames == [
+                "step", "actor", "epsilon", "action", "on_task", "pick_happened", "pick_task_type",
+                "reward_0", "reward_1",
+                "n_tasks_before_spawn", "tasks_despawned", "tasks_spawned",
+                "n_tasks_after", "task_positions_after", "task_types_after",
+                "agent_positions", "agent_positions_indexed",
+                "was_greedy", "best_val", "td_delta_sq",
+                "actor_selected_q", "actor_baseline", "actor_advantage",
+                "enc_grid_l2", "enc_scalar",
+            ]
+            first = rows[0]
+            assert first["step"] != ""
+            assert first["actor"] != ""
+            assert first["action"] in {"UP", "DOWN", "LEFT", "RIGHT", "STAY"}
+            assert first["n_tasks_after"] != ""
+            assert first["agent_positions_indexed"] != ""
+
     def test_actor_critic_timing_csv_reports_action_and_env_time(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = _run_actor_critic_case(
-                pick_mode="choice",
                 output_dir=tmpdir,
                 extra_logging_blocks="""
   timing_csv_freq: 5
@@ -1194,13 +1431,12 @@ class TestActorCriticTrainingLoop:
                 rows = list(csv.DictReader(f))
 
             assert len(rows) == 1
-            assert float(rows[0]["action_ms"]) > 0.0
+            assert float(rows[0]["total_step_ms"]) > 0.0
             assert float(rows[0]["env_ms"]) > 0.0
 
     def test_actor_critic_following_rates_write_snapshots_and_metrics(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = _run_actor_critic_case(
-                pick_mode="choice",
                 output_dir=tmpdir,
                 extra_train_blocks="""
   following_rates:
@@ -1222,7 +1458,6 @@ class TestActorCriticTrainingLoop:
     def test_actor_critic_influencer_writes_snapshots_and_metrics(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = _run_actor_critic_case(
-                pick_mode="choice",
                 output_dir=tmpdir,
                 extra_train_blocks="""
   following_rates:
@@ -1244,10 +1479,9 @@ class TestActorCriticTrainingLoop:
 
     def test_actor_critic_resume_from_new_checkpoint_format(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            first_run = _run_actor_critic_case(pick_mode="choice", output_dir=tmpdir)
+            first_run = _run_actor_critic_case(output_dir=tmpdir)
             resume_path = first_run / "checkpoints" / "final.pt"
             second_run = _run_actor_critic_case(
-                pick_mode="choice",
                 output_dir=tmpdir,
                 resume_checkpoint=str(resume_path),
             )
@@ -1255,17 +1489,16 @@ class TestActorCriticTrainingLoop:
             assert (second_run / "checkpoints" / "final.pt").exists()
 
     def test_actor_critic_can_load_value_checkpoint_and_freeze_critic(self):
+        set_all_seeds(42)
         env_cfg = EnvConfig(
             height=4,
             width=4,
             n_agents=2,
             n_tasks=2,
             gamma=0.99,
-            r_picker=1.0,
             n_task_types=2,
-            r_low=0.0,
-            task_assignments=((0,), (1,)),
-            pick_mode=PickMode.FORCED,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=2,
             stochastic=StochasticConfig(
                 spawn_prob=0.1,
@@ -1274,7 +1507,7 @@ class TestActorCriticTrainingLoop:
             ),
         )
         model_cfg = ModelConfig(
-            encoder=EncoderType.BLIND_TASK_CNN_GRID,
+            encoder=EncoderType.EVERYTHING_CNN_GRID,
             mlp_dims=(16,),
             conv_specs=((4, 3),),
         )
@@ -1286,10 +1519,11 @@ class TestActorCriticTrainingLoop:
             learning_type=LearningType.DECENTRALIZED,
             use_gpu=False,
             td_lambda=0.0,
-            heuristic=Heuristic.NEAREST_TASK,
+            heuristic=Heuristic.NEAREST,
             stopping=StoppingConfig(),
         )
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = create_env(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         networks = create_networks(model_cfg, env_cfg, train_cfg)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1300,7 +1534,6 @@ class TestActorCriticTrainingLoop:
             )
 
             run_dir = _run_actor_critic_case(
-                pick_mode="forced",
                 output_dir=tmpdir,
                 resume_checkpoint=str(value_ckpt),
                 extra_train_blocks="""
@@ -1310,20 +1543,20 @@ class TestActorCriticTrainingLoop:
             assert (run_dir / "checkpoints" / "final.pt").exists()
 
     def test_value_mode_resume_accepts_legacy_checkpoint_format(self):
+        set_all_seeds(42)
         env_cfg = EnvConfig(
             height=3,
             width=3,
             n_agents=2,
             n_tasks=1,
             gamma=0.99,
-            r_picker=1.0,
-            n_task_types=1,
-            task_assignments=((0,), (0,)),
-            pick_mode=PickMode.FORCED,
+            n_task_types=2,
+            relatedness_width=0,
+            proficiency_width=0,
             max_tasks_per_type=1,
-            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=None, despawn_prob=0.0),
+            stochastic=StochasticConfig(spawn_prob=0.0, despawn_mode=DespawnMode.NONE, despawn_prob=0.0),
         )
-        model_cfg = ModelConfig(encoder=EncoderType.BLIND_TASK_CNN_GRID, mlp_dims=(16,))
+        model_cfg = ModelConfig(encoder=EncoderType.EVERYTHING_CNN_GRID, mlp_dims=(16,))
         train_cfg = TrainConfig(
             total_steps=5,
             seed=42,
@@ -1332,10 +1565,11 @@ class TestActorCriticTrainingLoop:
             learning_type=LearningType.DECENTRALIZED,
             use_gpu=False,
             td_lambda=0.0,
-            heuristic=Heuristic.NEAREST_TASK,
+            heuristic=Heuristic.NEAREST,
             stopping=StoppingConfig(),
         )
-        encoding.init_encoder(model_cfg.encoder, env_cfg)
+        env = create_env(env_cfg)
+        encoding.init_encoder(model_cfg.encoder, env)
         networks = create_networks(model_cfg, env_cfg, train_cfg)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1351,23 +1585,23 @@ env:
   width: 3
   n_agents: 2
   n_tasks: 1
+  n_task_types: 2
   gamma: 0.99
-  r_picker: 1.0
-  pick_mode: forced
-  task_assignments: [[0], [0]]
+  relatedness_width: 0
+  proficiency_width: 0
   stochastic:
     spawn_prob: 0.0
     despawn_mode: none
     despawn_prob: 0.0
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [16]
 train:
   learning_type: decentralized
   use_gpu: false
   total_steps: 5
   seed: 42
-  heuristic: nearest_task
+  heuristic: nearest
   lr:
     start: 0.01
   epsilon:
@@ -1392,7 +1626,6 @@ logging:
     def test_actor_critic_gpu_smoke(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_dir = _run_actor_critic_case(
-                pick_mode="forced",
                 output_dir=tmpdir,
                 use_gpu="true",
             )

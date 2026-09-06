@@ -5,7 +5,7 @@ import tempfile
 import pytest
 
 from orchard.config import load_config, _apply_overrides, _parse_override_value
-from orchard.enums import AlgorithmName, EncoderType, PickMode, Heuristic, LearningType
+from orchard.enums import AlgorithmName, EncoderType, Heuristic, LearningType
 
 def _write_yaml(content: str) -> str:
     """Write content to a temp file and return its path."""
@@ -19,12 +19,13 @@ env:
   height: 5
   width: 5
   n_agents: 2
+  n_task_types: 2
   gamma: 0.99
   stochastic:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 train:
   total_steps: 100
@@ -36,12 +37,14 @@ class TestConfigParsing:
     def test_valid_parse(self):
         path = _write_yaml(VALID_YAML)
         cfg = load_config(path)
-        
+
         assert cfg.env.height == 5
         assert cfg.env.gamma == 0.99
-        assert cfg.model.encoder == EncoderType.BLIND_TASK_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         assert cfg.train.total_steps == 100
-        
+        assert cfg.train.comm_only_teammates is False
+        assert cfg.train.batch_forced_actor_updates is True
+
         os.unlink(path)
 
     def test_missing_section_raises(self):
@@ -52,23 +55,50 @@ class TestConfigParsing:
         os.unlink(path)
 
     def test_invalid_enum_raises(self):
-        bad_yaml = VALID_YAML.replace("blind_task_cnn_grid", "magic_encoder")
+        bad_yaml = VALID_YAML.replace("everything_cnn_grid", "magic_encoder")
         path = _write_yaml(bad_yaml)
         with pytest.raises(ValueError, match="Invalid encoder: 'magic_encoder'"):
             load_config(path)
         os.unlink(path)
 
-    def test_rho_generates_assignments(self):
+    def test_relatedness_width_proficiency_width_parse(self):
         yaml_str = VALID_YAML.replace(
-            "n_agents: 2", "n_agents: 4\n  n_task_types: 4\n  rho: 0.25"
+            "n_agents: 2\n  n_task_types: 2",
+            "n_agents: 4\n  n_task_types: 4\n  relatedness_width: 1\n  proficiency_width: 2",
         )
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
+        assert cfg.env.relatedness_width == 1
+        assert cfg.env.proficiency_width == 2
         assert cfg.env.n_task_types == 4
-        assert cfg.env.task_assignments is not None
-        assert len(cfg.env.task_assignments) == 4
-        assert cfg.env.task_assignments[0] == (0,)
-        assert cfg.env.task_assignments[3] == (3,)
+        os.unlink(path)
+
+    def test_t_equals_n_raises(self):
+        # n_agents=2 but n_task_types=3 violates the shared id space T=N.
+        yaml_str = VALID_YAML.replace("n_task_types: 2", "n_task_types: 3")
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="shared id space"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_sigma_a_sigma_b_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "spawn_prob: 0.1", "spawn_prob: 0.1\n    sigma_a: 0.3\n    sigma_b: 0.5"
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.stochastic.sigma_a == pytest.approx(0.3)
+        assert cfg.env.stochastic.sigma_b == pytest.approx(0.5)
+        os.unlink(path)
+
+    def test_reward_generation_parse(self):
+        yaml_str = VALID_YAML.replace(
+            "spawn_prob: 0.1",
+            "spawn_prob: 0.1\n    reward_generation: circulant_all_to_all",
+        )
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.env.stochastic.reward_generation == "circulant_all_to_all"
         os.unlink(path)
 
     def test_actor_critic_nested_blocks_parse(self):
@@ -79,15 +109,14 @@ env:
   n_agents: 2
   n_task_types: 2
   gamma: 0.99
-  task_assignments: [[0], [1]]
   stochastic:
     spawn_prob: 0.1
     despawn_mode: none
 model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [64]
 actor_model:
-  encoder: blind_task_cnn_grid
+  encoder: everything_cnn_grid
   mlp_dims: [32]
 train:
   total_steps: 100
@@ -115,6 +144,10 @@ train:
         assert cfg.train.freeze_critic is True
         assert cfg.train.following_rates.enabled is True
         assert cfg.train.influencer.enabled is True
+        assert cfg.train.comm_only_teammates is False
+        assert cfg.train.batch_forced_actor_updates is True
+        assert cfg.train.following_rates.teammate_budget is None
+        assert cfg.train.following_rates.non_teammate_budget is None
         assert cfg.actor_model is not None
         assert cfg.actor_model.mlp_dims == (32,)
         os.unlink(path)
@@ -126,12 +159,12 @@ class TestBackwardCompatibility:
         cfg = load_config(path)
         assert cfg.env.n_tasks == 7
         os.unlink(path)
-        
+
     def test_input_type_maps_to_encoder(self):
         yaml_str = VALID_YAML.replace("encoder:", "input_type:")
         path = _write_yaml(yaml_str)
         cfg = load_config(path)
-        assert cfg.model.encoder == EncoderType.BLIND_TASK_CNN_GRID
+        assert cfg.model.encoder == EncoderType.EVERYTHING_CNN_GRID
         os.unlink(path)
 
 class TestOverrides:
@@ -155,9 +188,18 @@ class TestOverrides:
 
     def test_config_load_with_overrides(self):
         path = _write_yaml(VALID_YAML)
-        cfg = load_config(path, overrides=["train.total_steps=999", "env.pick_mode=choice"])
+        cfg = load_config(
+            path,
+            overrides=[
+                "train.total_steps=999",
+                "train.algorithm.name=actor_critic",
+                "train.comm_only_teammates=true",
+                "train.batch_forced_actor_updates=false",
+            ],
+        )
         assert cfg.train.total_steps == 999
-        assert cfg.env.pick_mode == PickMode.CHOICE
+        assert cfg.train.comm_only_teammates is True
+        assert cfg.train.batch_forced_actor_updates is False
         os.unlink(path)
 
 
@@ -174,21 +216,6 @@ train:
 """
         path = _write_yaml(yaml_str)
         with pytest.raises(ValueError, match="requires train.learning_type=decentralized"):
-            load_config(path)
-        os.unlink(path)
-
-    def test_actor_critic_rejects_comm_weight(self):
-        yaml_str = VALID_YAML + """
-train:
-  total_steps: 100
-  comm_weight: 0.5
-  lr:
-    start: 0.001
-  algorithm:
-    name: actor_critic
-"""
-        path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="train.comm_weight is only supported"):
             load_config(path)
         os.unlink(path)
 
@@ -209,7 +236,102 @@ train:
             load_config(path)
         os.unlink(path)
 
-    def test_following_rates_reject_bad_reallocation_frequency(self):
+    def test_actor_critic_rejects_comm_only_teammates_without_gpu(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  use_gpu: false
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  comm_only_teammates: true
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for GPU actor-critic"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_non_actor_critic_rejects_comm_only_teammates(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  comm_only_teammates: true
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="only supported for train.algorithm.name=actor_critic"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_actor_critic_batch_forced_actor_updates_parses(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  batch_forced_actor_updates: false
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.batch_forced_actor_updates is False
+        os.unlink(path)
+
+    def test_batch_forced_actor_updates_defaults_to_true(self):
+        path = _write_yaml(VALID_YAML)
+        cfg = load_config(path)
+        assert cfg.train.batch_forced_actor_updates is True
+        os.unlink(path)
+
+    def test_fixed_following_rates_parse_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    teammate_budget: 1.5
+    non_teammate_budget: 2.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        cfg = load_config(path)
+        assert cfg.train.following_rates.fixed is True
+        assert cfg.train.following_rates.teammate_budget == 1.5
+        assert cfg.train.following_rates.non_teammate_budget == 2.5
+        os.unlink(path)
+
+    def test_fixed_following_rates_require_both_dual_budgets(self):
+        yaml_str = VALID_YAML + """
+train:
+  total_steps: 100
+  lr:
+    start: 0.001
+  algorithm:
+    name: actor_critic
+  following_rates:
+    enabled: true
+    fixed: true
+    teammate_budget: 1.5
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+"""
+        path = _write_yaml(yaml_str)
+        with pytest.raises(ValueError, match="requires both"):
+            load_config(path)
+        os.unlink(path)
+
+    def test_non_fixed_following_rates_reject_dual_budgets(self):
         yaml_str = VALID_YAML + """
 train:
   total_steps: 100
@@ -220,12 +342,14 @@ train:
   following_rates:
     enabled: true
     budget: 1.0
+    teammate_budget: 1.5
+    non_teammate_budget: 2.5
     rho: 0.5
-    reallocation_freq: 0
+    reallocation_freq: 1
     solver: closed_form
 """
         path = _write_yaml(yaml_str)
-        with pytest.raises(ValueError, match="reallocation_freq must be >= 1"):
+        with pytest.raises(ValueError, match="only supported when train.following_rates.fixed=true"):
             load_config(path)
         os.unlink(path)
 

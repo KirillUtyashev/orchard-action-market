@@ -5,34 +5,35 @@ from __future__ import annotations
 import torch
 
 from orchard.encoding.base import BaseEncoder
-from orchard.encoding.grid import (
-    BlindTaskGridEncoder,
-    CentralizedTaskGridEncoder,
-    FilteredTaskGridEncoder,
-    PositionAwareTaskGridEncoder,
-)
+from orchard.encoding.grid import EverythingEncoder, FilteredDecEncoder
 from orchard.enums import EncoderType
-from orchard.datatypes import EncoderOutput, EnvConfig, State
+from orchard.datatypes import EncoderOutput, State
 
 
 # Module-level singleton
 _encoder: BaseEncoder | None = None
 
 
-_ENCODER_MAP = {
-    EncoderType.BLIND_TASK_CNN_GRID: BlindTaskGridEncoder,
-    EncoderType.POSITION_AWARE_TASK_CNN_GRID: PositionAwareTaskGridEncoder,
-    EncoderType.FILTERED_TASK_CNN_GRID: FilteredTaskGridEncoder,
-    EncoderType.CENTRALIZED_TASK_CNN_GRID: CentralizedTaskGridEncoder,
-}
+def init_encoder(encoder_type: EncoderType, env, n_networks: int | None = None) -> None:
+    """Initialize the global encoder singleton.
 
+    env must be a StochasticEnv (or any BaseEnv subclass) with a .cfg attribute.
 
-def init_encoder(encoder_type: EncoderType, env_cfg: EnvConfig) -> None:
+    n_networks selects centralized vs decentralized: pass 1 for centralized,
+    N for decentralized. EVERYTHING_CNN_GRID accepts either; FILTERED_DEC_CNN_GRID
+    is decentralized only and requires n_networks == N.
+    """
     global _encoder
-    cls = _ENCODER_MAP.get(encoder_type)
-    if cls is None:
+    cfg = env.cfg
+
+    if encoder_type == EncoderType.EVERYTHING_CNN_GRID:
+        n = n_networks if n_networks is not None else cfg.n_agents
+        _encoder = EverythingEncoder(cfg, n)
+    elif encoder_type == EncoderType.FILTERED_DEC_CNN_GRID:
+        n = n_networks if n_networks is not None else cfg.n_agents
+        _encoder = FilteredDecEncoder(cfg, n)
+    else:
         raise ValueError(f"Unknown encoder type: {encoder_type}")
-    _encoder = cls(env_cfg)
 
 
 def encode(state: State, agent_idx: int) -> EncoderOutput:

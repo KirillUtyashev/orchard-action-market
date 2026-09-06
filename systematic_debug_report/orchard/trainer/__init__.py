@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from orchard.batched_training import BatchedTrainer
 from orchard.datatypes import ExperimentConfig
 from orchard.env.base import BaseEnv
 from orchard.enums import AlgorithmName
@@ -24,6 +23,7 @@ def create_trainer(
     """
     gpu_sync = cfg.train.use_gpu and torch.cuda.is_available()
     timer = Timer(enabled=cfg.logging.timing_csv_freq > 0, gpu_sync=gpu_sync)
+    from orchard.batched_training import BatchedTrainer
 
     if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC:
         critics = create_networks(cfg.model, cfg.env, cfg.train)
@@ -33,7 +33,12 @@ def create_trainer(
             device = "cuda" if torch.cuda.is_available() else "cpu"
             for actor in actors:
                 actor.to(device)
-            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device)
+            bt = BatchedTrainer(critics, td_lambda=cfg.train.td_lambda, device=device, timer=timer)
+            actor_bt = None
+            defer_actor_updates = False
+            if defer_actor_updates:
+                from orchard.batched_actor_training import BatchedActorTrainer
+                actor_bt = BatchedActorTrainer(actors, device=device)
             print(f"ActorCriticGpuTrainer: {len(critics)} critics on {device}")
             if device == "cuda":
                 alloc = torch.cuda.memory_allocated() / 1024**2
@@ -53,10 +58,18 @@ def create_trainer(
                 freeze_critic=cfg.train.freeze_critic,
                 following_rates_cfg=cfg.train.following_rates,
                 influencer_cfg=cfg.train.influencer,
+                comm_only_teammates=cfg.train.comm_only_teammates,
+                actor_bt=actor_bt,
+                defer_actor_updates=defer_actor_updates,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
+        actor_bt = None
+        defer_actor_updates = False
+        if defer_actor_updates:
+            from orchard.batched_actor_training import BatchedActorTrainer
+            actor_bt = BatchedActorTrainer(actors, device="cpu")
         print(f"ActorCriticCpuTrainer: {len(critics)} critics on CPU")
         return ActorCriticCpuTrainer(
             critic_networks=critics,
@@ -70,6 +83,9 @@ def create_trainer(
             freeze_critic=cfg.train.freeze_critic,
             following_rates_cfg=cfg.train.following_rates,
             influencer_cfg=cfg.train.influencer,
+            comm_only_teammates=cfg.train.comm_only_teammates,
+            actor_bt=actor_bt,
+            defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
         )
@@ -78,7 +94,7 @@ def create_trainer(
     if cfg.train.use_gpu:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         bt = BatchedTrainer(
-            networks, td_lambda=cfg.train.td_lambda, device=device,
+            networks, td_lambda=cfg.train.td_lambda, device=device, timer=timer,
         )
         print(f"GpuTrainer: {len(networks)} networks on {device}")
         if device == "cuda":
@@ -96,8 +112,10 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
+            discount_method=cfg.train.discount_method,
+            behavior_policy=cfg.train.behavior_policy,
         )
     else:
         from orchard.trainer.cpu import CpuTrainer
@@ -110,6 +128,8 @@ def create_trainer(
             lr_schedule=cfg.train.lr,
             total_steps=cfg.train.total_steps,
             heuristic=cfg.train.heuristic,
-            comm_weight=cfg.train.comm_weight,
             timer=timer,
+            train_only_teammates=cfg.train.train_only_teammates,
+            discount_method=cfg.train.discount_method,
+            behavior_policy=cfg.train.behavior_policy,
         )

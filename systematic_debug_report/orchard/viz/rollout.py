@@ -8,7 +8,7 @@ import torch
 
 import orchard.encoding as encoding
 from orchard.datatypes import State
-from orchard.enums import Action, PickMode
+from orchard.enums import Action
 from orchard.env.base import BaseEnv
 from orchard.eval import rollout_trajectory
 from orchard.model import ValueNetwork
@@ -25,6 +25,8 @@ def generate_frames(
     networks: list[ValueNetwork] | None = None,
     include_decisions: bool = False,
     include_values: bool = False,
+    include_encoding: bool = False,
+    spawn_area_snapshots: list | None = None,
 ) -> list[Frame]:
     """Run a rollout and produce a Frame for every transition.
 
@@ -53,11 +55,10 @@ def generate_frames(
         picked_task_type: int | None = None
         picked_correct: bool | None = None
 
-        if picked and env.cfg.task_assignments is not None:
+        if picked:
             total_picks += 1
             agent_pick_counts[transition.s_t.actor] += 1
 
-            # Figure out what type was picked by comparing before/after tasks
             before_tasks = set(zip(transition.s_t.task_positions,
                                    transition.s_t.task_types or ()))
             after_tasks = set(zip(transition.s_t_after.task_positions,
@@ -66,8 +67,9 @@ def generate_frames(
             if removed:
                 _, tau = next(iter(removed))
                 picked_task_type = tau
-                g_actor = set(env.cfg.task_assignments[transition.s_t.actor])
-                picked_correct = (tau in g_actor)
+                actor = transition.s_t.actor
+                eligible = env.proficiency_positive_types[actor]
+                picked_correct = (tau in eligible)
                 if picked_correct:
                     total_correct_picks += 1
                 else:
@@ -77,8 +79,11 @@ def generate_frames(
         total_reward += transition.rewards[transition.s_t.actor]
         total_team_reward += sum(transition.rewards)
 
-        # Increment decision count on non-PICK transitions (actual agent choices)
-        if transition.action.is_move():
+        # Increment on move-phase steps only, matching training's n_steps denominator.
+        # Can't use action.is_move(): STAY (value<=4) is also returned during pick phase.
+        # s_t.pick_phase is not set on stored transitions (only used for policy queries).
+        # discount=gamma for move steps, discount=1.0 for pick steps — reliable discriminant.
+        if transition.discount < 1.0:
             decision_count += 1
 
         # --- Optional: decision introspection (only at decision points) ---
@@ -110,6 +115,15 @@ def generate_frames(
                 for i, net in enumerate(networks):
                     agent_values[i] = net(encoding.encode(transition.s_t, i)).item()
 
+        # --- Optional: encoder grid/scalar snapshots ---
+        enc_grids: list | None = None
+        enc_scalars: list | None = None
+        if include_encoding:
+            with torch.no_grad():
+                grids_t, scalars_t = encoding.encode_all_agents(transition.s_t)
+            enc_grids = grids_t.numpy().tolist()
+            enc_scalars = scalars_t.numpy().tolist()
+
         frame = Frame(
             step=decision_count,
             transition_index=transition_index,
@@ -137,8 +151,16 @@ def generate_frames(
             decisions=decisions,
             agent_values=agent_values,
             agent_picks=dict(agent_pick_counts),
+            encoding_grids=enc_grids,
+            encoding_scalars=enc_scalars,
         )
         frames.append(frame)
+
+        if spawn_area_snapshots is not None:
+            raw = getattr(env, "_spawn_area_cells", None)
+            spawn_area_snapshots.append(
+                [list(cells) for cells in raw] if raw is not None else None
+            )
 
         state_index += 1
         transition_index += 1

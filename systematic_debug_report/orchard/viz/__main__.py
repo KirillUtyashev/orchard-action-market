@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 import time
 from pathlib import Path
@@ -26,20 +27,21 @@ from orchard.policy import (
 )
 from orchard.seed import set_all_seeds, rng
 from orchard.datatypes import State
-from orchard.enums import Action, Heuristic, PickMode, num_actions
+from orchard.enums import Action, Heuristic, num_actions
 
-from orchard.viz.export import write_summary_json, write_trajectory_csv
+from orchard.viz.export import write_reward_variances_json, write_summary_json, write_trajectory_csv
 from orchard.viz.frame import Frame
 from orchard.viz.html_builder import build_html
-from orchard.viz.renderer import render_frame_png
+from orchard.viz.renderer import render_frame_svg
 from orchard.viz.rollout import generate_frames
 
 
 _HEURISTIC_MAP = {
-    "nearest_task": Heuristic.NEAREST_TASK,
-    "nearest_correct_task": Heuristic.NEAREST_CORRECT_TASK,
-    "nearest_correct_task_stay_wrong": Heuristic.NEAREST_CORRECT_TASK_STAY_WRONG,
-    "nearest": Heuristic.NEAREST_TASK,  # backward compat alias
+    "nearest": Heuristic.NEAREST,
+    "hungarian": Heuristic.HUNGARIAN,
+    "stochastic_mpc": Heuristic.STOCHASTIC_MPC,
+    "raw_stochastic_mpc": Heuristic.RAW_STOCHASTIC_MPC,
+    "clairvoyant_rollout": Heuristic.CLAIRVOYANT_ROLLOUT,
 }
 
 _ALL_POLICIES = list(_HEURISTIC_MAP.keys()) + ["random", "learned"]
@@ -63,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--show-after-states", action="store_true", help="Show s_t and s_{t+1} per transition")
     p.add_argument("--steps", type=int, default=200, help="Number of agent decisions (default: 200)")
     p.add_argument("--seed", type=int, default=None, help="Override config seed")
+    p.add_argument("--eval-seed", type=int, default=None, help="Reseed env RNGs at eval start (use same value in EvalConfig.eval_seed to match training)")
     p.add_argument("--fps", type=int, default=3, help="Autoplay FPS (default: 3)")
     p.add_argument("--output-dir", type=str, default="./viz_output", help="Output directory")
     p.add_argument("--decisions", action="store_true", help="Show Q-values for all actions (requires --checkpoint)")
@@ -70,6 +73,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dpi", type=int, default=120, help="PNG render DPI (default: 120)")
     p.add_argument("--no-html", action="store_true",
                    help="Skip rendering and HTML — just print stats and write CSV/JSON (fast sanity check)")
+    p.add_argument("--scenario", type=str, default=None,
+                   help="Apply a fixed-eval scenario before init (e.g. edge_zones_center_agents, frozen_zones). "
+                        "Overrides spawn zone positions and agent start as defined in orchard.fixed_eval.SCENARIOS.")
+    p.add_argument("--override", nargs="*", default=[],
+                   help="Override config values using dot notation: key=value (e.g. env.n_agents=8 env.height=11). "
+                        "Applied after loading the config, before creating the env.")
+    p.add_argument("--rand-zone-seed", type=int, default=None,
+                   help="Randomize initial spawn zone positions using this seed. "
+                        "Use different values (0, 1, 2, ...) to sweep over zone configurations.")
+    p.add_argument("--show-encoding", action="store_true",
+                   help="Show grid channel heatmaps and scalars from the encoder in the HTML viewer")
     return p.parse_args()
 
 
@@ -78,7 +92,7 @@ def load_checkpoint(
     networks: list[ValueNetwork],
 ) -> tuple[int, dict]:
     """Load critic weights into networks. Returns (training step, raw ckpt dict)."""
-    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     if "networks" in ckpt:
         state_dicts = ckpt["networks"]
     elif "critics" in ckpt:
@@ -122,7 +136,7 @@ def _greedy_actor_action(
     """Greedy action via actor network argmax (no critic involved)."""
     actor_id = state.actor
     enc = encoding.encode(state, actor_id)
-    legal_mask = build_phase2_legal_mask(state, env.cfg) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
+    legal_mask = build_phase2_legal_mask(state, env.cfg, env.proficiency_positive_types) if state.pick_phase else build_phase1_legal_mask(state, env.cfg)
     with torch.no_grad():
         probs = actor_networks[actor_id].get_action_probabilities(enc, legal_mask)
     return policy_index_to_action(int(np.argmax(probs)))
@@ -132,30 +146,25 @@ def _greedy_action_batched(
     state: State,
     networks: list[ValueNetwork],
     env,
-    comm_weight: float = 0.0,
 ) -> Action:
-    """Standalone greedy argmax over Q_team for viz (no trainer needed)."""
+    """Standalone greedy argmax over Q_team = r_team(s,a) + sum_j V_j(after_state)."""
     phase2 = state.pick_phase
-    all_actions = get_phase2_actions(state, env.cfg) if phase2 else get_all_actions(env.cfg)
-    actor = state.actor
-    centralized = (len(networks) == 1)
-    n_nets = len(networks)
+    all_actions = get_phase2_actions(state, env) if phase2 else get_all_actions(env.cfg)
 
     after_states: list[State] = []
     immediate_rewards: list[float] = []
+    _actor_types = env.proficiency_positive_types[state.actor]
     for a in all_actions:
         if phase2 and a.is_pick():
             s_after, rewards = env.resolve_pick(state, pick_type=a.pick_type())
-            team_r = sum(rewards)
-            weighted_r = rewards[actor] + comm_weight * (team_r - rewards[actor])
             after_states.append(s_after)
-            immediate_rewards.append(weighted_r)
+            immediate_rewards.append(sum(rewards))
         elif phase2:
-            after_states.append(state)
+            after_states.append(dataclasses.replace(state, pick_phase=False))
             immediate_rewards.append(0.0)
         else:
             s = env.apply_action(state, a)
-            if s.is_agent_on_task(s.actor):
+            if s.is_agent_on_task(s.actor, _actor_types):
                 after_states.append(s.with_pick_phase())
             else:
                 after_states.append(s)
@@ -163,22 +172,17 @@ def _greedy_action_batched(
 
     n_actions = len(after_states)
 
-    # Use encode_all_agents_for_actions to match GPU trainer encoding exactly.
-    # encode_batch_for_actions omits Ch5 (actor position) for the actor's own
-    # encoding, causing wrong critic inputs vs what was seen during training.
-    grids, scalars = encoding.encode_all_agents_for_actions(state, after_states)
-    # grids: (N, B, C, H, W), scalars: (N, B, S)
-
+    # Mirror CpuTrainer._compute_team_values exactly: encode per-agent using
+    # encode_batch_for_actions, with agent_idx=0 for centralized networks.
+    is_centralized = len(networks) == 1 and env.cfg.n_agents > 1
     team_values = [0.0] * n_actions
-    per_agent_vals: list[list[float]] = []
     with torch.no_grad():
         for i, net in enumerate(networks):
-            vals = net.forward_raw(grids[i], scalars[i])  # (B,)
-            agent_vals = [vals[k].item() for k in range(n_actions)]
-            per_agent_vals.append(agent_vals)
-            weight = 1.0 if (centralized or i == actor) else comm_weight
+            agent_idx = 0 if is_centralized else i
+            batch_enc = encoding.encode_batch_for_actions(state, agent_idx, after_states)
+            vals = net(batch_enc)
             for k in range(n_actions):
-                team_values[k] += weight * agent_vals[k]
+                team_values[k] += vals[k].item()
 
     best_idx = 0
     best_val = team_values[0] + immediate_rewards[0]
@@ -194,7 +198,6 @@ def make_policy_fn(
     policy_name: str,
     networks: list[ValueNetwork] | None,
     env,
-    comm_weight: float = 0.0,
     actor_networks: list[PolicyNetwork] | None = None,
 ):
     """Return a policy function: State -> Action.
@@ -213,15 +216,15 @@ def make_policy_fn(
         if networks is None:
             raise ValueError("--policy learned requires --checkpoint")
         def policy(s: State) -> Action:
-            return _greedy_action_batched(s, networks, env, comm_weight=comm_weight)
+            return _greedy_action_batched(s, networks, env)
         return policy
     elif policy_name in _HEURISTIC_MAP:
         h = _HEURISTIC_MAP[policy_name]
         def policy(s: State) -> Action:
-            return heuristic_action(s, env.cfg, h)
+            return heuristic_action(s, env, h)
         return policy
     elif policy_name == "random":
-        n_act = num_actions(env.cfg.pick_mode, env.cfg.n_task_types)
+        n_act = num_actions(env.cfg.n_task_types)
         def policy(s: State) -> Action:
             return Action(rng.randint(0, n_act - 1))
         return policy
@@ -232,27 +235,27 @@ def make_policy_fn(
 def render_all_frames(
     frames: list[Frame],
     show_after_states: bool,
-    dpi: int,
     n_task_types: int = 1,
     task_assignments: tuple[tuple[int, ...], ...] | None = None,
-) -> list[bytes]:
-    """Render all frames to PNG bytes."""
-    pngs: list[bytes] = []
+    spawn_area_snapshots: list | None = None,
+) -> list[str]:
+    """Render all frames to inline SVG strings."""
+    svgs: list[str] = []
     total = len(frames)
     for i, frame in enumerate(frames):
         if (i + 1) % 50 == 0 or i == 0 or i == total - 1:
             print(f"  Rendering frame {i + 1}/{total}...", end="\r")
 
-        # Determine picked cell for pick highlight
         picked_cell = None
         picked_correct = None
         if frame.picked and frame.picked_task_type is not None:
-            # The pick happened at the actor's position in s_t
             pos = frame.state.agent_positions[frame.actor]
             picked_cell = (pos.row, pos.col)
             picked_correct = frame.picked_correct
 
-        png = render_frame_png(
+        spawn_areas = spawn_area_snapshots[i] if spawn_area_snapshots is not None else None
+
+        svg = render_frame_svg(
             state=frame.state,
             state_after=frame.state_after if show_after_states else None,
             height=frame.height,
@@ -263,18 +266,18 @@ def render_all_frames(
             rewards=frame.rewards,
             discount=frame.discount,
             show_after_state=show_after_states,
-            dpi=dpi,
             n_task_types=n_task_types,
             task_assignments=task_assignments,
             picked_cell=picked_cell,
             picked_correct=picked_correct,
+            spawn_areas=spawn_areas,
         )
-        pngs.append(png)
+        svgs.append(svg)
     print()
-    return pngs
+    return svgs
 
 
-def _load_config_or_metadata(path: str):
+def _load_config_or_metadata(path: str, overrides: list[str] | None = None):
     """Load config from either a raw config YAML or a run metadata.yaml."""
     import yaml
 
@@ -293,7 +296,7 @@ def _load_config_or_metadata(path: str):
         tmp_path = tmp.name
 
     try:
-        return load_config(tmp_path)
+        return load_config(tmp_path, overrides=overrides or [])
     finally:
         import os
         os.unlink(tmp_path)
@@ -306,23 +309,37 @@ def main() -> None:
 
     # --- Load config ---
     print(f"Loading config: {args.config}")
-    cfg = _load_config_or_metadata(args.config)
+    cfg = _load_config_or_metadata(args.config, overrides=args.override or [])
 
     seed = args.seed if args.seed is not None else cfg.train.seed
     set_all_seeds(seed)
 
     n_task_types = cfg.env.n_task_types
-    task_assignments = cfg.env.task_assignments
-    pick_mode = cfg.env.pick_mode
+
+    # --- Apply scenario overrides (if requested) ---
+    env_cfg = cfg.env
+    scenario_obj = None
+    if args.scenario is not None:
+        from orchard.fixed_eval import SCENARIOS
+        if args.scenario not in SCENARIOS:
+            print(f"ERROR: unknown scenario '{args.scenario}'. Available: {list(SCENARIOS)}", file=sys.stderr)
+            sys.exit(1)
+        scenario_obj = SCENARIOS[args.scenario]
+        stoch_modified = scenario_obj.make_stochastic(env_cfg.stochastic, env_cfg)
+        env_cfg = dataclasses.replace(env_cfg, stochastic=stoch_modified)
+        eval_seed = args.eval_seed if args.eval_seed is not None else scenario_obj.eval_seed
+        print(f"  Scenario '{args.scenario}' applied (eval_seed={eval_seed})")
+        args.eval_seed = eval_seed
+    cfg = dataclasses.replace(cfg, env=env_cfg)
 
     # --- Create env and encoder ---
     env = create_env(cfg.env)
-    encoding.init_encoder(cfg.model.encoder, cfg.env)
-
-    # --- Load checkpoint if provided ---
     from orchard.enums import LearningType, AlgorithmName
     centralized = cfg.train.learning_type == LearningType.CENTRALIZED
     n_networks = 1 if centralized else cfg.env.n_agents
+    encoding.init_encoder(cfg.model.encoder, env, n_networks=n_networks)
+
+    # --- Load checkpoint if provided ---
     use_actor_argmax = cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC
 
     networks: list[ValueNetwork] | None = None
@@ -344,10 +361,8 @@ def main() -> None:
         policy_name = args.policy
     elif args.checkpoint:
         policy_name = "learned"
-    elif n_task_types > 1:
-        policy_name = "nearest_correct_task"
     else:
-        policy_name = "nearest_task"
+        policy_name = "nearest"
 
     if policy_name == "learned" and networks is None:
         print("ERROR: --policy learned requires --checkpoint", file=sys.stderr)
@@ -363,30 +378,39 @@ def main() -> None:
 
     # Print config info (always)
     print(f"  T={n_task_types}, N={cfg.env.n_agents}, grid={cfg.env.height}x{cfg.env.width}")
-    print(f"  Pick mode: {pick_mode.name}, r_picker={cfg.env.r_picker}, r_low={cfg.env.r_low}")
-    if task_assignments is not None:
-        print(f"  Assignments: {task_assignments}")
-
-    # --- Generate initial state ---
-    init_state = env.init_state()
+    print(f"  w_R={cfg.env.relatedness_width}, w_P={cfg.env.proficiency_width}")
 
     # --- Generate primary rollout ---
     print(f"Rolling out {args.steps} decisions with policy: {policy_name}")
     t0 = time.time()
 
     policy_fn = make_policy_fn(policy_name, networks, env,
-                               comm_weight=cfg.train.comm_weight,
                                actor_networks=actor_networks)
-    frames = generate_frames(
-        start_state=init_state,
-        policy_fn=policy_fn,
-        env=env,
-        n_steps=args.steps,
-        policy_name=policy_name,
-        networks=networks,
-        include_decisions=args.decisions,
-        include_values=args.values,
+    spawn_area_snapshots: list = []
+    fixed_zones = (
+        scenario_obj.get_fixed_spawn_zones(env_cfg.stochastic, env_cfg)
+        if scenario_obj is not None and scenario_obj.get_fixed_spawn_zones is not None
+        else None
     )
+    env.set_eval_mode(True, seed=args.eval_seed, fixed_spawn_zones=fixed_zones)
+    init_state = env.init_state()
+    if scenario_obj is not None and scenario_obj.override_init_state is not None:
+        init_state = scenario_obj.override_init_state(init_state, env_cfg)
+    try:
+        frames = generate_frames(
+            start_state=init_state,
+            policy_fn=policy_fn,
+            env=env,
+            n_steps=args.steps,
+            policy_name=policy_name,
+            networks=networks,
+            include_decisions=args.decisions,
+            include_values=args.values,
+            include_encoding=args.show_encoding,
+            spawn_area_snapshots=spawn_area_snapshots,
+        )
+    finally:
+        env.set_eval_mode(False)
     print(f"  Generated {len(frames)} transitions ({args.steps} decisions) in {time.time() - t0:.1f}s")
 
     # --- Generate compare rollout (if requested) ---
@@ -394,7 +418,7 @@ def main() -> None:
     if args.compare is not None:
         # Determine compare policy name
         if args.compare == "auto":
-            compare_name = "nearest_correct_task" if n_task_types > 1 else "nearest_task"
+            compare_name = "nearest"
         else:
             compare_name = args.compare
 
@@ -413,18 +437,23 @@ def main() -> None:
         env_compare = create_env(cfg.env)
         compare_actor_networks = actor_networks if compare_name == "learned" else None
         compare_fn = make_policy_fn(compare_name, compare_networks, env_compare,
-                                    comm_weight=cfg.train.comm_weight,
                                     actor_networks=compare_actor_networks)
-        compare_frames = generate_frames(
-            start_state=init_state,
-            policy_fn=compare_fn,
-            env=env_compare,
-            n_steps=args.steps,
-            policy_name=compare_name,
-            networks=compare_networks,
-            include_decisions=False,
-            include_values=False,
-        )
+        compare_spawn_snapshots: list = []
+        env_compare.set_eval_mode(True)
+        try:
+            compare_frames = generate_frames(
+                start_state=init_state,
+                policy_fn=compare_fn,
+                env=env_compare,
+                n_steps=args.steps,
+                policy_name=compare_name,
+                networks=compare_networks,
+                include_decisions=False,
+                include_values=False,
+                spawn_area_snapshots=compare_spawn_snapshots,
+            )
+        finally:
+            env_compare.set_eval_mode(False)
         print(f"  Generated {len(compare_frames)} compare transitions")
 
     # --- Stats summary (always printed) ---
@@ -464,6 +493,16 @@ def main() -> None:
     )
     print(f"Wrote {summary_path}")
 
+    reward_var_path = out_dir / "reward_variances.json"
+    write_reward_variances_json(
+        env.category_rewards,
+        sigma_a=cfg.env.stochastic.sigma_a,
+        sigma_b=cfg.env.stochastic.sigma_b,
+        reward_generation=cfg.env.stochastic.reward_generation,
+        path=reward_var_path,
+    )
+    print(f"Wrote {reward_var_path}")
+
     if compare_frames is not None:
         csv_compare_path = out_dir / "trajectory_compare.csv"
         write_trajectory_csv(compare_frames, csv_compare_path)
@@ -482,19 +521,24 @@ def main() -> None:
         print("Done (--no-html: skipped rendering and HTML).")
         return
 
-    # --- Render PNGs ---
+    # --- Render SVGs ---
+    # spawn_area_snapshots is per-frame (moves with zone relocations during eval rollout)
+    has_spawn_areas = bool(spawn_area_snapshots) and spawn_area_snapshots[0] is not None
     print("Rendering primary frames...")
     t0 = time.time()
-    frame_pngs = render_all_frames(frames, args.show_after_states, args.dpi,
-                                    n_task_types=n_task_types, task_assignments=task_assignments)
+    frame_svgs = render_all_frames(frames, args.show_after_states,
+                                   n_task_types=n_task_types, task_assignments=None,
+                                   spawn_area_snapshots=spawn_area_snapshots if has_spawn_areas else None)
     print(f"  Rendered in {time.time() - t0:.1f}s")
 
-    compare_pngs: list[bytes] | None = None
+    compare_svgs: list[str] | None = None
     if compare_frames is not None:
+        has_compare_spawn = bool(compare_spawn_snapshots) and compare_spawn_snapshots[0] is not None
         print("Rendering compare frames...")
         t0 = time.time()
-        compare_pngs = render_all_frames(compare_frames, args.show_after_states, args.dpi,
-                                          n_task_types=n_task_types, task_assignments=task_assignments)
+        compare_svgs = render_all_frames(compare_frames, args.show_after_states,
+                                         n_task_types=n_task_types, task_assignments=None,
+                                         spawn_area_snapshots=compare_spawn_snapshots if has_compare_spawn else None)
         print(f"  Rendered in {time.time() - t0:.1f}s")
 
     # --- Build HTML ---
@@ -503,14 +547,19 @@ def main() -> None:
     t0 = time.time()
     build_html(
         frames=frames,
-        frame_pngs=frame_pngs,
+        frame_svgs=frame_svgs,
         output_path=html_path,
         fps=args.fps,
         compare_frames=compare_frames,
-        compare_pngs=compare_pngs,
+        compare_svgs=compare_svgs,
         n_task_types=n_task_types,
-        task_assignments=task_assignments,
-        pick_mode=pick_mode,
+        proficiency=env.proficiency,
+        relatedness=env.relatedness,
+        category_rewards=env.category_rewards,
+        relatedness_width=cfg.env.relatedness_width,
+        proficiency_width=cfg.env.proficiency_width,
+        encoder_type=cfg.model.encoder if args.show_encoding else None,
+        n_agents=cfg.env.n_agents,
     )
     print(f"Wrote {html_path} ({html_path.stat().st_size / 1024 / 1024:.1f} MB) in {time.time() - t0:.1f}s")
     print(f"\nDone! Open {html_path} in a browser to view.")
