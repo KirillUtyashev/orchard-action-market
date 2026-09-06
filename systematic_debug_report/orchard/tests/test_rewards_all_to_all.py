@@ -3,7 +3,11 @@
 import numpy as np
 import pytest
 
-from orchard.env.stochastic import StochasticEnv, generate_rewards_all_to_all
+from orchard.env.stochastic import (
+    StochasticEnv,
+    generate_rewards_all_to_all,
+    generate_rewards_circulant,
+)
 
 
 @pytest.mark.parametrize(
@@ -91,15 +95,69 @@ def test_environment_uses_task_by_agent_orientation():
     assert np.array_equal(rewards, other_seed_rewards)
 
 
-def test_partial_interest_keeps_independent_generation():
+@pytest.mark.parametrize("relatedness_width", [1, 2, 3, 4])
+def test_partial_interest_uses_deterministic_fourier_generation(
+    relatedness_width,
+):
     rewards = StochasticEnv._generate_category_rewards(
         seed=123,
         n_task_types=11,
         N=11,
         sigma_a=2.0,
         sigma_b=6.0,
-        relatedness_width=2,
+        relatedness_width=relatedness_width,
+        reward_generation="circulant_all_to_all",
+    )
+    other_seed_rewards = StochasticEnv._generate_category_rewards(
+        seed=999,
+        n_task_types=11,
+        N=11,
+        sigma_a=2.0,
+        sigma_b=6.0,
+        relatedness_width=relatedness_width,
         reward_generation="circulant_all_to_all",
     )
 
-    assert np.all(np.count_nonzero(rewards, axis=1) <= 5)
+    assert np.array_equal(rewards, other_seed_rewards)
+
+    g = 2 * relatedness_width + 1
+    for task in range(11):
+        caring = np.array(
+            [
+                min(abs(task - agent), 11 - abs(task - agent))
+                <= relatedness_width
+                for agent in range(11)
+            ]
+        )
+        assert caring.sum() == g
+        assert np.all(rewards[task, ~caring] == 0.0)
+        assert np.isclose(rewards[task, caring].std(ddof=0), 2.0)
+
+    full_rewards = generate_rewards_all_to_all(11, 2.0, 6.0).T
+    assert np.allclose(rewards.sum(axis=1), full_rewards.sum(axis=1))
+    assert np.isclose(rewards.sum(axis=1).std(ddof=0), 6.0)
+
+
+def test_partial_circulant_public_orientation_and_mask():
+    rewards = generate_rewards_circulant(
+        num_agents=11,
+        relatedness_width=2,
+        sigma_a=2.0,
+        sigma_b=6.0,
+    )
+
+    assert rewards.shape == (11, 11)
+    for task in range(11):
+        caring = np.array(
+            [
+                min(abs(task - agent), 11 - abs(task - agent)) <= 2
+                for agent in range(11)
+            ]
+        )
+        assert np.all(rewards[~caring, task] == 0.0)
+
+
+def test_full_interest_circulant_is_exactly_backward_compatible():
+    rewards = generate_rewards_circulant(11, 5, 2.0, 6.0)
+
+    assert np.array_equal(rewards, generate_rewards_all_to_all(11, 2.0, 6.0))

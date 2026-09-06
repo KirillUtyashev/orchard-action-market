@@ -55,6 +55,88 @@ def generate_rewards_all_to_all(
     return rewards
 
 
+def generate_rewards_circulant(
+    num_agents: int,
+    relatedness_width: int,
+    sigma_a: float,
+    sigma_b: float,
+    mean_team_reward: float = 1.0,
+) -> np.ndarray:
+    """Return a deterministic Fourier reward matrix for any interest width.
+
+    The returned matrix has shape (agents, task types). Every task uses the
+    same Fourier task-total vector as generate_rewards_all_to_all, so changing
+    relatedness_width does not change the task-level reward landscape. For
+    partial interest, rewards are zero outside the task's circular caring
+    group. Within that group, the first Fourier mode is centered and rescaled
+    to have standard deviation sigma_a.
+
+    The full-interest case delegates to generate_rewards_all_to_all to preserve
+    its matrix exactly.
+    """
+    N = num_agents
+    if N < 5:
+        raise ValueError(
+            "circulant Fourier reward generation requires num_agents >= 5"
+        )
+    if relatedness_width < 0:
+        raise ValueError("relatedness_width must be non-negative")
+    if sigma_a < 0 or sigma_b < 0:
+        raise ValueError("sigma_a and sigma_b must be non-negative")
+
+    g = min(2 * relatedness_width + 1, N)
+    if g == N:
+        return generate_rewards_all_to_all(
+            N,
+            sigma_a,
+            sigma_b,
+            mean_team_reward=mean_team_reward,
+        )
+
+    indices = np.arange(N, dtype=np.float64)
+    task_totals = (
+        mean_team_reward
+        + np.sqrt(2.0) * sigma_b * np.cos(4.0 * np.pi * indices / N)
+    )
+    task_baselines = task_totals / g
+
+    relative_offsets = np.arange(N)
+    circular_distances = np.minimum(relative_offsets, N - relative_offsets)
+    caring_pattern = circular_distances <= relatedness_width
+    assert caring_pattern.sum() == g
+
+    deviation_pattern = np.zeros(N, dtype=np.float64)
+    if sigma_a > 0 and g >= 2:
+        caring_deviations = np.cos(
+            2.0 * np.pi * relative_offsets[caring_pattern] / N
+        )
+        caring_deviations -= caring_deviations.mean()
+        caring_deviations *= sigma_a / caring_deviations.std(ddof=0)
+        deviation_pattern[caring_pattern] = caring_deviations
+
+    agent_ids = np.arange(N)[:, None]
+    task_ids = np.arange(N)[None, :]
+    deviation_indices = (agent_ids - task_ids) % N
+    caring = caring_pattern[deviation_indices]
+    rewards = np.where(
+        caring,
+        deviation_pattern[deviation_indices] + task_baselines[None, :],
+        0.0,
+    )
+
+    assert np.allclose(rewards.sum(axis=0), task_totals)
+    assert np.isclose(rewards.sum(axis=0).std(ddof=0), sigma_b)
+    if g >= 2:
+        caring_stds = np.array(
+            [
+                rewards[:, task][caring[:, task]].std(ddof=0)
+                for task in range(N)
+            ]
+        )
+        assert np.allclose(caring_stds, sigma_a)
+    return rewards
+
+
 class StochasticEnv(BaseEnv):
     """Stochastic spawn/despawn with random uniform task placement."""
 
@@ -111,7 +193,7 @@ class StochasticEnv(BaseEnv):
         relatedness factor: r_j(actor, k) = proficiency[actor, k] · r'^(k)_j.
         """
         g = min(2 * relatedness_width + 1, N)
-        if reward_generation == "circulant_all_to_all" and g == N:
+        if reward_generation == "circulant_all_to_all":
             if n_task_types != N:
                 raise ValueError(
                     "circulant_all_to_all reward generation requires "
@@ -119,7 +201,12 @@ class StochasticEnv(BaseEnv):
                 )
             # The environment stores (task types, agents), while the public
             # generator intentionally exposes (agents, task types).
-            return generate_rewards_all_to_all(N, sigma_a, sigma_b).T
+            return generate_rewards_circulant(
+                N,
+                relatedness_width,
+                sigma_a,
+                sigma_b,
+            ).T
 
         rng_np = np.random.default_rng(seed)
 
