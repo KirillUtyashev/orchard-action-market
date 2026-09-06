@@ -87,7 +87,11 @@ def setup_logging(cfg: ExperimentConfig) -> Path:
     }
     hw: dict[str, Any] = {
         "cpu_logical_cores": multiprocessing.cpu_count(),
-        "cpu_affinity_cores": len(os.sched_getaffinity(0)),
+        "cpu_affinity_cores": (
+            len(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else multiprocessing.cpu_count()
+        ),
     }
     try:
         import pynvml

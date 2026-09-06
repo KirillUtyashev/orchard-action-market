@@ -3,22 +3,23 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+.venv/
+.DS_Store
 
 # Output folders (generated, not source)
-systematic_debug_report/compare_output/
-systematic_debug_report/compare_policies_output/
-systematic_debug_report/viz_output/
-systematic_debug_report/slurm_experiments/
-systematic_debug_report/output/
-systematic_debug_report/test_runs/
-systematic_debug_report/runs/
-systematic_debug_report/profile/
-systematic_debug_report/backups/
-systematic_debug_report/request_slurm.sh
-systematic_debug_report/my_configs/
-systematic_debug_report/TODO.txt
-systematic_debug_report/QUESTIONS.txt
-systematic_debug_report/compare_checkpoints.py
+orchard_rl/compare_output/
+orchard_rl/compare_policies_output/
+orchard_rl/viz_output/
+orchard_rl/slurm_experiments/
+orchard_rl/output/
+orchard_rl/test_runs/
+orchard_rl/runs/
+orchard_rl/profile/
+orchard_rl/backups/
+orchard_rl/request_slurm.sh
+orchard_rl/my_configs/
+orchard_rl/TODO.txt
+orchard_rl/QUESTIONS.txt
 
 # Data/model files
 *.npz

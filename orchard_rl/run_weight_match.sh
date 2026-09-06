@@ -5,8 +5,8 @@
 
 set -e
 
-OLD_DIR="/tmp/old_debug/systematic_debug_report"
-NEW_DIR="/tmp/new_debug/systematic_debug_report"
+OLD_DIR="/tmp/old_debug/orchard_rl"
+NEW_DIR="/tmp/new_debug/orchard_rl"
 CFG="slurm_experiments/april23/weight_match_test/config.yaml"
 VENV="/u/taddmao/venvs/orchard/bin/activate"
 COMPARE="$NEW_DIR/compare_checkpoints.py"
