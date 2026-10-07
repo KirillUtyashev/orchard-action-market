@@ -148,17 +148,19 @@ def _create_learned_actor_trainer(cfg: ExperimentConfig, env: BaseEnv, timer: Ti
 
     if cfg.train.use_gpu:
         print("LearnedActorTrainer is CPU-only; ignoring train.use_gpu.")
-    networks = create_networks(cfg.model, cfg.env, cfg.train)
-    critic_cls = (
-        CentralizedTeamCritic
-        if cfg.train.learning_type == LearningType.CENTRALIZED
-        else DecentralizedTeamCritic
-    )
+    # The actor is built first so its initial weights do not depend on how many
+    # critic networks (dec: N, cen: 1) consume the RNG afterwards.
     actor_lr_cfg = cfg.train.actor_lr or cfg.train.lr
     actor = SharedActor(
         cfg.actor_model or cfg.model,
         cfg.env,
         lr=compute_schedule_value(actor_lr_cfg, 0, cfg.train.total_steps),
+    )
+    networks = create_networks(cfg.model, cfg.env, cfg.train)
+    critic_cls = (
+        CentralizedTeamCritic
+        if cfg.train.learning_type == LearningType.CENTRALIZED
+        else DecentralizedTeamCritic
     )
     print(f"LearnedActorTrainer: shared actor + {len(networks)} critic(s) on CPU")
     return LearnedActorTrainer(
