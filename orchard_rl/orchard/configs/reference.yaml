@@ -135,6 +135,16 @@ train:
   #   actor_critic: decentralized masked-policy actor-critic
   algorithm:
     name: actor_critic
+    # Opt-in shared learned actor (one masked policy for all agents, move and pick
+    # phases) driven by the team value. The critic is chosen by train.learning_type:
+    # decentralized = sum_i V_i, centralized = V_cen (use discount_method: round_steps).
+    # With enabled: false (default) the per-agent actor-critic path above is used.
+    learned_actor:
+      enabled: false
+      advantage: afterstate        # afterstate | td_error
+      entropy_coef: 0.01
+      normalize_advantage: true    # per-round batch; false = raw advantages
+      eval_sampled: true           # also report sampled-policy performance
 
   # Optional actor LR schedule for actor-critic.
   # If omitted, actor networks reuse train.lr.
