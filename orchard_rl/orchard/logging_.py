@@ -136,6 +136,7 @@ def build_main_csv_fieldnames(
     influencer: bool = False,
     mc_validation: bool = False,
     rollout_metrics: bool = True,
+    sampled_eval: bool = False,
 ) -> list[str]:
     fields = ["step", "wall_time"]
     if rollout_metrics:
@@ -143,6 +144,8 @@ def build_main_csv_fieldnames(
             "greedy_rps", "greedy_team_rps",
             f"{heuristic_name}_rps", f"{heuristic_name}_team_rps",
         ])
+        if sampled_eval:
+            fields.extend(["sampled_rps", "sampled_team_rps"])
     fields.append("td_loss_avg")
     if actor_critic:
         fields.extend([

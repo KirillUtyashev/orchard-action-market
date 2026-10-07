@@ -25,6 +25,7 @@ from orchard.datatypes import (
     ExperimentConfig,
     FollowingRatesConfig,
     InfluencerConfig,
+    LearnedActorConfig,
     LoggingConfig,
     ModelConfig,
     ScheduleConfig,
@@ -217,8 +218,32 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         budget=float(influencer_d.get("budget", 0.0)),
     )
 
+    la_d = algorithm_d.get("learned_actor") or {}
+    learned_actor_cfg = LearnedActorConfig(
+        enabled=bool(la_d.get("enabled", False)),
+        advantage=str(la_d.get("advantage", "afterstate")).strip().lower(),
+        entropy_coef=float(la_d.get("entropy_coef", 0.01)),
+        normalize_advantage=bool(la_d.get("normalize_advantage", True)),
+        eval_sampled=bool(la_d.get("eval_sampled", True)),
+    )
+    if learned_actor_cfg.enabled:
+        if algorithm_name != AlgorithmName.ACTOR_CRITIC:
+            raise ValueError("train.algorithm.learned_actor.enabled requires train.algorithm.name=actor_critic.")
+        if learned_actor_cfg.advantage not in ("afterstate", "td_error"):
+            raise ValueError("train.algorithm.learned_actor.advantage must be 'afterstate' or 'td_error'.")
+        if learned_actor_cfg.entropy_coef < 0:
+            raise ValueError("train.algorithm.learned_actor.entropy_coef must be >= 0.")
+        if following_cfg.enabled or influencer_cfg.enabled or comm_only_teammates or bool(d.get("train_only_teammates", False)):
+            raise ValueError(
+                "train.algorithm.learned_actor does not support following_rates, influencer, "
+                "comm_only_teammates or train_only_teammates."
+            )
+
     if algorithm_name == AlgorithmName.ACTOR_CRITIC:
-        if d.get("learning_type", "decentralized").strip().lower() != "decentralized":
+        if (
+            d.get("learning_type", "decentralized").strip().lower() != "decentralized"
+            and not learned_actor_cfg.enabled
+        ):
             raise ValueError("train.algorithm.name=actor_critic requires train.learning_type=decentralized.")
         if comm_only_teammates and not use_gpu:
             raise ValueError("train.comm_only_teammates=true is only supported for GPU actor-critic.")
@@ -275,6 +300,13 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
     if discount_method not in ("team_steps", "world_steps", "round_steps"):
         raise ValueError(f"train.discount_method must be 'team_steps', 'world_steps', or 'round_steps', got {discount_method!r}")
 
+    if (
+        learned_actor_cfg.enabled
+        and d.get("learning_type", "decentralized").strip().lower() == "centralized"
+        and discount_method != "round_steps"
+    ):
+        raise ValueError("A centralized learned-actor critic requires train.discount_method=round_steps.")
+
     behavior_policy = str(d.get("behavior_policy", "value_greedy")).lower().strip()
     if behavior_policy not in ("value_greedy", "heuristic"):
         raise ValueError(
@@ -288,7 +320,7 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         actor_lr=actor_lr_cfg,
         freeze_critic=freeze_critic,
         epsilon=eps_cfg,
-        algorithm=AlgorithmConfig(name=algorithm_name),
+        algorithm=AlgorithmConfig(name=algorithm_name, learned_actor=learned_actor_cfg),
         following_rates=following_cfg,
         influencer=influencer_cfg,
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),

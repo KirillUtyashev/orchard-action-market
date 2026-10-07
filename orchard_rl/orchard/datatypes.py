@@ -175,8 +175,19 @@ class StoppingConfig:
 
 
 @dataclass(frozen=True)
+class LearnedActorConfig:
+    """Opt-in shared learned actor on top of the actor_critic algorithm."""
+    enabled: bool = False
+    advantage: str = "afterstate"      # afterstate | td_error
+    entropy_coef: float = 0.01
+    normalize_advantage: bool = True
+    eval_sampled: bool = True          # also report sampled-policy performance
+
+
+@dataclass(frozen=True)
 class AlgorithmConfig:
     name: AlgorithmName = AlgorithmName.VALUE
+    learned_actor: LearnedActorConfig = LearnedActorConfig()
 
 
 @dataclass(frozen=True)

@@ -109,6 +109,7 @@ def train(cfg: ExperimentConfig, resume_checkpoint: str | None = None, resume_cr
             influencer=cfg.train.influencer.enabled,
             mc_validation=mc_validation_set is not None,
             rollout_metrics=cfg.eval.rollout_metrics,
+            sampled_eval=getattr(trainer, "reports_sampled_eval", False),
         ),
     )
     detail_logger = CSVLogger(

@@ -25,6 +25,9 @@ def create_trainer(
     timer = Timer(enabled=cfg.logging.timing_csv_freq > 0, gpu_sync=gpu_sync)
     from orchard.batched_training import BatchedTrainer
 
+    if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC and cfg.train.algorithm.learned_actor.enabled:
+        return _create_learned_actor_trainer(cfg, env, timer)
+
     if cfg.train.algorithm.name == AlgorithmName.ACTOR_CRITIC:
         critics = create_networks(cfg.model, cfg.env, cfg.train)
         actor_model_cfg = cfg.actor_model or cfg.model
@@ -133,3 +136,43 @@ def create_trainer(
             discount_method=cfg.train.discount_method,
             behavior_policy=cfg.train.behavior_policy,
         )
+
+
+def _create_learned_actor_trainer(cfg: ExperimentConfig, env: BaseEnv, timer: Timer) -> TrainerBase:
+    """Shared learned actor + dec/cen critic chosen by train.learning_type (CPU)."""
+    from orchard.enums import LearningType
+    from orchard.learned_actor.actor import SharedActor
+    from orchard.learned_actor.critic import CentralizedTeamCritic, DecentralizedTeamCritic
+    from orchard.schedule import compute_schedule_value
+    from orchard.trainer.learned_actor import LearnedActorTrainer
+
+    if cfg.train.use_gpu:
+        print("LearnedActorTrainer is CPU-only; ignoring train.use_gpu.")
+    networks = create_networks(cfg.model, cfg.env, cfg.train)
+    critic_cls = (
+        CentralizedTeamCritic
+        if cfg.train.learning_type == LearningType.CENTRALIZED
+        else DecentralizedTeamCritic
+    )
+    actor_lr_cfg = cfg.train.actor_lr or cfg.train.lr
+    actor = SharedActor(
+        cfg.actor_model or cfg.model,
+        cfg.env,
+        lr=compute_schedule_value(actor_lr_cfg, 0, cfg.train.total_steps),
+    )
+    print(f"LearnedActorTrainer: shared actor + {len(networks)} critic(s) on CPU")
+    return LearnedActorTrainer(
+        critic=critic_cls(networks),
+        actor=actor,
+        env=env,
+        gamma=cfg.env.gamma,
+        critic_lr_schedule=cfg.train.lr,
+        actor_lr_schedule=actor_lr_cfg,
+        total_steps=cfg.train.total_steps,
+        heuristic=cfg.train.heuristic,
+        freeze_critic=cfg.train.freeze_critic,
+        warmup_steps=cfg.train.warmup_steps,
+        learned_actor_cfg=cfg.train.algorithm.learned_actor,
+        discount_method=cfg.train.discount_method,
+        timer=timer,
+    )
