@@ -203,6 +203,11 @@ class LearnedActorTrainer(TrainerBase):
         if self._prev_after is not None:
             alpha = compute_schedule_value(self._critic_lr_schedule, t, self._total_steps)
             loss = self._critic.td_step(self._prev_after, rewards, discount, current, alpha)
+            if not np.isfinite(loss):
+                raise FloatingPointError(
+                    f"Critic TD loss is not finite at step {t}: the critic diverged. "
+                    "Lower train.lr (critic learning rate); large reward scales need smaller values."
+                )
             self._td_loss_accum += loss
             self._td_loss_count += len(self._critic.networks)
         self._prev_after = current
