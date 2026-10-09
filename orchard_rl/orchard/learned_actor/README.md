@@ -190,7 +190,7 @@ Other things to know:
 - **Critic divergence at large reward scale.** With the reference critic lr (9e-3), the
   sanity configuration (11 agents, sigma_b = 8) produced NaN within about 100 to 250 steps
   on some seeds, and the value-based path does too. `learned_actor_sanity.yaml` therefore
-  uses a critic lr of 1e-3 (3e-3 and below were stable in a 1000-step check). The trainer
+  uses a critic lr of 3e-4 (1e-3 still diverged on 3 of 10 runs after 4k to 55k steps; 3e-4 and 1e-4 passed those points on the same seeds). The trainer
   raises a clear error if the critic loss becomes non-finite.
 - CPU only; the per-step cost grows with the number of agents (decentralized critics).
 - "Model width 8" in the task description is read as `conv_specs [[8,3]]` and

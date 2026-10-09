@@ -39,10 +39,11 @@ train:
   seed: 1234
   heuristic: nearest
   discount_method: round_steps
-  # Critic lr. 9e-3 (the reference.yaml value) diverges to NaN within ~100-250 steps on
+  # Critic lr. 9e-3 (the reference.yaml value) diverges to NaN within a few hundred steps on
   # some seeds at this reward scale (sigma_b=8, 11 agents), for the value-based path too.
-  # 3e-3 and below were stable in a 1000-step check; 1e-3 is used here.
-  lr: {start: 1e-3, end: 1e-3, schedule: none}
+  # 1e-3 still diverged on 3 of 10 runs (after 4k, 7.6k and 55k steps). 3e-4 and 1e-4 passed
+  # those points on the same seeds; 3e-4 is used here.
+  lr: {start: 3e-4, end: 3e-4, schedule: none}
   epsilon: {start: 0.05, end: 0.05, schedule: none}
   actor_lr: {start: 3e-3, end: 3e-3, schedule: none}
   algorithm:
