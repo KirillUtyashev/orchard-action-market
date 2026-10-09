@@ -182,6 +182,7 @@ class LearnedActorConfig:
     entropy_coef: float = 0.01
     normalize_advantage: bool = True
     eval_sampled: bool = True          # also report sampled-policy performance
+    reward_scale: float = 1.0          # constant factor on rewards seen by the critic
 
 
 @dataclass(frozen=True)

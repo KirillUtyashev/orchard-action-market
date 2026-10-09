@@ -164,7 +164,7 @@ def _create_learned_actor_trainer(cfg: ExperimentConfig, env: BaseEnv, timer: Ti
     )
     print(f"LearnedActorTrainer: shared actor + {len(networks)} critic(s) on CPU")
     return LearnedActorTrainer(
-        critic=critic_cls(networks),
+        critic=critic_cls(networks, cfg.train.algorithm.learned_actor.reward_scale),
         actor=actor,
         env=env,
         gamma=cfg.env.gamma,

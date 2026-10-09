@@ -225,12 +225,15 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         entropy_coef=float(la_d.get("entropy_coef", 0.01)),
         normalize_advantage=bool(la_d.get("normalize_advantage", True)),
         eval_sampled=bool(la_d.get("eval_sampled", True)),
+        reward_scale=float(la_d.get("reward_scale", 1.0)),
     )
     if learned_actor_cfg.enabled:
         if algorithm_name != AlgorithmName.ACTOR_CRITIC:
             raise ValueError("train.algorithm.learned_actor.enabled requires train.algorithm.name=actor_critic.")
         if learned_actor_cfg.advantage not in ("afterstate", "td_error"):
             raise ValueError("train.algorithm.learned_actor.advantage must be 'afterstate' or 'td_error'.")
+        if learned_actor_cfg.reward_scale <= 0:
+            raise ValueError("train.algorithm.learned_actor.reward_scale must be > 0.")
         if learned_actor_cfg.entropy_coef < 0:
             raise ValueError("train.algorithm.learned_actor.entropy_coef must be >= 0.")
         if following_cfg.enabled or influencer_cfg.enabled or comm_only_teammates or bool(d.get("train_only_teammates", False)):

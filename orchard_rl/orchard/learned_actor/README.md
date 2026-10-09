@@ -125,6 +125,7 @@ train:
       entropy_coef: 0.01
       normalize_advantage: true     # false = raw advantages
       eval_sampled: true            # also report sampled-policy performance
+      reward_scale: 1.0             # constant factor on rewards seen by the critic (see 6)
 actor_model: null                   # optional separate actor architecture; defaults to `model`
 ```
 
@@ -188,10 +189,14 @@ of slow navigation learning.
 
 Other things to know:
 - **Critic divergence at large reward scale.** With the reference critic lr (9e-3), the
-  sanity configuration (11 agents, sigma_b = 8) produced NaN within about 100 to 250 steps
-  on some seeds, and the value-based path does too. `learned_actor_sanity.yaml` therefore
-  uses a critic lr of 3e-4 (1e-3 still diverged on 3 of 10 runs after 4k to 55k steps; 3e-4 and 1e-4 passed those points on the same seeds). The trainer
-  raises a clear error if the critic loss becomes non-finite.
+  sanity configuration (11 agents, sigma_b = 8) produced NaN within a few hundred steps on
+  some seeds, and the value-based path does too. Lowering the lr alone was not enough
+  (1e-3 diverged on 3 of 10 runs after 4k to 55k steps, 3e-4 on 1 of 5 after 17k).
+  `learned_actor.reward_scale` multiplies all rewards seen by the critic (TD targets and
+  Q); a positive constant does not change the optimal policy. `learned_actor_sanity.yaml`
+  uses `reward_scale: 0.1` with critic lr 1e-3; on the seeds that diverged, both lr 1e-3
+  and 3e-4 then ran past the old failure points. The trainer raises a clear error if the
+  critic loss becomes non-finite.
 - CPU only; the per-step cost grows with the number of agents (decentralized critics).
 - "Model width 8" in the task description is read as `conv_specs [[8,3]]` and
   `mlp_dims [8]`; please confirm.

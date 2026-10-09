@@ -22,8 +22,12 @@ from orchard.model import ValueNetwork
 class TeamCritic(ABC):
     """Critic over afterstates, queried as a single team value."""
 
-    def __init__(self, networks: list[ValueNetwork]) -> None:
+    def __init__(self, networks: list[ValueNetwork], reward_scale: float = 1.0) -> None:
         self.networks = networks
+        # All rewards seen by the critic (TD targets and Q) are multiplied by this
+        # constant. A positive constant does not change the optimal policy, and keeps
+        # TD updates stable when raw rewards are large (e.g. sigma_b = 8).
+        self.reward_scale = float(reward_scale)
 
     @abstractmethod
     def _encoder_agent_index(self, net_idx: int) -> int:
@@ -94,29 +98,29 @@ class DecentralizedTeamCritic(TeamCritic):
         return net_idx
 
     def targets(self, rewards: tuple[float, ...]) -> tuple[float, ...]:
-        return tuple(float(r) for r in rewards)
+        return tuple(self.reward_scale * float(r) for r in rewards)
 
 
 class CentralizedTeamCritic(TeamCritic):
     """A single network V_cen, trained on the team reward sum_i r_i."""
 
-    def __init__(self, networks: list[ValueNetwork]) -> None:
+    def __init__(self, networks: list[ValueNetwork], reward_scale: float = 1.0) -> None:
         if len(networks) != 1:
             raise ValueError("Centralized critic expects exactly one network.")
-        super().__init__(networks)
+        super().__init__(networks, reward_scale)
 
     def _encoder_agent_index(self, net_idx: int) -> int:
         return 0
 
     def targets(self, rewards: tuple[float, ...]) -> tuple[float, ...]:
-        return (float(sum(rewards)),)
+        return (self.reward_scale * float(sum(rewards)),)
 
 
-def build_team_critic(networks: list[ValueNetwork]) -> TeamCritic:
+def build_team_critic(networks: list[ValueNetwork], reward_scale: float = 1.0) -> TeamCritic:
     """Pick the critic implementation from the network count (set by learning_type)."""
     if len(networks) == 1:
-        return CentralizedTeamCritic(networks)
-    return DecentralizedTeamCritic(networks)
+        return CentralizedTeamCritic(networks, reward_scale)
+    return DecentralizedTeamCritic(networks, reward_scale)
 
 
 __all__ = [

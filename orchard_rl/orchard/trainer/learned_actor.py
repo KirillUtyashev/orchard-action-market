@@ -158,7 +158,9 @@ class LearnedActorTrainer(TrainerBase):
             self._after_state_for_action(state, policy_index_to_action(i)) for i in legal
         ]
         after_states = [o[0] for o in outcomes]
-        team_rewards = torch.tensor([float(sum(o[1])) for o in outcomes], dtype=torch.float32)
+        team_rewards = self._critic.reward_scale * torch.tensor(
+            [float(sum(o[1])) for o in outcomes], dtype=torch.float32,
+        )
         pos = legal.index(int(action.value))
 
         self._timer.start(TimerSection.TRAIN)
