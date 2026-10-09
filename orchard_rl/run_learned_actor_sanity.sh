@@ -10,6 +10,8 @@
 # Summarize with:   python summarize_learned_actor.py output/learned_actor_sanity
 set -euo pipefail
 cd "$(dirname "$0")"
+# One thread per process so that many seeds can run side by side.
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 MODE="${1:-both}"
 STEPS="${2:-3000000}"
