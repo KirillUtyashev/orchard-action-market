@@ -1,0 +1,89 @@
+env:
+  height: 9
+  width: 9
+  n_agents: 11
+  n_task_types: 11
+  n_tasks: 5
+  max_tasks_per_type: 5
+  gamma: 0.99
+  relatedness_width: 5
+  proficiency_width: 5
+  stochastic:
+    spawn_prob: 0.16
+    despawn_prob: 0.1
+    despawn_mode: probability
+    spawn_on_agent_cells: true
+    spawn_at_round_end: true
+    sigma_a: 16.0
+    sigma_b: 0.0
+    reward_generation: circulant_all_to_all
+model:
+  encoder: everything_cnn_grid
+  conv_specs:
+  - - 8
+    - 3
+  - - 8
+    - 3
+  mlp_dims:
+  - 8
+  activation: relu
+  weight_init: zero_bias
+actor_model:
+  encoder: everything_cnn_grid
+  conv_specs:
+  - - 8
+    - 3
+  - - 8
+    - 3
+  mlp_dims:
+  - 8
+  activation: relu
+  weight_init: zero_bias
+train:
+  learning_type: decentralized
+  use_gpu: false
+  td_lambda: 0.3
+  total_steps: 2500000
+  seed: 1
+  heuristic: nearest
+  discount_method: round_steps
+  train_only_teammates: false
+  lr:
+    start: 5.0e-06
+    end: 5.0e-06
+    schedule: none
+  epsilon:
+    start: 0.05
+    end: 0.05
+    schedule: none
+  algorithm:
+    name: actor_critic
+    learned_actor:
+      enabled: false
+  actor_lr:
+    start: 0.003
+    end: 0.003
+    schedule: none
+  freeze_critic: false
+  warmup_steps: 0
+  following_rates:
+    enabled: false
+    budget: 1.0
+    rho: 0.5
+    reallocation_freq: 1
+    solver: closed_form
+    fixed: false
+  influencer:
+    enabled: false
+    budget: 0.5
+  stopping:
+    condition: none
+eval:
+  eval_steps: 495
+  n_test_states: 50
+  checkpoint_freq: 500000
+logging:
+  output_dir: output/runs/
+  main_csv_freq: 10000
+  detail_csv_freq: 500000
+  timing_csv_freq: 0

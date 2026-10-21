@@ -66,6 +66,8 @@ def create_trainer(
                 defer_actor_updates=defer_actor_updates,
                 timer=timer,
                 warmup_steps=cfg.train.warmup_steps,
+                discount_method=cfg.train.discount_method,
+                all_action_gradient=cfg.train.algorithm.all_action_gradient,
             )
         from orchard.trainer.actor_critic import ActorCriticCpuTrainer
         actor_bt = None
@@ -91,6 +93,8 @@ def create_trainer(
             defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=cfg.train.warmup_steps,
+            discount_method=cfg.train.discount_method,
+            all_action_gradient=cfg.train.algorithm.all_action_gradient,
         )
 
     networks = create_networks(cfg.model, cfg.env, cfg.train)

@@ -7,6 +7,8 @@ __pycache__/
 .DS_Store
 
 # Output folders (generated, not source)
+/experiments/
+orchard_rl/viz_output_learned/
 orchard_rl/compare_output/
 orchard_rl/compare_policies_output/
 orchard_rl/viz_output/

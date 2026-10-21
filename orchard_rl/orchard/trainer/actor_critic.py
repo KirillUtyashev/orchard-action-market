@@ -102,11 +102,17 @@ class ActorCriticTrainerBase(TrainerBase):
         defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
+        discount_method: str = "team_steps",
+        all_action_gradient: bool = False,
     ) -> None:
         self._critic_networks_list = critic_networks
         self._actor_networks_list = actor_networks
         self._env = env
         self._gamma = float(gamma)
+        if discount_method not in ("team_steps", "round_steps"):
+            raise ValueError(f"actor-critic supports discount_method 'team_steps' or 'round_steps', got {discount_method!r}")
+        self._discount_method = discount_method
+        self._all_action_gradient = bool(all_action_gradient)
         self._critic_lr_schedule = critic_lr_schedule
         self._actor_lr_schedule = actor_lr_schedule
         self._total_steps = int(total_steps)
@@ -334,13 +340,17 @@ class ActorCriticTrainerBase(TrainerBase):
         action: Action,
         advantage: float,
         t: int,
+        adv_vector: np.ndarray | None = None,
     ) -> None:
         if t < self._warmup_steps:
             return
         self._timer.start(TimerSection.TRAIN)
         actor_lr = compute_schedule_value(self._actor_lr_schedule, t, self._total_steps)
         actor_net.set_lr(actor_lr)
-        actor_net.add_experience(actor_state, legal_mask, action, advantage)
+        if adv_vector is not None:
+            actor_net.add_all_action_experience(actor_state, legal_mask, adv_vector)
+        else:
+            actor_net.add_experience(actor_state, legal_mask, action, advantage)
         if self._defer_actor_updates:
             self._deferred_actor_t = t
             self._timer.stop()
@@ -407,8 +417,15 @@ class ActorCriticTrainerBase(TrainerBase):
     # ------------------------------------------------------------------
     # Turn stepping
     # ------------------------------------------------------------------
+    def _move_discount(self, state: State) -> float:
+        if self._discount_method == "round_steps":
+            # gamma once per full round: only the first agent's move carries it.
+            return self._gamma if state.actor == 0 else 1.0
+        return self._gamma
+
     def step(self, state: State, t: int) -> State:
         self._timer.step_begin()
+        move_discount = self._move_discount(state)
 
         self._timer.start(TimerSection.ACTION)
         move_action, move_actor_state, move_probs, move_mask = self._sample_action(state)
@@ -432,7 +449,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 state=state,
                 action=move_action,
                 legal_mask=move_mask,
-                discount=self._gamma,
+                discount=move_discount,
                 t=t,
                 actor_state=move_actor_state,
                 probs=move_probs,
@@ -486,7 +503,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 state=state,
                 action=move_action,
                 legal_mask=move_mask,
-                discount=self._gamma,
+                discount=move_discount,
                 t=t,
                 actor_state=move_actor_state,
                 probs=move_probs,
@@ -503,7 +520,7 @@ class ActorCriticTrainerBase(TrainerBase):
                 state=state,
                 action=move_action,
                 legal_mask=move_mask,
-                discount=self._gamma,
+                discount=move_discount,
                 t=t,
                 actor_state=move_actor_state,
                 probs=move_probs,
@@ -857,6 +874,9 @@ class ActorCriticTrainerBase(TrainerBase):
             t,
         )
 
+        adv_vector = None
+        if self._all_action_gradient:
+            adv_vector = np.where(legal_mask, q_values - baseline_value, 0.0)
         self._handle_actor_experience(
             actor_net,
             actor_state,
@@ -864,6 +884,7 @@ class ActorCriticTrainerBase(TrainerBase):
             action,
             advantage,
             t,
+            adv_vector=adv_vector,
         )
 
     # ------------------------------------------------------------------
@@ -1337,7 +1358,11 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
         defer_actor_updates: bool | None = None,
         timer: Timer | None = None,
         warmup_steps: int = 0,
+        discount_method: str = "team_steps",
+        all_action_gradient: bool = False,
     ) -> None:
+        if all_action_gradient:
+            raise ValueError("train.algorithm.all_action_gradient is only implemented for the CPU actor-critic trainer.")
         super().__init__(
             critic_networks=critic_networks,
             actor_networks=actor_networks,
@@ -1355,6 +1380,8 @@ class ActorCriticGpuTrainer(ActorCriticTrainerBase):
             defer_actor_updates=defer_actor_updates,
             timer=timer,
             warmup_steps=warmup_steps,
+            discount_method=discount_method,
+            all_action_gradient=all_action_gradient,
         )
         self._bt = bt
 

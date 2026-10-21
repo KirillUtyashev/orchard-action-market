@@ -73,6 +73,8 @@ class PolicyNetwork(nn.Module):
         self.batch_actions: list[int] = []
         self.batch_advantages: list[float] = []
         self.batch_legal_masks: list[np.ndarray] = []
+        # all-action mode: per-sample advantage vector over the whole action head (0 on illegal)
+        self.batch_adv_vectors: list[np.ndarray] = []
 
     @staticmethod
     def _build_mlp(
@@ -195,6 +197,12 @@ class PolicyNetwork(nn.Module):
         self.batch_advantages.append(float(advantage))
         self.batch_legal_masks.append(np.asarray(legal_mask, dtype=bool))
 
+    def add_all_action_experience(self, state: EncoderOutput, legal_mask, adv_vector) -> None:
+        """Queue one decision for the expected policy gradient sum_a pi(a) A(a) grad log pi(a)."""
+        self.batch_states.append(state)
+        self.batch_legal_masks.append(np.asarray(legal_mask, dtype=bool))
+        self.batch_adv_vectors.append(np.asarray(adv_vector, dtype=np.float32))
+
     def train_batch(self) -> dict[str, float] | None:
         if not self.batch_states:
             return None
@@ -207,14 +215,26 @@ class PolicyNetwork(nn.Module):
         if logits.dim() == 1:
             logits = logits.unsqueeze(0)
         device = logits.device
-        actions = torch.as_tensor(self.batch_actions, dtype=torch.long, device=device)
-        advantages = torch.as_tensor(self.batch_advantages, dtype=torch.float32, device=device)
+        if self.batch_adv_vectors:
+            actions = torch.zeros(sample_count, dtype=torch.long, device=device)
+            advantages = torch.zeros(sample_count, dtype=torch.float32, device=device)
+        else:
+            actions = torch.as_tensor(self.batch_actions, dtype=torch.long, device=device)
+            advantages = torch.as_tensor(self.batch_advantages, dtype=torch.float32, device=device)
         masked_logits = self._masked_logits(logits, legal_masks)
         log_probs = F.log_softmax(masked_logits, dim=1)
         probs = log_probs.exp()
         action_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
         entropy = -(probs * log_probs).sum(dim=1)
-        loss = -(advantages * action_log_probs).mean()
+        if self.batch_adv_vectors:
+            adv_vec = torch.as_tensor(np.stack(self.batch_adv_vectors, axis=0), dtype=torch.float32, device=device)
+            legal = torch.as_tensor(legal_masks, dtype=torch.bool, device=device)
+            safe_log_probs = torch.where(legal, log_probs, torch.zeros_like(log_probs))
+            loss = -(probs.detach() * adv_vec * safe_log_probs).sum(dim=1).mean()
+            # logged 'advantage_mean' is the mean |A| over legal actions in this mode (signed mean is 0 by construction)
+            advantages = adv_vec.abs().sum(dim=1) / legal.sum(dim=1)
+        else:
+            loss = -(advantages * action_log_probs).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -231,6 +251,7 @@ class PolicyNetwork(nn.Module):
         self.batch_actions = []
         self.batch_advantages = []
         self.batch_legal_masks = []
+        self.batch_adv_vectors = []
         return metrics
 
     def get_lr(self) -> float:

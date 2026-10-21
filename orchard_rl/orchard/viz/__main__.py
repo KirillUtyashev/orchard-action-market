@@ -353,7 +353,7 @@ def main() -> None:
         print(f"  Loaded checkpoint at training step {ckpt_step}")
         if use_actor_argmax:
             print(f"  Algorithm=actor_critic: loading actor networks for argmax")
-            actor_networks = create_actor_networks(cfg.actor_model, cfg.env, cfg.train)
+            actor_networks = create_actor_networks(cfg.actor_model or cfg.model, cfg.env, cfg.train)
             load_actor_networks(ckpt, actor_networks)
 
     # --- Determine policy ---

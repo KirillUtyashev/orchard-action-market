@@ -189,6 +189,8 @@ class LearnedActorConfig:
 class AlgorithmConfig:
     name: AlgorithmName = AlgorithmName.VALUE
     learned_actor: LearnedActorConfig = LearnedActorConfig()
+    # per-agent actor-critic only: use the exact expected policy gradient over all legal actions
+    all_action_gradient: bool = False
 
 
 @dataclass(frozen=True)

@@ -323,7 +323,11 @@ def _parse_train(d: dict[str, Any]) -> TrainConfig:
         actor_lr=actor_lr_cfg,
         freeze_critic=freeze_critic,
         epsilon=eps_cfg,
-        algorithm=AlgorithmConfig(name=algorithm_name, learned_actor=learned_actor_cfg),
+        algorithm=AlgorithmConfig(
+            name=algorithm_name,
+            learned_actor=learned_actor_cfg,
+            all_action_gradient=bool(algorithm_d.get("all_action_gradient", False)),
+        ),
         following_rates=following_cfg,
         influencer=influencer_cfg,
         learning_type=_enum(d.get("learning_type", "decentralized"), "learning_type"),
